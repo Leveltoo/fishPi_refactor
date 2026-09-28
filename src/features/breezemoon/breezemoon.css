@@ -1,0 +1,323 @@
+/* 清风明月：碳黑码头 + 灯笼橙，只作用于本 feature。 */
+
+.bm {
+  --bm-paper: var(--color-bg, #161412);
+  --bm-ink: var(--color-text, #ece4d8);
+  --bm-muted: var(--color-text-muted, #9a8f82);
+  --bm-line: var(--color-border, #3a332c);
+  --bm-accent: var(--color-accent, #d9772c);
+  --bm-accent-fg: var(--color-accent-text, #1a120c);
+  --bm-danger: var(--color-danger, #c44b3c);
+  --bm-warn: var(--color-brass, #c4a574);
+  --bm-bubble: var(--color-bg-raised, #1f1c19);
+  --bm-radius: var(--radius-md, 6px);
+  --bm-avatar: 34px;
+  --bm-shadow: var(--shadow-inset, inset 0 1px 0 rgb(255 255 255 / 0.04));
+
+  --background: var(--bm-paper);
+  --foreground: var(--bm-ink);
+  --card: var(--bm-bubble);
+  --card-foreground: var(--bm-ink);
+  --popover: var(--color-bg-raised, #1f1c19);
+  --popover-foreground: var(--bm-ink);
+  --primary: var(--bm-accent);
+  --primary-foreground: var(--bm-accent-fg);
+  --secondary: var(--color-bg-hover, #2a2520);
+  --secondary-foreground: var(--bm-ink);
+  --muted: var(--color-bg-hover, #2a2520);
+  --muted-foreground: var(--bm-muted);
+  --accent: var(--color-bg-hover, #2a2520);
+  --accent-foreground: var(--bm-ink);
+  --destructive: var(--bm-danger);
+  --border: var(--bm-line);
+  --input: var(--bm-line);
+  --ring: var(--color-focus, #e0b070);
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--bm-ink);
+  background: var(--bm-paper);
+  font-family: var(--font-body, "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.bm-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--bm-line);
+  background: var(--color-bg-raised, #1f1c19);
+  min-height: 52px;
+}
+
+.bm-title {
+  margin: 0;
+  font-family: var(--font-display, "STKaiti", "KaiTi", serif);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.bm-banner {
+  flex: 0 0 auto;
+  margin: 0;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: color-mix(in srgb, var(--bm-warn) 12%, var(--bm-paper));
+  color: var(--bm-ink);
+  border-color: color-mix(in srgb, var(--bm-warn) 35%, var(--bm-line));
+}
+
+.bm-stream {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bm-stream-scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.bm-stream-scroller > [data-slot="scroll-area"] {
+  height: 100%;
+}
+
+.bm-stream-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0.75rem 0.9rem 1rem;
+}
+
+.bm-load-more,
+.bm-stream-end,
+.bm-stream-status {
+  align-self: center;
+  margin: 0;
+  color: var(--bm-muted);
+  font-size: 0.82rem;
+}
+
+.bm-item {
+  display: grid;
+  grid-template-columns: var(--bm-avatar) minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.bm-avatar-btn {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.bm-avatar-btn:hover .bm-avatar,
+.bm-avatar-btn:focus-visible .bm-avatar {
+  outline: 1px solid var(--bm-accent);
+  outline-offset: 1px;
+}
+
+.bm-avatar {
+  width: var(--bm-avatar);
+  height: var(--bm-avatar);
+}
+
+.bm-item-body {
+  min-width: 0;
+}
+
+.bm-item-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.2rem;
+}
+
+.bm-item-name {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.bm-item-name:hover,
+.bm-item-name:focus-visible {
+  color: var(--bm-accent);
+}
+
+.bm-item-time,
+.bm-item-city {
+  font-size: 0.72rem;
+  color: var(--bm-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bm-item-content {
+  background: var(--bm-bubble);
+  border: 1px solid color-mix(in srgb, var(--bm-line) 80%, transparent);
+  border-radius: var(--bm-radius);
+  padding: 0.45rem 0.65rem;
+  box-shadow: var(--bm-shadow);
+}
+
+.bm-item-plain {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bm-md {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.bm-md p {
+  margin: 0 0 0.45rem;
+}
+
+.bm-md p:last-child {
+  margin-bottom: 0;
+}
+
+.bm-md a {
+  color: var(--bm-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bm-md img {
+  max-width: min(100%, 22rem);
+  height: auto;
+  border-radius: 4px;
+}
+
+.bm-img-btn {
+  display: inline-block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  max-width: 100%;
+}
+
+.bm-md pre,
+.bm-md code {
+  font-family: var(--font-mono, "Cascadia Mono", "Consolas", monospace);
+  font-size: 0.84em;
+}
+
+.bm-md pre {
+  overflow: auto;
+  padding: 0.5rem;
+  background: color-mix(in srgb, var(--bm-ink) 6%, var(--bm-bubble));
+  border-radius: 6px;
+}
+
+.bm-md blockquote {
+  margin: 0.3rem 0;
+  padding-left: 0.6rem;
+  border-left: 3px solid var(--bm-line);
+  color: var(--bm-muted);
+}
+
+.bm-skel {
+  display: grid;
+  grid-template-columns: var(--bm-avatar) minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.bm-skel-avatar {
+  width: var(--bm-avatar);
+  height: var(--bm-avatar);
+  border-radius: 999px;
+}
+
+.bm-skel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.bm-skel-meta {
+  height: 0.7rem;
+  width: 7rem;
+}
+
+.bm-skel-bubble {
+  height: 3.2rem;
+  width: 78%;
+}
+
+.bm-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.65rem 0.85rem 0.8rem;
+  border-top: 1px solid var(--bm-line);
+  background: var(--color-bg-raised, #1f1c19);
+}
+
+.bm-pending-alert {
+  border-color: color-mix(in srgb, var(--bm-warn) 40%, var(--bm-line));
+}
+
+.bm-composer-group {
+  align-items: stretch;
+  background: var(--color-bg-input, #241f1b);
+  border-color: var(--bm-line);
+}
+
+.bm-composer-addon {
+  justify-content: flex-end;
+  border-top: 1px solid var(--bm-line);
+}
+
+.bm-composer-hint {
+  margin: 0 auto 0 0;
+  font-size: 0.75rem;
+  color: var(--bm-muted);
+}
+
+.bm-composer-addon [data-slot="button"] {
+  background: var(--bm-accent);
+  color: var(--bm-accent-fg);
+  border-color: var(--bm-accent);
+  min-width: 4.5rem;
+}

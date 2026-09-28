@@ -1,0 +1,638 @@
+/* 私聊面板：只消费 tokens.css / themes.css 的四皮肤契约，不带夜港硬编码。 */
+.im {
+  --im-paper: var(--color-bg);
+  --im-raised: var(--color-bg-raised);
+  --im-sidebar: var(--color-bg-sidebar);
+  --im-input: var(--color-bg-input);
+  --im-hover: var(--color-bg-hover);
+  --im-ink: var(--color-text);
+  --im-muted: var(--color-text-muted);
+  --im-faint: var(--color-text-faint);
+  --im-line: var(--color-border);
+  --im-accent: var(--color-accent);
+  --im-accent-fg: var(--color-accent-text);
+  --im-danger: var(--color-danger);
+  --im-warn: var(--color-brass);
+  --im-bubble: var(--color-bubble);
+  --im-bubble-ink: var(--color-bubble-ink);
+  --im-bubble-self: var(--color-bubble-self);
+  --im-bubble-self-ink: var(--color-bubble-self-ink);
+  --im-radius: var(--radius-md);
+  --im-shadow: var(--shadow-inset);
+
+  /* 覆盖宿主 .dark 的 shadcn 别名，控件跟随当前皮肤。 */
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --card: var(--color-bg-raised);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-bg-raised);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-accent-text);
+  --secondary: var(--color-bg-hover);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-bg-hover);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-bg-hover);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-danger);
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-focus);
+
+  /* 纵向：告警条在上，会话+消息+输入占满剩余高度；禁止内容把整窗撑开。 */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--im-ink);
+  background: var(--im-paper);
+  font-family: var(--font-body, "Segoe UI", "Microsoft YaHei UI", sans-serif);
+}
+
+.im.dark {
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --card: var(--color-bg-raised);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-bg-raised);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-accent-text);
+  --secondary: var(--color-bg-hover);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-bg-hover);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-bg-hover);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-danger);
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-focus);
+}
+
+.im-alert {
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: color-mix(in srgb, var(--im-warn) 12%, var(--im-paper));
+  color: var(--im-ink);
+  border-color: color-mix(in srgb, var(--im-warn) 35%, var(--im-line));
+}
+
+.im-body {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+.im-sidebar {
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--im-line);
+  background: var(--im-sidebar);
+  color: var(--im-ink);
+}
+
+.im-sidebar-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2, 8px);
+  padding: var(--space-2, 8px);
+}
+
+.im-sidebar-title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.im-sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.im-sidebar-empty,
+.im-pane-idle-copy,
+.im-thread-empty,
+.im-thread-end {
+  margin: 0;
+  padding: var(--space-4, 16px);
+  color: var(--im-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.im-sidebar-empty {
+  padding: var(--space-2, 8px) var(--space-1, 4px);
+  font-size: 0.7rem;
+  word-break: break-all;
+}
+
+.im-sidebar-skel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  padding: var(--space-2, 8px) var(--space-1, 4px);
+}
+
+.im-skel-row {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+}
+
+.im-conv-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-1, 4px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1, 4px);
+}
+
+.im-conv {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: var(--space-2, 8px) var(--space-1, 4px);
+  border: 0;
+  border-radius: var(--im-radius);
+  background: transparent;
+  color: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.im-conv:hover {
+  background: var(--im-hover);
+}
+
+.im-conv.is-active {
+  background: color-mix(in srgb, var(--im-accent) 14%, var(--im-sidebar));
+}
+
+.im-conv.is-active .im-conv-avatar .im-avatar,
+.im-conv.is-active .im-conv-avatar {
+  box-shadow:
+    0 0 0 2px var(--im-accent),
+    0 0 5px color-mix(in srgb, var(--im-accent) 70%, transparent);
+}
+
+.im-conv-avatar {
+  position: relative;
+  display: inline-flex;
+  line-height: 0;
+}
+
+.im-unread {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.35rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.28rem;
+  background: var(--im-danger);
+  color: var(--im-accent-fg);
+  border: 0;
+}
+
+.im-conv-meta,
+.im-conv-name,
+.im-conv-preview {
+  display: none;
+}
+
+.im-pane {
+  flex: 1 1 auto;
+  flex-grow: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--im-paper);
+  color: var(--im-ink);
+}
+
+.im-pane-idle {
+  align-items: center;
+  justify-content: center;
+}
+
+.im-pane-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  min-height: 52px;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--im-line);
+  background: var(--im-raised);
+}
+
+.im-pane-who {
+  min-width: 0;
+}
+
+.im-pane-name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.im-pane-sub {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--im-muted);
+}
+
+/* height:0 + flex:1：禁止消息内容把 pane / 整窗撑高；只允许本区内部滚动。 */
+.im-thread-stream {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--im-paper);
+}
+
+.im-thread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.im-thread-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.75rem 0.9rem 1rem;
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.im-load-more {
+  align-self: center;
+  color: var(--im-muted);
+}
+
+.im-jump-latest {
+  position: absolute;
+  right: 1rem;
+  bottom: 0.75rem;
+  background: var(--im-accent);
+  color: var(--im-accent-fg);
+  border-color: var(--im-accent);
+}
+
+.im-skel {
+  height: 4.2rem;
+  width: 62%;
+  background: color-mix(in srgb, var(--im-ink) 8%, var(--im-raised));
+}
+
+.im-skel-wide {
+  width: 78%;
+  align-self: flex-end;
+}
+
+.im-msg {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.im-msg.is-mine {
+  grid-template-columns: minmax(0, 1fr) 2rem;
+}
+
+.im-msg.is-mine .im-avatar {
+  grid-column: 2;
+}
+
+.im-msg.is-mine .im-msg-body {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+  width: 100%;
+  max-width: min(78%, 36rem);
+}
+
+.im-msg.is-mine .im-msg-meta {
+  justify-content: flex-end;
+}
+
+.im-msg-body {
+  min-width: 0;
+  max-width: min(78%, 36rem);
+}
+
+.im-msg-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin-bottom: 0.2rem;
+}
+
+.im-msg-name {
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.im-msg-time {
+  font-size: 0.72rem;
+  color: var(--im-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.im-msg-revoke {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--im-muted);
+  font-size: 0.72rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.im-msg:hover .im-msg-revoke,
+.im-msg-revoke:focus-visible,
+.im-msg-revoke:disabled {
+  opacity: 1;
+}
+
+.im-msg-revoke:hover:not(:disabled) {
+  color: var(--im-danger);
+}
+
+.im-msg-revoke:disabled {
+  cursor: default;
+}
+
+.im-msg-content {
+  position: relative;
+  background: var(--im-bubble);
+  color: var(--im-bubble-ink);
+  border: 1px solid color-mix(in srgb, var(--im-line) 80%, transparent);
+  border-radius: var(--im-radius);
+  padding: 0.45rem 0.65rem;
+  box-shadow: var(--im-shadow);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.im-msg-content::before {
+  content: "";
+  position: absolute;
+  top: 0.7rem;
+  left: -0.36rem;
+  width: 0;
+  height: 0;
+  border: 5px solid transparent;
+  border-right-color: var(--im-bubble);
+  border-left: 0;
+}
+
+.im-msg.is-mine .im-msg-content {
+  background: var(--im-bubble-self);
+  color: var(--im-bubble-self-ink);
+  border-color: transparent;
+}
+
+.im-msg.is-mine .im-msg-content::before {
+  left: auto;
+  right: -0.36rem;
+  border-right: 0;
+  border-left-color: var(--im-bubble-self);
+}
+
+.im-msg-revoked {
+  margin: 0;
+  color: inherit;
+  opacity: 0.72;
+  font-style: italic;
+}
+
+.im-msg-plain {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.im-md {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.im-md p {
+  margin: 0 0 0.45rem;
+}
+
+.im-md p:last-child {
+  margin-bottom: 0;
+}
+
+.im-md a {
+  color: var(--im-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.im-msg.is-mine .im-md a {
+  color: var(--im-bubble-self-ink);
+}
+
+.im-md img {
+  display: block;
+  max-width: min(100%, 22rem);
+  max-height: min(40vh, 18rem);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--im-radius);
+}
+
+.im-md pre,
+.im-md code {
+  font-family: var(--font-mono, "Cascadia Code", "Consolas", monospace);
+  font-size: 0.84em;
+}
+
+.im-md pre {
+  overflow: auto;
+  padding: 0.5rem;
+  background: color-mix(in srgb, var(--im-bubble-ink) 6%, var(--im-bubble));
+  border-radius: var(--im-radius);
+}
+
+.im-msg.is-mine .im-md pre {
+  background: color-mix(in srgb, var(--im-bubble-self-ink) 12%, var(--im-bubble-self));
+}
+
+.im-md blockquote {
+  margin: 0.3rem 0;
+  padding-left: 0.6rem;
+  border-left: 3px solid color-mix(in srgb, currentColor 28%, transparent);
+  color: inherit;
+  opacity: 0.85;
+}
+
+.im-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.65rem 0.85rem 0.8rem;
+  border-top: 1px solid var(--im-line);
+  background: var(--im-raised);
+}
+
+.im-pending {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--im-warn);
+}
+
+/* 引用 chip：展示被回复对象；× 调 onClearQuote，不改写发送正文。 */
+.im-composer-quote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.45rem 0.3rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--im-accent) 35%, var(--im-line));
+  background: color-mix(in srgb, var(--im-accent) 10%, var(--im-raised));
+  border-radius: var(--im-radius);
+}
+
+.im-composer-quote-text {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--im-ink);
+}
+
+.im-composer-quote-text span {
+  color: var(--im-muted);
+}
+
+.im-composer-quote-close {
+  flex: 0 0 auto;
+  padding: 0 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--im-muted);
+  font-size: 1rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.im-composer-quote-close:hover {
+  color: var(--im-danger);
+}
+
+/* 工具条：表情 / 清屏 / 粘贴提示，spacer 把后续内容推到右侧。 */
+.im-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.im-composer-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.im-composer-paste-hint {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--im-muted);
+}
+
+.im-composer-group {
+  height: auto;
+  min-height: 5.5rem;
+  align-items: stretch;
+  background: var(--im-input);
+  border-color: var(--im-line);
+}
+
+.im-composer-addon {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.im-composer-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--im-muted);
+}
+
+.im-composer-addon [data-slot="button"] {
+  background: var(--im-accent);
+  color: var(--im-accent-fg);
+  border-color: var(--im-accent);
+  min-width: 4.5rem;
+}
+
+.im-composer-addon [data-slot="button"]:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.im-composer-addon [data-slot="button"]:active {
+  background: var(--color-accent-pressed);
+  border-color: var(--color-accent-pressed);
+}
+
+.im-start [cmdk-input] {
+  color: var(--im-ink);
+}
+
+.im-start-dialog {
+  background: var(--im-raised);
+  color: var(--im-ink);
+  border: 1px solid var(--im-line);
+}

@@ -1,0 +1,230 @@
+/* 用户资料子窗：结构对齐旧 card.vue，颜色跟全局 token。
+   头像用负 margin 上探：必须在 .ucard 顶部留够 padding，否则 overflow:hidden 会裁掉上半截。 */
+
+.ucard {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  /* 头像 96px + margin-top -48 → 顶部至少 52px 才完整可见 */
+  padding-top: 52px;
+  overflow: hidden;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  background-size: cover;
+  background-position: 50%;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+.ucard-loading,
+.ucard-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 6rem;
+  /* 加载态也走顶部 padding，避免顶到窗框 */
+  padding: 1rem;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.ucard-error {
+  color: var(--color-danger);
+}
+
+.ucard-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /* 给头像上探留出的 padding 在父级；header 本身不再压 top */
+  padding: 4px 10px 6px;
+  background: color-mix(in srgb, var(--color-bg-raised) 82%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.ucard-avatar-btn {
+  flex: none;
+  /* 旧版 -64px 上探；在 52px padding 下用 -48 保证 96px 头像完整落在窗内 */
+  margin-top: -48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  line-height: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.ucard-avatar {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border: 2px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-bg-sidebar);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
+}
+
+.ucard-name {
+  min-width: 0;
+  flex: 1;
+  padding-top: 6px;
+}
+
+.ucard-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.ucard-nick {
+  font-size: 1.2em;
+  font-weight: 650;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.ucard-account {
+  font-size: 0.8em;
+  color: var(--color-text-muted);
+}
+
+.ucard-metals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.ucard-metals img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.ucard-body {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 10px 8px;
+  background: color-mix(in srgb, var(--color-bg-raised) 82%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.ucard-intro {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  word-break: break-word;
+}
+
+.ucard-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ucard-basic {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ucard-role {
+  height: 1.35em;
+  display: block;
+}
+
+.ucard-role-text {
+  font-size: 0.75rem;
+  color: var(--color-brass);
+}
+
+.ucard-points {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-brass);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.ucard-city {
+  color: var(--color-ok);
+  font-size: 0.85rem;
+}
+
+.ucard-no {
+  line-height: 1.4;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  font-size: 0.8rem;
+}
+
+.ucard-mbti {
+  display: inline-block;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 22px;
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+.ucard-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.ucard-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.ucard-tag.is-online {
+  border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger) 18%, var(--color-bg-raised));
+  color: #ffb4ac;
+}
+
+.ucard-chat {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+}

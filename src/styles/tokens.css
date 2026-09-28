@@ -1,0 +1,60 @@
+/* 工位红（desk）默认令牌。其余皮肤在 themes.css 用 html[data-theme] 覆盖同名变量。 */
+:root {
+  /* surfaces */
+  --color-bg: #232425;
+  --color-bg-raised: #191a1b;
+  --color-bg-sidebar: #191a1b;
+  --color-bg-input: #2c2e30;
+  --color-bg-hover: #2c2e30;
+  --color-header-bg: #181a1b;
+
+  /* ink */
+  --color-text: #e7e2da;
+  --color-text-muted: #9b958c;
+  --color-text-faint: #6e655c;
+
+  /* accent */
+  --color-accent: #d23f31;
+  --color-accent-hover: #e24a3a;
+  --color-accent-pressed: #b83226;
+  --color-accent-text: #ffffff;
+  --color-brass: #c4a574;
+  --color-danger: #c44b3c;
+  --color-danger-bg: #3a1e1a;
+  --color-ok: #6a9a6d;
+  --color-focus: #e0b070;
+  /* 窗控开启态（对齐旧版 --header-btn-checked-color） */
+  --header-btn-checked-color: #57a3f3;
+
+  /* lines */
+  --color-border: #343739;
+  --color-border-strong: #4a4e51;
+
+  /* bubbles */
+  --color-bubble: #f6f8fa;
+  --color-bubble-ink: #232425;
+  --color-bubble-self: #515a6e;
+  --color-bubble-self-ink: #f6f8fa;
+
+  /* skin metrics */
+  --radius-md: 5px;
+  --font-display: "STKaiti", "KaiTi", "Kaiti SC", "Noto Serif SC", serif;
+
+  /* shared metrics */
+  --sidebar-width: 48px;
+  --header-height: 40px;
+  --radius-sm: 3px;
+  --radius-lg: 10px;
+  --login-rail-width: 76px;
+  --font-body: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC",
+    sans-serif;
+  --font-mono: "Cascadia Mono", "Sarasa Mono SC", "Consolas", ui-monospace,
+    monospace;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}

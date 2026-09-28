@@ -1,0 +1,4 @@
+# SDK 下限仍是 1.88：fishpi-sdk 1.1.0 使用 edition 2024 与 let chains。
+# 不能退回 1.85。实际上钉当前 stable：notify-rust 4.18 要求 rustc >= 1.89。
+[toolchain]
+channel = "1.98.1"

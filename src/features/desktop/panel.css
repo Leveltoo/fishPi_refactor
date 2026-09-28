@@ -1,0 +1,63 @@
+.parity-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.parity-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.parity-section h2,
+.parity-section p {
+  margin: 0;
+}
+
+.parity-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.parity-panel input,
+.parity-panel select,
+.parity-panel button {
+  font: inherit;
+  color: inherit;
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.parity-panel input,
+.parity-panel select {
+  min-width: 12rem;
+}
+
+.parity-note {
+  color: var(--color-text-muted);
+}
+
+.parity-error {
+  color: var(--color-danger);
+}
+
+.parity-list {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.parity-panel audio {
+  width: 16rem;
+  max-width: 100%;
+}

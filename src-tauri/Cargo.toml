@@ -1,0 +1,66 @@
+[package]
+name = "fishpi-desktop-refactor-tauri"
+version = "0.1.0"
+description = "摸鱼派桌面客户端（Tauri）"
+authors = ["you"]
+edition = "2021"
+# notify-rust 4.18（系统通知插件带入）要求至少 1.89。工具链见 rust-toolchain.toml。
+rust-version = "1.89"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "fishpi_desktop_refactor_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+# Store 只存普通设置（主题、窗口等）；token 仍走 keyring，禁止写入 Store。
+tauri-plugin-store = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 钉死 1.1.0：协议、事件形状与重试语义以该版 docs.rs 为准；升级需单独评估，禁止 caret 浮动。
+# 走 crates.io，不使用 path / git，也不把 SDK 源码编进桌面端。
+fishpi-sdk = "=1.1.0"
+
+# 不启用 full，避免再叠一层默认特性；与 tauri 共用 tokio 1.x，由 Cargo 统一版本。
+# rt-multi-thread 隐含 rt，供 SDK HTTP/WS 与 command；macros / sync / time 供状态与超时。
+tokio = { version = "1", default-features = false, features = ["macros", "sync", "time", "rt-multi-thread"] }
+
+# 结构化错误（脱敏后映射到 IPC），与 SDK 的 thiserror 2 对齐。
+thiserror = "2"
+
+# 系统凭据存储，仅 Rust 调用。token 禁止进 Store / 明文配置，仍走 keyring。
+keyring = "3"
+
+# 检查更新与网易云公开歌曲信息。只访问固定主机，不执行下载下来的文件。
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# 只读一份复制出来的 Electron Local Storage。禁止对用户原目录调用 open（该库 open 会改文件）。
+rusty-leveldb = "4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_Networking_WinSock",
+  "Win32_System_Power",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

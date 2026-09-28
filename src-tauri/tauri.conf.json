@@ -1,0 +1,90 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "摸鱼派桌面",
+  "version": "0.1.0",
+  "identifier": "com.leveltoo.fishpi-desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "摸鱼派桌面",
+        "width": 800,
+        "height": 600,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": [
+          "'self'",
+          "asset:",
+          "http://asset.localhost",
+          "https://asset.localhost",
+          "blob:",
+          "data:",
+          "https://fishpi.cn",
+          "https://*.fishpi.cn",
+          "https://b3logfile.com",
+          "https://*.b3logfile.com",
+          "https://b3log.org",
+          "https://*.b3log.org",
+          "https://*.clouddn.com",
+          "https://*.qiniucdn.com",
+          "https://*.qnssl.com",
+          "https://*.qbox.me",
+          "https://cdn.jsdelivr.net",
+          "https://*.jsdelivr.net",
+          "https://gravatar.com",
+          "https://*.gravatar.com",
+          "https://cravatar.cn",
+          "https://*.cravatar.cn",
+          "https://*.githubusercontent.com",
+          "http://music.163.com",
+          "https://music.163.com",
+          "http://*.music.126.net",
+          "https://*.music.126.net",
+          "http://*.126.net",
+          "https://*.126.net"
+        ],
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost",
+        "media-src": [
+          "'self'",
+          "blob:",
+          "http://music.163.com",
+          "https://music.163.com",
+          "http://*.music.126.net",
+          "https://*.music.126.net",
+          "http://*.126.net",
+          "https://*.126.net"
+        ],
+        "object-src": "'none'",
+        "frame-src": "'none'",
+        "frame-ancestors": "'none'",
+        "worker-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "dangerousDisableAssetCspModification": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

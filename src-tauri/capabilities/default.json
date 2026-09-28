@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口最小权限：仅 core 默认 IPC + 创建/控制名片子窗；外链经 opener 用系统浏览器打开。不授权任意 fs / shell / 凭据读取。token 只走 Rust 系统凭据存储。",
+  "windows": ["main", "user-card"],
+  "local": true,
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-visible",
+    "core:window:allow-is-minimized",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-set-position",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-inner-position",
+    "core:window:allow-outer-position",
+    "core:webview:allow-create-webview-window",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
+    "opener:deny-open-path",
+    "opener:deny-reveal-item-in-dir"
+  ]
+}

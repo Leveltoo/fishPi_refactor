@@ -1,0 +1,252 @@
+/* 红包 overlay：碳黑底 + 灯笼橙顶，只作用于本 feature dialog。 */
+
+.rp-dialog {
+  overflow: hidden;
+  width: min(22rem, calc(100vw - 2rem));
+  max-width: 22rem;
+  padding: 0;
+  color: var(--color-text);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-inset), 0 18px 40px rgb(0 0 0 / 0.45);
+}
+
+.rp-dialog[data-slot="dialog-content"] {
+  gap: 0;
+}
+
+.rp-dialog > button:last-of-type {
+  z-index: 2;
+}
+
+.rp-lantern {
+  position: absolute;
+  top: -7.5rem;
+  left: 50%;
+  z-index: 0;
+  width: 16rem;
+  height: 16rem;
+  border: 2px solid color-mix(in srgb, var(--color-accent) 80%, #7a2f12);
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--color-accent-hover) 85%, white) 0%,
+      var(--color-accent) 38%,
+      #8a3414 72%
+    );
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.rp-header,
+.rp-body,
+.rp-footer,
+.rp-form {
+  position: relative;
+  z-index: 1;
+}
+
+.rp-header {
+  padding: 2.4rem 1rem 0.75rem;
+  text-align: center;
+}
+
+.rp-header .rp-avatar {
+  margin: 0 auto 0.5rem;
+}
+
+.rp-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.rp-blessing {
+  min-height: 1.5em;
+  color: var(--color-text-muted);
+}
+
+.rp-meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: var(--color-brass);
+}
+
+.rp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 8rem;
+  max-height: 16rem;
+  padding: 0.5rem 1rem 0.25rem;
+  overflow: auto;
+}
+
+.rp-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 7rem;
+  color: var(--color-brass);
+}
+
+.rp-hint,
+.rp-empty,
+.rp-locked {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.rp-headline {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  line-height: 1.2;
+  color: #fee3aa;
+  text-align: center;
+}
+
+.rp-who {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rp-who li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.4rem;
+  margin: 0.35rem 0;
+  padding-bottom: 0.85rem;
+}
+
+.rp-who-user {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rp-who-money {
+  flex-shrink: 0;
+  color: #fee3aa;
+}
+
+.rp-tip {
+  position: absolute;
+  left: 2rem;
+  top: 1.7rem;
+  height: 1.1rem;
+  font-size: 0.65rem;
+}
+
+.rp-tip-max {
+  color: var(--color-accent-text);
+  background: var(--color-accent);
+}
+
+.rp-tip-zero {
+  color: var(--color-brass);
+  border-color: var(--color-border-strong);
+}
+
+.rp-footer {
+  padding: 0.75rem 1rem 1rem;
+}
+
+.rp-footer [data-slot="button"] {
+  width: 100%;
+  font-weight: 600;
+  color: var(--color-accent-text);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.rp-footer [data-slot="button"]:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.rp-footer [data-slot="button"][data-variant="outline"] {
+  color: var(--color-text);
+  background: transparent;
+  border-color: var(--color-border-strong);
+}
+
+.rp-form {
+  gap: 0.75rem;
+  padding: 0.25rem 1rem 0.5rem;
+}
+
+.rp-select {
+  width: 100%;
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-input);
+}
+
+.rp-gestures {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.rp-gesture-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+}
+
+.rp-gesture {
+  height: 2.4rem;
+  color: var(--color-text);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.rp-gesture.is-active {
+  color: var(--color-accent-text);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.rp-users {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-height: 6.5rem;
+  overflow: auto;
+}
+
+.rp-user {
+  padding: 0;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.rp-user.is-check {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.rp-extra-receivers {
+  margin-top: 0.35rem;
+}
+
+.rp-avatar {
+  border: 1px solid var(--color-border);
+}

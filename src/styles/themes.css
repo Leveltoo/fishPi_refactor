@@ -1,0 +1,139 @@
+/* 受控主题：html[data-theme] 覆盖 tokens.css 的工位红默认值。
+   四套皮肤：desk | cx | ding | feishu。desk 与 :root 同值。
+   不加载任意外部 CSS，也不承诺旧 Electron 主题兼容。 */
+
+:root,
+html[data-theme="desk"],
+html[data-theme="cx"],
+html[data-theme="ding"],
+html[data-theme="feishu"] {
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --card: var(--color-bg-raised);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-bg-raised);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-accent-text);
+  --secondary: var(--color-bg-hover);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-bg-hover);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-bg-hover);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-danger);
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-focus);
+  --sidebar: var(--color-bg-sidebar);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: var(--color-accent-text);
+  --sidebar-accent: var(--color-bg-hover);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus);
+}
+
+/* A 工位红：老客户端原味炭黑朱红（值已在 :root，这里只定 color-scheme） */
+html[data-theme="desk"] {
+  color-scheme: dark;
+}
+
+/* B Codex：石墨 + 克制软绿 */
+html[data-theme="cx"] {
+  color-scheme: dark;
+  --color-bg: #0f1216;
+  --color-bg-raised: #161c22;
+  --color-bg-sidebar: #0c0f12;
+  --color-bg-input: #0a0c0f;
+  --color-bg-hover: #1a2228;
+  --color-header-bg: #0a0c0f;
+  --color-text: #d5dbd7;
+  --color-text-muted: #7c857f;
+  --color-text-faint: #5c655f;
+  --color-accent: #4dc490;
+  --color-accent-hover: #5fd0a0;
+  --color-accent-pressed: #3aa87a;
+  --color-accent-text: #071510;
+  --color-border: #252b32;
+  --color-border-strong: #3a434c;
+  --color-brass: #4dc490;
+  --color-danger: #e07a6a;
+  --color-danger-bg: #3a1e1a;
+  --color-ok: #4dc490;
+  --color-focus: #4dc490;
+  --color-bubble: #e4ebe6;
+  --color-bubble-ink: #141c18;
+  --color-bubble-self: #1c342a;
+  --color-bubble-self-ink: #d5f5e4;
+  --radius-md: 6px;
+  --font-display: "IBM Plex Mono", Consolas, monospace;
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 0.03);
+}
+
+/* C 钉钉：冷灰蓝 IM */
+html[data-theme="ding"] {
+  color-scheme: light;
+  --color-bg: #eef2f7;
+  --color-bg-raised: #ffffff;
+  --color-bg-sidebar: #e8eef5;
+  --color-bg-input: #ffffff;
+  --color-bg-hover: #e4ebf3;
+  --color-header-bg: #f5f8fb;
+  --color-text: #1b2330;
+  --color-text-muted: #7a8698;
+  --color-text-faint: #9aa5b1;
+  --color-accent: #1e80ff;
+  --color-accent-hover: #3d91ff;
+  --color-accent-pressed: #0d6eef;
+  --color-accent-text: #ffffff;
+  --color-border: #d5dde6;
+  --color-border-strong: #b7c4d4;
+  --color-brass: #1e80ff;
+  --color-danger: #ff5000;
+  --color-danger-bg: #f6e4e0;
+  --color-ok: #1e80ff;
+  --color-focus: #1e80ff;
+  --color-bubble: #ffffff;
+  --color-bubble-ink: #1b2330;
+  --color-bubble-self: #1e80ff;
+  --color-bubble-self-ink: #ffffff;
+  --radius-md: 4px;
+  --font-display: "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 0.72);
+}
+
+/* D 飞书：白底协作、大圆角 */
+html[data-theme="feishu"] {
+  color-scheme: light;
+  --color-bg: #f5f6f7;
+  --color-bg-raised: #ffffff;
+  --color-bg-sidebar: #ffffff;
+  --color-bg-input: #f2f3f5;
+  --color-bg-hover: #f0f1f3;
+  --color-header-bg: #ffffff;
+  --color-text: #1f2329;
+  --color-text-muted: #8f959e;
+  --color-text-faint: #a0a6ad;
+  --color-accent: #3370ff;
+  --color-accent-hover: #4b82ff;
+  --color-accent-pressed: #2860e1;
+  --color-accent-text: #ffffff;
+  --color-border: #e5e6eb;
+  --color-border-strong: #c9cdd4;
+  --color-brass: #3370ff;
+  --color-danger: #f54a45;
+  --color-danger-bg: #f6e4e0;
+  --color-ok: #3370ff;
+  --color-focus: #3370ff;
+  --color-bubble: #f0f1f3;
+  --color-bubble-ink: #1f2329;
+  --color-bubble-self: #3370ff;
+  --color-bubble-self-ink: #ffffff;
+  --radius-md: 10px;
+  --font-display: "Noto Sans SC", "PingFang SC", sans-serif;
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 0.72);
+}
