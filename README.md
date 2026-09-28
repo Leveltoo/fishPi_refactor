@@ -8,7 +8,9 @@
 
 基于摸鱼打工人社区——[摸鱼派](https://fishpi.cn)开放 API 开发而成，可以在里面愉快的吹水摸鱼。
 
-旧版 Electron 客户端的 Tauri 重构。
+本仓库是 [fishpi-desktop](https://github.com/FishPiOffical/fishpi-desktop) 的 Tauri 重构。后端由 [fishpi-rust](https://github.com/FishPiOffical/fishpi-rust) 提供。
+
+感谢 [午安宝贝](https://github.com/KwdeTfpv) 提供的 [fishpi-rust](https://github.com/FishPiOffical/fishpi-rust)，以及 [临风](https://github.com/imlinhanchao) 的旧版 [fishpi-desktop](https://github.com/FishPiOffical/fishpi-desktop)。
 
 ## ✨ 功能
 
