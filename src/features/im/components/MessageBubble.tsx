@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -9,15 +10,18 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { sanitizeHttpUrl } from "../../../lib/markdown";
+import { addEmojiUrl } from "../../chatroom/chatroomApi";
+import { toUserErrorMessage } from "../../chatroom/toUserError";
 import {
+  copyImageFromSrc,
   copyText,
   emojiCodeFromSrc,
   openMemberProfile,
   sendExclusiveRedpacket,
 } from "../../chatroom/userMenuActions";
+import { userCardProps } from "../../usercard/hover";
 
 import type { PrivateMessageDto } from "../types";
-import { userCardProps } from "../../usercard/hover";
 import { MarkdownBody } from "./MarkdownBody";
 
 type MessageBubbleProps = {
@@ -27,30 +31,18 @@ type MessageBubbleProps = {
   onQuote?: (message: PrivateMessageDto) => void;
   onMention?: (userName: string) => void;
   onInsertToken?: (token: string) => void;
+  onJump?: (messageId: string) => void;
 };
 
-/** text 里常见图片/链接/表情短码：仍走 Markdown，不当纯文本原样输出。 */
-function textLooksLikeMarkdown(text: string): boolean {
-  return (
-    /!\[[^\]]*\]\([^)]+\)/.test(text) ||
-    /\[[^\]]+\]\([^)]+\)/.test(text) ||
-    /:[a-zA-Z0-9_+-]+:/.test(text)
-  );
-}
-
-function messageBody(message: PrivateMessageDto) {
+function messageBody(message: PrivateMessageDto, onJump?: (messageId: string) => void) {
   if (message.revoked) {
     return <p className="im-msg-revoked">此消息已撤回</p>;
   }
-  const md = message.md?.trim() ?? "";
-  if (md.length > 0) {
-    return <MarkdownBody source={md} />;
+  const source = message.md?.trim() || message.text?.trim() || "";
+  if (source.length === 0) {
+    return <p className="im-msg-plain">（空消息）</p>;
   }
-  const text = message.text?.trim() ?? "";
-  if (text.length > 0 && textLooksLikeMarkdown(text)) {
-    return <MarkdownBody source={text} />;
-  }
-  return <p className="im-msg-plain">{text || "（空消息）"}</p>;
+  return <MarkdownBody source={source} onJump={onJump} />;
 }
 
 export function MessageBubble({
@@ -60,6 +52,7 @@ export function MessageBubble({
   onQuote,
   onMention,
   onInsertToken,
+  onJump,
 }: MessageBubbleProps) {
   const [revoking, setRevoking] = useState(false);
   const [contextEl, setContextEl] = useState<Element | null>(null);
@@ -99,6 +92,16 @@ export function MessageBubble({
     }
   }
 
+  function addFace(url: string): void {
+    void addEmojiUrl(url)
+      .then(() => {
+        toast.success("已同步到服务器表情");
+      })
+      .catch((err: unknown) => {
+        toast.error(toUserErrorMessage(err));
+      });
+  }
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -133,7 +136,7 @@ export function MessageBubble({
                 </button>
               ) : null}
             </header>
-            <div className="im-msg-content">{messageBody(message)}</div>
+            <div className="im-msg-content">{messageBody(message, onJump)}</div>
           </div>
         </article>
       </ContextMenuTrigger>
@@ -166,13 +169,22 @@ export function MessageBubble({
           </ContextMenuItem>
         ) : null}
         {targetImg && !emojiCode ? (
-          <ContextMenuItem
-            onSelect={() => {
-              void copyText(targetImg.src);
-            }}
-          >
-            复制图片
-          </ContextMenuItem>
+          <>
+            <ContextMenuItem
+              onSelect={() => {
+                addFace(targetImg.src);
+              }}
+            >
+              添加表情
+            </ContextMenuItem>
+            <ContextMenuItem
+              onSelect={() => {
+                void copyImageFromSrc(targetImg.src, targetImg);
+              }}
+            >
+              复制图片
+            </ContextMenuItem>
+          </>
         ) : null}
         <ContextMenuItem
           disabled={copyBody.length === 0}

@@ -13,6 +13,7 @@ pub mod state;
 mod text;
 mod tray;
 mod window_close;
+mod window_persist;
 mod boss_key;
 
 use commands::{
@@ -29,7 +30,7 @@ use commands::{
     article_heat_close,
     chatroom_barrager, chatroom_barrage_cost, chatroom_filters_get, chatroom_filters_set, chatroom_emoji_recent_get,
     chatroom_emoji_recent_remember, emoji_groups, emoji_group_items, emoji_add_url, emoji_remove,
-    file_upload,
+    fetch_image, file_upload,
     update_check, update_apply, update_open_release,
     config_import, desktop_prefs_get, desktop_prefs_set,
     reconnect_watch, reconnect_now,
@@ -114,6 +115,7 @@ pub fn run() {
             emoji_group_items,
             emoji_add_url,
             emoji_remove,
+            fetch_image,
             update_check,
             update_apply,
             update_open_release,
@@ -129,12 +131,14 @@ pub fn run() {
             offline_merge,
             offline_fail_send,
             music_resolve,
+            tray::tray_flash,
         ])
         .setup(|app| {
             apply_cold_start_window_appearance(app);
-            // 冷启动会装托盘、关闭拦截和老板键。安装失败不阻止应用启动。
+            // 冷启动会装托盘、关闭拦截、窗口尺寸和老板键。安装失败不阻止应用启动。
             let _ = tray::install(app);
             window_close::install(app);
+            window_persist::install(app);
             let _ = boss_key::install(app);
             Ok(())
         })
@@ -154,12 +158,12 @@ fn apply_cold_start_window_appearance(app: &tauri::App) {
             on: None,
         },
     );
-    let _ = window_set_opacity(
-        handle,
-        OpacityRequest {
-            opacity: settings.opacity,
-        },
-    );
+    let opacity = if settings.opacity_enabled {
+        settings.opacity
+    } else {
+        1.0
+    };
+    let _ = window_set_opacity(handle, OpacityRequest { opacity });
 }
 
 fn load_startup_settings(app: &tauri::App) -> AppSettings {

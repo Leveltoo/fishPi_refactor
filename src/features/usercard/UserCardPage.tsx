@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -13,13 +13,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { sanitizeHttpUrl } from "../../lib/markdown";
 import { openImWithUser } from "../../lib/nav";
 import { invokeAuthMe } from "../../lib/tauri";
+import { REDPACKET_SEND_EVENT } from "../redpacket/events";
 import {
   fetchUserProfile,
   type ProfileOutcome,
-  type UserProfile,
 } from "../overlay/api";
 import {
   CARD_WIDTH,
+  REQUEST_LOGOUT_EVENT,
   resizeUserCardWindow,
   USER_CARD_UPDATE_EVENT,
 } from "./window";
@@ -120,6 +121,16 @@ export function UserCardPage() {
     void getCurrentWindow().hide();
   }
 
+  async function requestLogout(): Promise<void> {
+    handleClose();
+    await emit(REQUEST_LOGOUT_EVENT);
+  }
+
+  async function requestExclusiveRedpacket(): Promise<void> {
+    handleClose();
+    await emit(REDPACKET_SEND_EVENT, { user: account });
+  }
+
   const profile = outcome?.status === "ok" ? outcome.profile : null;
   const bg = sanitizeHttpUrl(profile?.cardBg);
   const nick = profile?.userNickname?.trim() || profile?.userName || userName;
@@ -147,6 +158,8 @@ export function UserCardPage() {
         </div>
       ) : outcome.status !== "ok" ? (
         <p className="ucard-error">{outcome.message}</p>
+      ) : profile == null ? (
+        <p className="ucard-error">没有资料</p>
       ) : (
         <>
           <header className="ucard-header">
@@ -247,17 +260,42 @@ export function UserCardPage() {
                   {profile.online ? "在线" : "离线"}
                 </span>
                 {canChat ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      className="ucard-chat"
+                      onClick={() => {
+                        openImWithUser(account);
+                        handleClose();
+                      }}
+                    >
+                      私聊
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      className="ucard-chat"
+                      onClick={() => {
+                        void requestExclusiveRedpacket();
+                      }}
+                    >
+                      发专属红包
+                    </Button>
+                  </>
+                ) : isSelf ? (
                   <Button
                     type="button"
                     size="xs"
-                    variant="outline"
+                    variant="default"
                     className="ucard-chat"
                     onClick={() => {
-                      openImWithUser(account);
-                      handleClose();
+                      void requestLogout();
                     }}
                   >
-                    私聊
+                    退出登录
                   </Button>
                 ) : null}
               </div>

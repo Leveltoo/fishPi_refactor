@@ -137,7 +137,7 @@ export async function invokeUserCheckin(): Promise<CheckinOutcome> {
   if (outcome.status !== "ok") {
     return outcome;
   }
-  if (outcome.checkedIn === true) {
+  if ("checkedIn" in outcome && outcome.checkedIn === true) {
     return outcome;
   }
   // 写调用成功但未带回 checkedIn=true：重查确认，不伪造成功。

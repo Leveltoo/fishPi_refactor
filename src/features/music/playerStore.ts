@@ -17,6 +17,7 @@ export type PlayerSnapshot = {
   index: number;
   mode: number;
   playing: boolean;
+  muted: boolean;
   error: string;
 };
 
@@ -30,6 +31,7 @@ let tracks: Track[] = EMPTY_TRACKS;
 let index = 0;
 let mode = 0;
 let playing = false;
+let muted = false;
 let error = "";
 let audio: HTMLAudioElement | null = null;
 let cached: PlayerSnapshot = {
@@ -37,11 +39,12 @@ let cached: PlayerSnapshot = {
   index,
   mode,
   playing,
+  muted,
   error,
 };
 
 function sync(): void {
-  cached = { tracks, index, mode, playing, error };
+  cached = { tracks, index, mode, playing, muted, error };
   for (const listener of [...listeners]) {
     listener();
   }
@@ -174,6 +177,31 @@ export function playerTogglePlay(): void {
     audio.pause();
     return;
   }
+  void audio.play().catch(() => {
+    setPlayerPlaying(false);
+    setPlayerError("这一首没有播起来");
+  });
+}
+
+export function playerToggleMute(): void {
+  muted = !muted;
+  if (audio) {
+    audio.muted = muted;
+  }
+  sync();
+}
+
+/** 单曲播完重播；多曲切下一首。对齐旧版 music.vue `ended`。 */
+export function playerOnEnded(): void {
+  if (tracks.length > 1) {
+    setPlayerIndex(index + 1);
+    return;
+  }
+  if (audio == null) {
+    setPlayerPlaying(false);
+    return;
+  }
+  audio.currentTime = 0;
   void audio.play().catch(() => {
     setPlayerPlaying(false);
     setPlayerError("这一首没有播起来");

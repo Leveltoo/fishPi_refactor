@@ -1,11 +1,12 @@
 //! 私聊 DTO：会话列表、历史、实时事件。消息 ID 用字符串；不含 token。
 //!
-//! `content` 若是 HTML 会剥成纯文本；优先给 `md`（Markdown）。
+//! 有 `markdown` 时填 `md`；否则 `text` 保留原文（HTML/md），由前端净化渲染。
+//! 会话列表 `preview` 仍剥成纯文本。
 
 use fishpi_sdk::domain::chat::{ChatData, ChatNotice};
 use serde::{Deserialize, Serialize};
 
-use crate::text::{markdown_or_none, nonempty_text};
+use crate::text::{keep_renderable, markdown_or_none, nonempty_text};
 
 /// 会话列表项。peer 由前端按当前用户与 sender/receiver 推得。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,7 +82,7 @@ impl From<&ChatData> for PrivateMessageDto {
         let text = if md.is_some() {
             None
         } else {
-            nonempty_text(&data.content).or_else(|| nonempty_text(&data.preview))
+            keep_renderable(&data.content).or_else(|| keep_renderable(&data.preview))
         };
         Self {
             id: data.id.clone(),
@@ -350,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn html_content_becomes_text() {
+    fn html_content_kept_for_frontend() {
         let data = ChatData {
             id: "1".into(),
             to_id: String::new(),
@@ -362,12 +363,15 @@ mod tests {
             receiver_avatar: String::new(),
             receiver_user_name: "bob".into(),
             markdown: String::new(),
-            content: "<p>你好&nbsp;世界</p>".into(),
+            content: "<p>你好&nbsp;<img src=\"https://a/b.png\"></p>".into(),
             time: String::new(),
         };
         let dto = PrivateMessageDto::from(data);
         assert!(dto.md.is_none());
-        assert_eq!(dto.text.as_deref(), Some("你好 世界"));
+        assert_eq!(
+            dto.text.as_deref(),
+            Some("<p>你好&nbsp;<img src=\"https://a/b.png\"></p>")
+        );
     }
 
     #[test]

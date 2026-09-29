@@ -290,11 +290,11 @@ enum HistoryCall {
 async fn fetch_history(client: &FishPi, call: HistoryCall) -> Result<Vec<ChatRoomMsg>, AppError> {
     let api = client.chatroom();
     match call {
-        HistoryCall::Page(page) => Ok(api.history(page, ChatContentType::Markdown).await?),
+        HistoryCall::Page(page) => Ok(api.history(page, ChatContentType::Html).await?),
         HistoryCall::Around { id, mode, size } => {
             let mode = ChatRoomMessageMode::from(mode);
             Ok(api
-                .msg_around(id, mode, size, ChatContentType::Markdown)
+                .msg_around(id, mode, size, ChatContentType::Html)
                 .await?)
         }
     }

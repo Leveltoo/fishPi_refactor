@@ -22,17 +22,22 @@ import {
 import { MentionList } from "@/features/overlay/MentionList";
 import { insertMention, readMention } from "@/features/overlay/mention";
 import { isUploadableMedia, uploadMediaToMarkdown } from "../../../lib/upload";
-import { fetchChatroomBarrageCost, sendChatroomBarrager, type BarrageCost } from "../chatroomApi";
+import { fetchChatroomBarrageCost, fetchChatroomRaw, sendChatroomBarrager, type BarrageCost } from "../chatroomApi";
 import { DEFAULT_EMOJIS } from "../defaultEmojis";
 import { dispatchRedpacketSend } from "../redpacketEvents";
-import { toMusicBox } from "../messageView";
+import { safeCssColor, toMusicBox, topicQuote } from "../messageView";
 import { isOutcomeUnknown, toUserErrorMessage } from "../toUserError";
 import { EmojiPanel } from "./EmojiPanel";
 import {
   formatReplyTemplate,
-  startsWithReplyTemplate,
   type ReplyTarget,
 } from "../replyQuote";
+import {
+  htmlImageSources,
+  isFileSrc,
+  remoteImageMarkdown,
+  uploadLocalSources,
+} from "../pasteImages";
 import type { ClipboardEvent } from "react";
 
 type ComposerProps = {
@@ -53,18 +58,8 @@ type ComposerProps = {
   onClearDiscussed?: () => void;
 };
 
-/** 预设弹幕色。空字符串表示不传 color，由 SDK 用默认色。 */
-const BARRAGE_SWATCHES: Array<{ value: string; label: string }> = [
-  { value: "", label: "默认" },
-  { value: "#f5f5f5", label: "白" },
-  { value: "#ff4d4f", label: "红" },
-  { value: "#ffa940", label: "橙" },
-  { value: "#fadb14", label: "黄" },
-  { value: "#52c41a", label: "绿" },
-  { value: "#40a9ff", label: "蓝" },
-  { value: "#b37feb", label: "紫" },
-  { value: "#ff85c0", label: "粉" },
-];
+/** 对齐旧版 ColorPicker：任意颜色；空则走 SDK 默认色。 */
+const BARRAGE_DEFAULT_COLOR = "#ffffff";
 
 /** 对齐旧版：最大 32 字符。 */
 const BARRAGE_MAX_LENGTH = 32;
@@ -111,8 +106,8 @@ function readStoredHeight(): number {
 
 /**
  * 输入区：顶部图标工具条 → 拖拽调高 hr → textarea + 右侧等高发送钮 + .msg-more 话题 Tag。
- * 回复把引用 markdown 填回草稿；「红包」只派发 `fishpi:redpacket-send`（detail 可空或带当前 userName）。
- * 输入 `@` 弹出 overlay `MentionList`（`user_search`），选中插入 `@userName `。
+ * 回复只在 chip 展示，发送时再拼接引用（原文优先 chatroom_raw）。
+ * 输入 `@query` 弹出 overlay `MentionList`（任意位置且 @ 后有字符才触发）。
  * Enter 发送，Ctrl/Shift+Enter 换行；高度持久化 localStorage `message-height`（48–400）。
  */
 export function Composer({
@@ -137,7 +132,7 @@ export function Composer({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [barrageOpen, setBarrageOpen] = useState(false);
   const [barrageText, setBarrageText] = useState("");
-  const [barrageColor, setBarrageColor] = useState("");
+  const [barrageColor, setBarrageColor] = useState(BARRAGE_DEFAULT_COLOR);
   const [barrageBusy, setBarrageBusy] = useState(false);
   const [barrageCost, setBarrageCost] = useState<BarrageCost | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -151,6 +146,8 @@ export function Composer({
   const heightRef = useRef(msgHeight);
   /** 拖拽起点：Y 与高度，避免用 rect.bottom 反馈导致不跟手 */
   const dragStartRef = useRef<{ y: number; height: number } | null>(null);
+  /** 对齐旧 lastCursor：工具条/表情面板抢焦点后仍插回原光标。 */
+  const lastCursorRef = useRef(0);
   const rawMention = disabled ? null : readMention(draft, caret);
   const mention =
     rawMention && rawMention.start !== dismissedStart ? rawMention : null;
@@ -229,13 +226,6 @@ export function Composer({
       return;
     }
     appliedReplyIdRef.current = replyTo.id;
-    const template = formatReplyTemplate(replyTo, selfUserName);
-    setDraft((prev) => {
-      if (startsWithReplyTemplate(prev, replyTo)) {
-        return prev;
-      }
-      return template + prev.trimStart();
-    });
     requestAnimationFrame(() => {
       const node =
         textareaRef.current ??
@@ -244,32 +234,17 @@ export function Composer({
         return;
       }
       node.focus();
-      const end = node.value.length;
-      node.setSelectionRange(end, end);
+      const pos = lastCursorRef.current;
+      node.setSelectionRange(pos, pos);
     });
-  }, [replyTo, selfUserName]);
+  }, [replyTo]);
 
   useEffect(() => {
     if (!pendingToken) {
       return;
     }
-    setDraft((prev) => {
-      if (prev.length === 0 || prev.endsWith(" ") || prev.endsWith("\n")) {
-        return prev + pendingToken;
-      }
-      return `${prev} ${pendingToken}`;
-    });
+    insertAtLastCursor(pendingToken);
     onClearPendingToken?.();
-    requestAnimationFrame(() => {
-      const node = textareaRef.current;
-      if (node == null) {
-        return;
-      }
-      node.focus();
-      const end = node.value.length;
-      node.setSelectionRange(end, end);
-      setCaret(end);
-    });
   }, [pendingToken, onClearPendingToken]);
 
   /**
@@ -353,12 +328,6 @@ export function Composer({
   }
 
   function clearReply(): void {
-    if (replyTo != null) {
-      const template = formatReplyTemplate(replyTo, selfUserName);
-      setDraft((prev) =>
-        prev.startsWith(template) ? prev.slice(template.length) : prev,
-      );
-    }
     onClearReply();
   }
 
@@ -368,14 +337,29 @@ export function Composer({
       return;
     }
     let content = toMusicBox(base);
+    if (replyTo != null) {
+      let raw = replyTo.body === "（空消息）" ? "" : replyTo.body;
+      if (/^\d+$/.test(replyTo.id)) {
+        try {
+          const fetched = await fetchChatroomRaw(replyTo.id);
+          if (fetched.trim().length > 0) {
+            raw = fetched;
+          }
+        } catch {
+          // 回落本地 md/text。
+        }
+      }
+      content = `${formatReplyTemplate(replyTo, selfUserName, raw)}${content}`;
+    }
     if (discussed != null && discussed.length > 0) {
-      content += `\r\n*\`# ${discussed} #\`*`;
+      content += `\r\n${topicQuote(discussed)}`;
       onClearDiscussed?.();
     }
     const accepted = await onSend(content);
     if (accepted) {
       setDraft("");
       setCaret(0);
+      lastCursorRef.current = 0;
       setDismissedStart(null);
       onClearReply();
       onClearDiscussed?.();
@@ -388,7 +372,9 @@ export function Composer({
   }
 
   function syncCaret(node: HTMLTextAreaElement): void {
-    setCaret(node.selectionStart ?? node.value.length);
+    const pos = node.selectionStart ?? node.value.length;
+    setCaret(pos);
+    lastCursorRef.current = pos;
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
@@ -455,6 +441,7 @@ export function Composer({
     const nextCaret = emojiComplete.start + token.length;
     setDraft(next);
     setCaret(nextCaret);
+    lastCursorRef.current = nextCaret;
     setDismissedEmojiStart(null);
     requestAnimationFrame(() => {
       const node = textareaRef.current;
@@ -473,6 +460,7 @@ export function Composer({
     const next = insertMention(draft, mention.start, caret, userName);
     setDraft(next.text);
     setCaret(next.caret);
+    lastCursorRef.current = next.caret;
     setDismissedStart(mention.start);
     requestAnimationFrame(() => {
       const node = textareaRef.current;
@@ -484,23 +472,27 @@ export function Composer({
     });
   }
 
-  function insertToken(token: string): void {
+  function insertAtLastCursor(token: string): void {
     setDraft((prev) => {
-      if (prev.length === 0 || prev.endsWith(" ") || prev.endsWith("\n")) {
-        return prev + token;
-      }
-      return `${prev} ${token}`;
+      const at = Math.max(0, Math.min(lastCursorRef.current, prev.length));
+      const next = prev.slice(0, at) + token + prev.slice(at);
+      lastCursorRef.current = at + token.length;
+      return next;
     });
     requestAnimationFrame(() => {
-      const node = textareaRef.current;
-      if (node == null) {
+      const el = textareaRef.current;
+      const pos = lastCursorRef.current;
+      setCaret(pos);
+      if (el == null) {
         return;
       }
-      node.focus();
-      const end = node.value.length;
-      node.setSelectionRange(end, end);
-      setCaret(end);
+      el.focus();
+      el.setSelectionRange(pos, pos);
     });
+  }
+
+  function insertToken(token: string): void {
+    insertAtLastCursor(token);
   }
   function onSendRedpacket(): void {
     dispatchRedpacketSend(
@@ -516,9 +508,10 @@ export function Composer({
     }
     setBarrageBusy(true);
     try {
+      const color = safeCssColor(barrageColor);
       const result = await sendChatroomBarrager({
         content,
-        ...(barrageColor.length > 0 ? { color: barrageColor } : {}),
+        ...(color != null ? { color } : {}),
       });
       if (result.outcomeUnknown) {
         toast.warning("结果待确认。请等待回显，不要重复发送。");
@@ -553,10 +546,20 @@ export function Composer({
       const markdown = await uploadMediaToMarkdown(media);
       if (markdown.length > 0) {
         setDraft((prev) => {
-          if (prev.length === 0 || prev.endsWith("\n")) {
-            return prev + markdown;
+          const pos = Math.max(0, Math.min(lastCursorRef.current, prev.length));
+          const next = prev.slice(0, pos) + markdown + prev.slice(pos);
+          lastCursorRef.current = pos + markdown.length;
+          return next;
+        });
+        requestAnimationFrame(() => {
+          const el = textareaRef.current;
+          const pos = lastCursorRef.current;
+          setCaret(pos);
+          if (el == null) {
+            return;
           }
-          return `${prev}\n${markdown}`;
+          el.focus();
+          el.setSelectionRange(pos, pos);
         });
         toast.success("已上传并插入图片链接，发送后才发出");
       }
@@ -571,11 +574,59 @@ export function Composer({
   }
 
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
-    const files = Array.from(event.clipboardData?.files ?? []);
-    if (files.some(isUploadableMedia)) {
-      event.preventDefault();
-      void appendUploadedMarkdown(files);
+    const clipboard = event.clipboardData;
+    if (clipboard == null || disabled) {
+      return;
     }
+
+    lastCursorRef.current = event.currentTarget.selectionStart ?? lastCursorRef.current;
+
+    const itemFiles: File[] = [];
+    for (const item of Array.from(clipboard.items ?? [])) {
+      if (item.type.includes("image")) {
+        const file = item.getAsFile();
+        if (file != null) {
+          itemFiles.push(file);
+        }
+      }
+    }
+    const files = itemFiles.length > 0 ? itemFiles : Array.from(clipboard.files ?? []);
+    const hasImageFile = files.some(isUploadableMedia);
+    const html = clipboard.getData("text/html");
+    const srcs = html.length > 0 ? htmlImageSources(html) : [];
+    const remote = remoteImageMarkdown(srcs);
+    const localSrcs = srcs.filter(isFileSrc);
+
+    if (!hasImageFile && remote.length === 0 && localSrcs.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    if (remote.length > 0) {
+      insertAtLastCursor(remote);
+    }
+    const toUpload = [
+      ...files.filter(isUploadableMedia),
+    ];
+    void (async () => {
+      if (localSrcs.length > 0) {
+        try {
+          const markdown = await uploadLocalSources(localSrcs);
+          if (markdown.length > 0) {
+            insertAtLastCursor(
+              markdown.startsWith("\n") || lastCursorRef.current === 0
+                ? markdown
+                : `\n${markdown}`,
+            );
+          }
+        } catch (err) {
+          setUploadError(toUserErrorMessage(err));
+        }
+      }
+      if (toUpload.length > 0) {
+        await appendUploadedMarkdown(toUpload);
+      }
+    })();
   }
 
   return (
@@ -697,32 +748,38 @@ export function Composer({
             </DialogHeader>
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-2">
-                <Label>颜色</Label>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {BARRAGE_SWATCHES.map((swatch) => {
-                    const active = barrageColor === swatch.value;
-                    return (
-                      <button
-                        key={swatch.label}
-                        type="button"
-                        title={swatch.label}
-                        aria-label={swatch.label}
-                        aria-pressed={active}
-                        disabled={disabled || barrageBusy}
-                        onClick={() => {
-                          setBarrageColor(swatch.value);
-                        }}
-                        className="chat-barrage-swatch"
-                        data-active={active ? "true" : undefined}
-                        style={
-                          swatch.value.length > 0
-                            ? { background: swatch.value }
-                            : undefined
-                        }
-                      />
-                    );
-                  })}
+                <Label htmlFor="chatroom-barrage-color">颜色</Label>
+                <div className="chat-barrage-color">
+                  <input
+                    id="chatroom-barrage-color"
+                    type="color"
+                    value={
+                      /^#[0-9a-fA-F]{6}$/.test(barrageColor)
+                        ? barrageColor
+                        : BARRAGE_DEFAULT_COLOR
+                    }
+                    disabled={disabled || barrageBusy}
+                    onChange={(event) => {
+                      setBarrageColor(event.target.value);
+                    }}
+                    aria-label="弹幕颜色"
+                  />
+                  <Input
+                    value={barrageColor}
+                    placeholder="#ffffff"
+                    disabled={disabled || barrageBusy}
+                    onChange={(event) => {
+                      setBarrageColor(event.target.value);
+                    }}
+                    aria-label="弹幕颜色值"
+                  />
                 </div>
+                {barrageColor.trim().length > 0 &&
+                safeCssColor(barrageColor) == null ? (
+                  <p className="text-xs text-muted-foreground">
+                    颜色含 url/expression 等不安全值，发送时将忽略。
+                  </p>
+                ) : null}
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="chatroom-barrage">弹幕内容</Label>
@@ -861,6 +918,9 @@ export function Composer({
               syncCaret(event.currentTarget);
             }}
             onSelect={(event) => {
+              syncCaret(event.currentTarget);
+            }}
+            onBlur={(event) => {
               syncCaret(event.currentTarget);
             }}
             onKeyDown={onKeyDown}

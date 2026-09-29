@@ -11,6 +11,7 @@ import {
   isOutcomeUnknown,
   toUserErrorMessage,
 } from "./errors";
+import { invokeAuthMe } from "../../lib/tauri";
 import type { BreezemoonDto } from "./types";
 import { BREEZEMOON_COMMAND, PAGE_SIZE } from "./types";
 
@@ -36,6 +37,7 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
   const [error, setError] = useState<string | null>(null);
   const [capabilities, setCapabilities] =
     useState<BreezemoonCapabilities>(ALL_READY);
+  const [selfUserName, setSelfUserName] = useState<string | null>(null);
 
   const pageRef = useRef(1);
   const loadSeqRef = useRef(0);
@@ -171,6 +173,16 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
 
   useEffect(() => {
     mountedRef.current = true;
+    void (async () => {
+      try {
+        const me = await invokeAuthMe();
+        if (mountedRef.current) {
+          setSelfUserName(me.user?.userName ?? null);
+        }
+      } catch {
+        // 读不到当前用户时不显示编辑/删除入口。
+      }
+    })();
     return () => {
       mountedRef.current = false;
     };
@@ -192,6 +204,7 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
     pendingConfirm,
     error,
     capabilities,
+    selfUserName,
     refresh,
     loadMore,
     send,

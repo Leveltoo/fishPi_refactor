@@ -17,14 +17,40 @@
 
 .ov-image-header {
   padding-right: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.ov-image-dialog img {
-  display: block;
+.ov-image-open {
+  margin-left: auto;
+}
+
+.ov-image-stage {
+  position: relative;
+  overflow: hidden;
   width: 100%;
-  max-height: min(80vh, 40rem);
+  height: min(80vh, 40rem);
+  min-height: 12rem;
+  background: var(--color-bg);
+  cursor: grab;
+  user-select: none;
+}
+
+.ov-image-stage.is-dragging {
+  cursor: grabbing;
+}
+
+.ov-image-canvas {
+  position: absolute;
+  display: block;
+  max-width: none;
+  max-height: none;
   margin: 0;
-  object-fit: contain;
+  object-fit: fill;
+  user-select: none;
+  pointer-events: auto;
   background: var(--color-bg);
 }
 

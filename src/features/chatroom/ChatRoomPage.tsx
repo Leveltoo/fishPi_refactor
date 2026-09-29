@@ -8,16 +8,18 @@ import { jumpToMessage, MessageList } from "./components/MessageList";
 import { OnlineSidebar } from "./components/OnlineBar";
 import {
   addEmojiUrl,
+  fetchChatroomRaw,
   loadChatroomFilters,
+  sendChatroomBarrager,
   type ChatroomFilters,
 } from "./chatroomApi";
-import { repeatBody, TOPIC_MAX_LENGTH, topicCommand } from "./messageView";
+import { asRich, repeatBody, TOPIC_MAX_LENGTH, topicCommand, topicQuote } from "./messageView";
 import { toReplyTarget, type ReplyTarget } from "./replyQuote";
-import { insertMentionToken, openPrivateChat, sendExclusiveRedpacket } from "./userMenuActions";
+import { insertMentionToken, openPrivateChat } from "./userMenuActions";
 import { useChatroomSession } from "./useChatroomSession";
 import { CHAT_JUMP_EVENT, DISCUSS_PICK_EVENT, dispatchChatJump } from "./jumpEvents";
 import { toast } from "sonner";
-import { toUserErrorMessage } from "./toUserError";
+import { isOutcomeUnknown, toUserErrorMessage } from "./toUserError";
 import "./chatroom.css";
 
 const EMPTY_FILTERS: ChatroomFilters = { shield: [], careUsers: [] };
@@ -137,8 +139,6 @@ export function ChatRoomPage() {
     return () => window.removeEventListener(DISCUSS_PICK_EVENT, onPick);
   }, []);
 
-  const lastOnlineRef = useRef<string[] | null>(null);
-
   /** 领取人头像查表：内容不变时保持旧引用，避免在线列表刷新打穿 MessageItem memo。 */
   const avatarMapRef = useRef<Map<string, string>>(new Map());
   const userAvatarMap = useMemo(() => {
@@ -165,39 +165,6 @@ export function ChatRoomPage() {
     return next;
   }, [session.users]);
 
-  /** 会话代次变化（清屏 / 重连）后重置去重基线，避免重建后整批误报。 */
-  useEffect(() => {
-    lastOnlineRef.current = null;
-  }, [session.windowEpoch]);
-
-  /** 特别关心上线通知（对齐旧 notice.js chatroomMsg online 分支）。 */
-  useEffect(() => {
-    if (!filtersReady) {
-      return;
-    }
-    const names = session.users.map((user) => user.userName);
-    const previous = lastOnlineRef.current;
-    lastOnlineRef.current = names;
-    if (previous == null) {
-      return;
-    }
-    const care = new Set(filters.careUsers);
-    if (care.size === 0) {
-      return;
-    }
-    const announced = new Set<string>();
-    for (const name of names) {
-      if (previous.includes(name) || announced.has(name)) {
-        continue;
-      }
-      if (name === session.selfUserName || !care.has(name)) {
-        continue;
-      }
-      announced.add(name);
-      toast(`你的特别关心 ${name} 上线啦~`);
-    }
-  }, [session.users, session.selfUserName, filters.careUsers, filtersReady]);
-
   const topicText = session.topic.trim();
   const discussedActive = discussed != null && discussed.length > 0;
 
@@ -211,11 +178,52 @@ export function ChatRoomPage() {
   }, []);
   const onPlusOne = useCallback(
     (message: Parameters<typeof repeatBody>[0]) => {
-      const body = repeatBody(message);
-      if (body == null) {
+      if (message.kind === "barrager") {
+        const content = message.text?.trim();
+        if (content == null || content.length === 0) {
+          return;
+        }
+        const color = asRich(message).color;
+        void sendChatroomBarrager({
+          content,
+          ...(color != null && color.length > 0 ? { color } : {}),
+        }).then((result) => {
+          if (result.outcomeUnknown) {
+            toast.warning("结果待确认。请等待回显，不要重复发送。");
+            return;
+          }
+          if (!result.accepted) {
+            toast.error("弹幕未被接受，请稍后再试");
+          }
+        }).catch((err: unknown) => {
+          if (isOutcomeUnknown(err)) {
+            toast.warning("结果待确认。请等待回显，不要重复发送。");
+            return;
+          }
+          toast.error(toUserErrorMessage(err));
+        });
         return;
       }
-      void send(body);
+      void (async () => {
+        let body = message.md?.trim() || null;
+        if ((body == null || body.length === 0) && /^\d+$/.test(message.id)) {
+          try {
+            const raw = await fetchChatroomRaw(message.id);
+            if (raw.trim().length > 0) {
+              body = raw;
+            }
+          } catch {
+            // 回落本地正文。
+          }
+        }
+        if (body == null) {
+          body = repeatBody(message);
+        }
+        if (body == null) {
+          return;
+        }
+        void send(body);
+      })();
     },
     [send],
   );
@@ -245,6 +253,15 @@ export function ChatRoomPage() {
       return;
     }
     setDiscussed((prev) => (prev === topicText ? null : topicText));
+  }
+
+  /** 对齐旧版双击话题：立刻发送 `*\`# 话题 #\`*`，并清掉勾选。 */
+  function sendDiscussedTopic(): void {
+    if (topicText.length === 0 || session.sendDisabled) {
+      return;
+    }
+    void send(topicQuote(topicText));
+    setDiscussed(null);
   }
 
   function openTopicEdit(): void {
@@ -350,13 +367,14 @@ export function ChatRoomPage() {
                   title={
                     topicText.length > 0
                       ? discussedActive
-                        ? "点击取消勾选话题"
-                        : "点击勾选话题（发送时附加）"
+                        ? "单击取消勾选；双击立即发送话题"
+                        : "单击勾选话题（发送时附加）；双击立即发送"
                       : "无话题"
                   }
                   aria-pressed={topicText.length > 0 ? discussedActive : undefined}
                   disabled={session.busy}
                   onClick={toggleDiscussed}
+                  onDoubleClick={sendDiscussedTopic}
                   style={
                     discussedActive
                       ? {
@@ -418,7 +436,6 @@ export function ChatRoomPage() {
           onEditTopic={openTopicEdit}
           onMention={(userName) => setPendingToken(insertMentionToken(userName))}
           onOpenIm={openPrivateChat}
-          onRedpacket={sendExclusiveRedpacket}
         />
       </div>
     </TooltipProvider>

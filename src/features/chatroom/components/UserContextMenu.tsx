@@ -27,7 +27,7 @@ export function UserContextMenu({
     return null;
   }
   return (
-    <ContextMenuContent className="chat-menu" sideOffset={4}>
+    <ContextMenuContent className="chat-menu">
       <ContextMenuItem
         onSelect={() => {
           onMention(userName);

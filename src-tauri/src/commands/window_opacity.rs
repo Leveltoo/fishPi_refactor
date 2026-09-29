@@ -13,7 +13,7 @@ use crate::error::AppError;
 #[tauri::command(rename_all = "camelCase")]
 pub fn window_set_opacity(app: AppHandle, request: OpacityRequest) -> Result<(), AppError> {
     if !(OPACITY_MIN..=OPACITY_MAX).contains(&request.opacity) {
-        return Err(AppError::business("透明度必须在 0.3 到 1 之间"));
+        return Err(AppError::business("透明度必须在 0.1 到 1 之间"));
     }
 
     let window = app

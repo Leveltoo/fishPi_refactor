@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
 import {
+  ArrowBendUpLeftIcon,
   ArrowLeftIcon,
+  ChatCircleIcon,
+  EyeIcon,
   HeartIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
@@ -18,9 +20,18 @@ import {
 
 import { sanitizeHttpUrl } from "../../lib/markdown";
 import { setHeaderTitle } from "../../lib/headerTitle";
+import { CommentComposer } from "./CommentComposer";
 import { dispatchPreviewImage, dispatchUserCard } from "./events";
-import { MarkdownBody } from "./MarkdownBody";
-import type { ArticleComment, ArticleDetail, ArticleListType, ArticleSummary, ArticleVoteDirection } from "./types";
+import { ArticleRichBody } from "./MarkdownBody";
+import type {
+  ArticleComment,
+  ArticleDetail,
+  ArticleListType,
+  ArticleSummary,
+  ArticleVoteDirection,
+  CommentReplyTarget,
+  CommentSubmit,
+} from "./types";
 import {
   ARTICLE_LIST_TYPE_LABEL,
   ARTICLE_LIST_TYPES,
@@ -91,11 +102,13 @@ export function ArticleHost() {
           detailAvailable={articles.capabilities.detail}
           onBack={articles.closeArticle}
           onRetry={articles.retryDetail}
-          onLoadMore={articles.loadMoreComments}
+          onLoadEarlier={articles.loadEarlierComments}
+          onLoadLater={articles.loadLaterComments}
           onSend={articles.sendComment}
           heatCount={articles.heatCount}
           heatLive={articles.heatLive}
           heatNote={articles.heatNote}
+          commentLiveNote={articles.commentLiveNote}
           thankAvailable={articles.capabilities.thank}
           voteAvailable={articles.capabilities.vote}
           rewardAvailable={articles.capabilities.reward}
@@ -298,11 +311,13 @@ type ArticleDetailPaneProps = {
   detailAvailable: boolean;
   onBack: () => void;
   onRetry: () => void;
-  onLoadMore: () => void;
-  onSend: (content: string) => Promise<boolean>;
+  onLoadEarlier: () => void;
+  onLoadLater: () => void;
+  onSend: (draft: CommentSubmit) => Promise<boolean>;
   heatCount: number | null;
   heatLive: boolean;
   heatNote: string | null;
+  commentLiveNote: string | null;
   thankAvailable: boolean;
   voteAvailable: boolean;
   rewardAvailable: boolean;
@@ -332,11 +347,13 @@ function ArticleDetailPane({
   detailAvailable,
   onBack,
   onRetry,
-  onLoadMore,
+  onLoadEarlier,
+  onLoadLater,
   onSend,
   heatCount,
   heatLive,
   heatNote,
+  commentLiveNote,
   thankAvailable,
   voteAvailable,
   rewardAvailable,
@@ -355,6 +372,42 @@ function ArticleDetailPane({
   onVote,
   onReward,
 }: ArticleDetailPaneProps) {
+  const [reply, setReply] = useState<CommentReplyTarget | null>(null);
+  const [jumpMiss, setJumpMiss] = useState<string | null>(null);
+
+  function jumpToComments(): void {
+    document.getElementById("article-comments")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
+
+  function jumpToComment(commentId: string): void {
+    const node = document.getElementById(`comment-item-${commentId}`);
+    if (node == null) {
+      setJumpMiss("该评论不在当前已加载范围，可先点「加载更早评论」。");
+      return;
+    }
+    setJumpMiss(null);
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.classList.add("is-flash");
+    window.setTimeout(() => {
+      node.classList.remove("is-flash");
+    }, 1200);
+  }
+
+  function startReply(comment: ArticleComment): void {
+    setReply({
+      id: comment.id,
+      userName: comment.userName,
+      content: comment.markdown || comment.html,
+    });
+    document.getElementById("article-composer")?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }
+
   return (
     <section className="article-pane" aria-label="帖子详情">
       <header className="article-head article-head-detail">
@@ -398,6 +451,21 @@ function ArticleDetailPane({
                   size="default"
                 />
                 <span>{detail.time}</span>
+                {detail.viewCount > 0 ? (
+                  <span className="article-views" title="浏览数">
+                    <EyeIcon />
+                    {detail.viewCount}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="article-jump-comments"
+                  title="跳到评论区"
+                  onClick={jumpToComments}
+                >
+                  <ChatCircleIcon />
+                  {detail.commentCount} 评
+                </button>
                 {detail.tags ? (
                   <span className="article-tags">{detail.tags}</span>
                 ) : null}
@@ -415,11 +483,11 @@ function ArticleDetailPane({
                 onVote={onVote}
               />
             </div>
-            {detail.markdown ? (
-              <MarkdownBody source={detail.markdown} />
-            ) : (
-              <p className="article-empty-copy">这篇帖子没有正文。</p>
-            )}
+            <ArticleRichBody
+              markdown={detail.markdown}
+              html={detail.html}
+              empty="这篇帖子没有正文。"
+            />
             {detail.rewardPoint > 0 ? (
               <ArticleReward
                 detail={detail}
@@ -429,21 +497,51 @@ function ArticleDetailPane({
               />
             ) : null}
 
-            <h3 className="article-comments-title">
+            <h3 className="article-comments-title" id="article-comments">
               评论
               {detail.commentCount > 0 ? (
                 <span> {detail.commentCount}</span>
               ) : null}
             </h3>
+            <p className="article-comments-hint">
+              从最后一页打开，最新评论在底部；可向上加载更早评论（对齐旧版从末页往前翻）。
+            </p>
+            {commentLiveNote ? (
+              <p className="article-heat-note">{commentLiveNote}</p>
+            ) : null}
+            {jumpMiss ? (
+              <p className="article-heat-note">{jumpMiss}</p>
+            ) : null}
+
+            {detail.commentHasEarlier ? (
+              <div className="article-more">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={loadingMore}
+                  onClick={onLoadEarlier}
+                >
+                  {loadingMore ? <Spinner /> : null}
+                  {loadingMore ? "加载中" : "加载更早评论"}
+                </Button>
+              </div>
+            ) : null}
 
             {detail.comments.length === 0 ? (
               <p className="article-empty-copy">还没有评论。</p>
             ) : (
               <ul className="article-comments">
                 {detail.comments.map((comment) => (
-                  <li key={comment.id}>
+                  <li key={comment.id} id={`comment-item-${comment.id}`}>
                     <CommentItem
                       comment={comment}
+                      original={
+                        comment.replyId
+                          ? detail.comments.find((item) => item.id === comment.replyId) ??
+                            null
+                          : null
+                      }
                       selfUserName={selfUserName}
                       action={commentAction}
                       deleteAvailable={commentDeleteAvailable}
@@ -452,6 +550,12 @@ function ArticleDetailPane({
                       onDelete={onDeleteComment}
                       onThank={onThankComment}
                       onVote={onVoteComment}
+                      onReply={() => startReply(comment)}
+                      onJumpReply={
+                        comment.replyId
+                          ? () => jumpToComment(comment.replyId)
+                          : undefined
+                      }
                     />
                   </li>
                 ))}
@@ -465,7 +569,7 @@ function ArticleDetailPane({
                   variant="ghost"
                   size="sm"
                   disabled={loadingMore}
-                  onClick={onLoadMore}
+                  onClick={onLoadLater}
                 >
                   {loadingMore ? <Spinner /> : null}
                   {loadingMore ? "加载中" : "更多评论"}
@@ -479,6 +583,8 @@ function ArticleDetailPane({
               pendingConfirm={pendingConfirm}
               commentAvailable={commentAvailable}
               commentable={detail.commentable}
+              reply={reply}
+              onClearReply={() => setReply(null)}
               onSend={onSend}
             />
           </div>
@@ -593,7 +699,10 @@ function ArticleReward({
     return (
       <section className="article-reward">
         {detail.rewardContent ? (
-          <MarkdownBody source={detail.rewardContent} />
+          <ArticleRichBody
+            markdown={detail.rewardContent}
+            empty="已打赏，没有可显示的隐藏正文。"
+          />
         ) : (
           <p className="article-empty-copy">已打赏，没有可显示的隐藏正文。</p>
         )}
@@ -639,6 +748,7 @@ function ArticleReward({
 
 function CommentItem({
   comment,
+  original,
   selfUserName,
   action,
   deleteAvailable,
@@ -647,8 +757,11 @@ function CommentItem({
   onDelete,
   onThank,
   onVote,
+  onReply,
+  onJumpReply,
 }: {
   comment: ArticleComment;
+  original: ArticleComment | null;
   selfUserName: string | null;
   action: { id: string; kind: "delete" | "thank" | "vote" } | null;
   deleteAvailable: boolean;
@@ -657,6 +770,8 @@ function CommentItem({
   onDelete: (commentId: string) => void;
   onThank: (commentId: string) => void;
   onVote: (commentId: string, direction: ArticleVoteDirection) => void;
+  onReply: () => void;
+  onJumpReply?: () => void;
 }) {
   const self = selfUserName?.trim() ?? "";
   const author = comment.userName.trim();
@@ -675,6 +790,12 @@ function CommentItem({
         ? "不能感谢自己的评论"
         : `确认赠送 15 积分给 ${comment.userName} 以表感谢？`;
   const voteTitle = voteAvailable ? undefined : "评论赞踩命令尚未接入";
+  const replyLabel = original
+    ? original.displayName.trim() || original.userName.trim()
+    : "";
+  const replyAvatar = sanitizeHttpUrl(
+    original?.avatarUrl || comment.replyAvatarUrl,
+  );
 
   function remove() {
     if (!deleteAvailable || busy) {
@@ -717,13 +838,37 @@ function CommentItem({
           >
             {comment.displayName || comment.userName}
           </button>
+          {comment.replyId ? (
+            <button
+              type="button"
+              className="article-comment-reply"
+              title="跳转回复"
+              onClick={onJumpReply}
+            >
+              <ArrowBendUpLeftIcon />
+              {replyAvatar ? (
+                <Avatar size="sm" className="article-reply-avatar">
+                  <AvatarImage src={replyAvatar} alt="" />
+                  <AvatarFallback>
+                    {replyLabel.slice(0, 1)}
+                  </AvatarFallback>
+                </Avatar>
+              ) : null}
+              <span>
+                {original
+                  ? `回复 ${replyLabel}`
+                  : "回复"}
+              </span>
+            </button>
+          ) : null}
           <span>{comment.time}</span>
         </p>
-        {comment.markdown ? (
-          <MarkdownBody source={comment.markdown} className="article-md article-md-comment" />
-        ) : (
-          <p className="article-empty-copy">（空评论）</p>
-        )}
+        <ArticleRichBody
+          markdown={comment.markdown}
+          html={comment.html}
+          className="article-md article-md-comment"
+          empty="（空评论）"
+        />
         <div className="article-comment-footer">
           {isOwn ? (
             <button
@@ -781,6 +926,15 @@ function CommentItem({
             {busyKind === "vote" ? <Spinner /> : <ThumbsDownIcon />}
             <span>{comment.badCount}</span>
           </button>
+          <button
+            type="button"
+            className="article-comment-action"
+            title="回复"
+            onClick={onReply}
+          >
+            <ArrowBendUpLeftIcon />
+            <span>回复</span>
+          </button>
         </div>
       </div>
     </article>
@@ -826,87 +980,4 @@ function AuthorChip({
   );
 }
 
-type CommentComposerProps = {
-  disabled: boolean;
-  sending: boolean;
-  pendingConfirm: boolean;
-  commentAvailable: boolean;
-  commentable: boolean;
-  onSend: (content: string) => Promise<boolean>;
-};
 
-function CommentComposer({
-  disabled,
-  sending,
-  pendingConfirm,
-  commentAvailable,
-  commentable,
-  onSend,
-}: CommentComposerProps) {
-  const [draft, setDraft] = useState("");
-
-  async function submit(): Promise<void> {
-    const content = draft.trim();
-    if (content.length === 0 || disabled || sending) {
-      return;
-    }
-    const accepted = await onSend(content);
-    if (accepted) {
-      setDraft("");
-    }
-  }
-
-  function onSubmit(event: FormEvent): void {
-    event.preventDefault();
-    void submit();
-  }
-
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      void submit();
-    }
-  }
-
-  const placeholder = !commentAvailable
-    ? "评论接口尚未接入，不会伪装发出"
-    : !commentable
-      ? "这篇帖子关闭了评论"
-      : "写下评论，Ctrl+Enter 发送";
-
-  return (
-    <form className="article-composer" onSubmit={onSubmit}>
-      {pendingConfirm ? (
-        <p className="article-pending" role="status">
-          结果待确认。请稍后查看是否已经成功，请勿重复提交。
-        </p>
-      ) : null}
-      <Textarea
-        id="article-comment-input"
-        rows={3}
-        value={draft}
-        disabled={disabled || !commentAvailable}
-        placeholder={placeholder}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={onKeyDown}
-        aria-label="评论内容"
-      />
-      <div className="article-composer-bar">
-        <p className="article-composer-hint">评论发出后会刷新详情，不会在本地假装成功。</p>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={
-            disabled ||
-            sending ||
-            !commentAvailable ||
-            draft.trim().length === 0
-          }
-        >
-          {sending ? <Spinner /> : null}
-          {sending ? "发送中" : "发送"}
-        </Button>
-      </div>
-    </form>
-  );
-}

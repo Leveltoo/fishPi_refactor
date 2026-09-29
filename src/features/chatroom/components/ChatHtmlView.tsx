@@ -5,7 +5,11 @@ import {
   dispatchUserCard,
   mentionUserFromLink,
 } from "@/features/overlay/events";
-import { expandEmojiShortcodes } from "../emojiShortcode";
+import {
+  expandEmojiShortcodesHtml,
+  isEmojiImage,
+  looksLikeHtmlContent,
+} from "../emojiShortcode";
 import { dispatchChatJump, dispatchDiscussPick } from "../jumpEvents";
 import {
   chatJumpIdFromHref,
@@ -47,6 +51,11 @@ const ALLOWED_TAGS = [
   "td",
   "hr",
   "font",
+  "iframe",
+  "video",
+  "source",
+  "details",
+  "summary",
 ];
 
 const ALLOWED_ATTR = [
@@ -66,25 +75,135 @@ const ALLOWED_ATTR = [
   "rowspan",
   "start",
   "type",
+  "frameborder",
+  "border",
+  "marginwidth",
+  "marginheight",
+  "allowfullscreen",
+  "scrolling",
+  "controls",
+  "poster",
+  "preload",
+  "playsinline",
+  "open",
 ];
 
-/** 服务端 content/md 可能是 HTML（旧客户端 v-html）。先净化再插入，禁止 script/事件。 */
+/** 只放行 http(s)、协议相对、页内锚点；禁止 javascript / data / file。 */
+const ALLOWED_URI_REGEXP = /^(?:https?:|\/\/|#)/i;
+
+let purifyHooked = false;
+
+function isHttpUrl(value: string): boolean {
+  return sanitizeHttpUrl(value) != null;
+}
+
+function isNeteasePlayer(src: string): boolean {
+  try {
+    const url = new URL(src, "https://music.163.com");
+    const host = url.hostname.toLowerCase();
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (host === "music.163.com" || host === "www.music.163.com") &&
+      url.pathname.includes("/outchain/player")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function rewriteNeteaseSrc(src: string): string | null {
+  if (!isNeteasePlayer(src)) {
+    return null;
+  }
+  try {
+    return new URL(src, "https://music.163.com").href;
+  } catch {
+    return null;
+  }
+}
+
+function ensurePurifyHooks(): void {
+  if (purifyHooked) {
+    return;
+  }
+  purifyHooked = true;
+  DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
+    const name = data.attrName;
+    if (name === "href" || name === "src") {
+      const value = data.attrValue.trim();
+      const lower = value.toLowerCase();
+      if (
+        lower.startsWith("javascript:") ||
+        lower.startsWith("data:") ||
+        lower.startsWith("vbscript:") ||
+        lower.startsWith("file:")
+      ) {
+        data.keepAttr = false;
+        return;
+      }
+      if (node.nodeName === "IFRAME" && name === "src") {
+        const rewritten = rewriteNeteaseSrc(value);
+        if (rewritten == null) {
+          data.keepAttr = false;
+          return;
+        }
+        data.attrValue = rewritten;
+        return;
+      }
+      if (name === "href") {
+        if (value.startsWith("#")) {
+          return;
+        }
+        if (!isHttpUrl(value)) {
+          data.keepAttr = false;
+        }
+        return;
+      }
+      if (!isHttpUrl(value)) {
+        data.keepAttr = false;
+      }
+    }
+  });
+}
+
+/** 服务端 content 可能是 HTML（旧客户端 v-html）。先净化再插入，禁止 script/事件。 */
 export function looksLikeHtml(source: string): boolean {
-  return /<\/?(?:p|img|br|strong|em|a|span|div|ul|ol|li|table|font|blockquote|h[1-6])\b/i.test(
-    source,
-  );
+  return looksLikeHtmlContent(source);
+}
+
+/** 展示优先服务端 HTML（text），否则 md 里的 HTML。 */
+export function messageHtmlSource(message: {
+  md?: string;
+  text?: string;
+}): string | null {
+  const text = message.text?.trim() ?? "";
+  if (text.length > 0 && looksLikeHtml(text)) {
+    return text;
+  }
+  const md = message.md?.trim() ?? "";
+  if (md.length > 0 && looksLikeHtml(md)) {
+    return md;
+  }
+  return null;
 }
 
 function sanitizeChatHtml(source: string): string {
-  const withEmoji = expandEmojiShortcodes(source);
+  ensurePurifyHooks();
+  const withEmoji = expandEmojiShortcodesHtml(source);
   return DOMPurify.sanitize(withEmoji, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
+    ALLOWED_URI_REGEXP,
+    FORBID_TAGS: ["script", "object", "embed", "link", "meta", "form"],
+    FORBID_ATTR: ["srcdoc"],
   });
 }
 
-function onHtmlClick(event: MouseEvent<HTMLDivElement>): void {
+function onHtmlClick(
+  event: MouseEvent<HTMLDivElement>,
+  onJump?: (messageId: string) => void,
+): void {
   const target = event.target;
   if (!(target instanceof Element)) {
     return;
@@ -94,6 +213,9 @@ function onHtmlClick(event: MouseEvent<HTMLDivElement>): void {
   if (image instanceof HTMLImageElement) {
     event.preventDefault();
     event.stopPropagation();
+    if (isEmojiImage(image)) {
+      return;
+    }
     const src = sanitizeHttpUrl(image.getAttribute("src"));
     if (src) {
       dispatchPreviewImage({
@@ -121,7 +243,11 @@ function onHtmlClick(event: MouseEvent<HTMLDivElement>): void {
   const href = anchor.getAttribute("href");
   const jumpId = chatJumpIdFromHref(href);
   if (jumpId != null) {
-    dispatchChatJump(jumpId);
+    if (onJump) {
+      onJump(jumpId);
+    } else {
+      dispatchChatJump(jumpId);
+    }
     return;
   }
   const userName = mentionUserFromLink(href, anchor.textContent);
@@ -134,17 +260,22 @@ function onHtmlClick(event: MouseEvent<HTMLDivElement>): void {
 
 type ChatHtmlViewProps = {
   source: string;
+  /** 私聊传入：回复锚点在会话内跳转，不走聊天室全局事件。 */
+  onJump?: (messageId: string) => void;
 };
 
-/** 旧版 formatContent 对齐：服务端 HTML 经 DOMPurify 后展示；点击图片开预览。 */
+/** 旧版 formatContent 对齐：服务端 HTML 经 DOMPurify 后展示；表情短码不打开看图。 */
 export const ChatHtmlView = memo(function ChatHtmlView({
   source,
+  onJump,
 }: ChatHtmlViewProps) {
   const html = useMemo(() => sanitizeChatHtml(source), [source]);
   return (
     <div
       className="chat-md chat-html"
-      onClick={onHtmlClick}
+      onClick={(event) => {
+        onHtmlClick(event, onJump);
+      }}
       // 仅渲染 DOMPurify 白名单结果
       dangerouslySetInnerHTML={{ __html: html }}
     />

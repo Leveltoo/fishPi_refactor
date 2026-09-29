@@ -35,8 +35,8 @@ export function parseOpenEvent(event: Event): OpenSession | null {
   };
 }
 
-export function parseSendEvent(event: Event): SendSession {
-  const record = asRecord(readDetail(event)) ?? {};
+export function parseSendPayload(detail: unknown): SendSession {
+  const record = asRecord(detail) ?? {};
   const fromUser = readNonEmptyString(record.user);
   const fromUserName = readNonEmptyString(record.userName);
   const namedUser = fromUser ?? fromUserName;
@@ -58,6 +58,10 @@ export function parseSendEvent(event: Event): SendSession {
       ...readNameList(record.receivers),
     ]),
   };
+}
+
+export function parseSendEvent(event: Event): SendSession {
+  return parseSendPayload(readDetail(event));
 }
 
 function readDetail(event: Event): unknown {

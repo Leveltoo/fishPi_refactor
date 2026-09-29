@@ -15,6 +15,7 @@ type BreezemoonHostProps = {
 /**
  * 清风明月宿主：时间线 + 底部输入。无必填 props。
  * 发送成功只表示已接受，不本地 echo；命令缺失时不会伪装成功。
+ * SDK 没有编辑 / 删除，按钮禁用且不会假装成功。
  */
 export function BreezemoonHost({ userName }: BreezemoonHostProps) {
   const moon = useBreezemoon({ userName });
@@ -37,6 +38,9 @@ export function BreezemoonHost({ userName }: BreezemoonHostProps) {
           刷新
         </Button>
       </header>
+      <p className="bm-sdk-note">
+        编辑 / 删除不可用：当前 SDK 只有列表和发送，不会假装成功。
+      </p>
 
       {bridgeMissing ? (
         <Alert className="bm-banner">
@@ -59,6 +63,7 @@ export function BreezemoonHost({ userName }: BreezemoonHostProps) {
         loading={moon.loading}
         loadingMore={moon.loadingMore}
         hasMore={moon.hasMore}
+        selfUserName={moon.selfUserName}
         onLoadMore={moon.loadMore}
       />
 

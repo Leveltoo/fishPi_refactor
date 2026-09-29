@@ -115,7 +115,7 @@ impl RevokeEvent {
     }
 }
 
-/// `chatroom://redpacket-status`。P0 UI 可忽略，字段留给 P1 状态合并。
+/// `chatroom://redpacket-status`。领取人头像优先用 SDK 的 avatar URL。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RedpacketStatusEvent {
@@ -127,6 +127,9 @@ pub struct RedpacketStatusEvent {
     pub who_give: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub who_got: Vec<String>,
+    /// 本帧领取人的头像。优先 48，其次 20 / 210；非法 URL 不传。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub who_got_avatar: Option<String>,
 }
 
 impl RedpacketStatusEvent {
@@ -135,6 +138,7 @@ impl RedpacketStatusEvent {
         connection_generation: u64,
         status: RedPacketStatusMsg,
     ) -> Self {
+        let who_got_avatar = status_avatar(&status);
         Self {
             session_generation,
             connection_generation,
@@ -142,9 +146,16 @@ impl RedpacketStatusEvent {
             count: status.count,
             got: status.got,
             who_give: status.who_give,
+            who_got_avatar,
             who_got: status.who_got,
         }
     }
+}
+
+fn status_avatar(status: &RedPacketStatusMsg) -> Option<String> {
+    super::message::public_http_url(&status.user_avatar_url48)
+        .or_else(|| super::message::public_http_url(&status.user_avatar_url20))
+        .or_else(|| super::message::public_http_url(&status.user_avatar_url210))
 }
 
 /// Bridge 已证实的连接状态。未知就必须是 `unknown`，不能用「暂时没消息」推断离线。

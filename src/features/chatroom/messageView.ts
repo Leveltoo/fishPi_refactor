@@ -291,6 +291,11 @@ export function topicCommand(raw: string): string | null {
   return `[setdiscuss]${text}[/setdiscuss]`;
 }
 
+/** 旧版双击话题发出的正文：`*\`# 话题 #\`*`。 */
+export function topicQuote(text: string): string {
+  return `*\`# ${text} #\`*`;
+}
+
 /** 网易云链接转 music box iframe（抄旧版 messagebox.vue toMusicBox）。 */
 export function toMusicBox(msg: string): string {
   const songRe = /http(?:s):\/\/music.163.com\/(?:#\/|)song\?id=(\d+)(&[\w=]+)*/g;

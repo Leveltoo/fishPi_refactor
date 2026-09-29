@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { MessageScrollbar } from "@/components/MessageScrollbar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ChatMessageDto } from "../../../lib/types";
+import type { ChatMessageDto, RedpacketWhoDto } from "../../../lib/types";
 import type { ChatroomFilters } from "../chatroomApi";
 import { NEAR_BOTTOM_PX } from "../constants";
 import {
@@ -80,7 +81,7 @@ type MessageListProps = {
   onInsertToken?: (token: string) => void;
   onAddEmoji?: (url: string) => void;
   filters: ChatroomFilters;
-  redpacketWho: Map<string, string[]>;
+  redpacketWho: Map<string, RedpacketWhoDto[]>;
   userAvatarMap: Map<string, string>;
 };
 
@@ -157,6 +158,7 @@ export function MessageList({
   const initializedRef = useRef(false);
   const previousCountRef = useRef(0);
   const firstUnseenIdRef = useRef<string | null>(null);
+  const lastIdRef = useRef<string | null>(null);
   const [unseen, setUnseen] = useState(0);
 
   useEffect(() => {
@@ -164,6 +166,7 @@ export function MessageList({
     stickToBottomRef.current = true;
     previousCountRef.current = 0;
     firstUnseenIdRef.current = null;
+    lastIdRef.current = null;
     setUnseen(0);
   }, [windowEpoch]);
 
@@ -204,6 +207,19 @@ export function MessageList({
       return;
     }
 
+    const last = messages[messages.length - 1];
+    const lastId = last?.id ?? null;
+    if (
+      last != null &&
+      lastId !== lastIdRef.current &&
+      selfUserName != null &&
+      selfUserName.length > 0 &&
+      last.userName === selfUserName
+    ) {
+      stickToBottomRef.current = true;
+    }
+    lastIdRef.current = lastId;
+
     if (!initializedRef.current && messages.length > 0 && !loading) {
       root.scrollTop = root.scrollHeight;
       initializedRef.current = true;
@@ -216,7 +232,7 @@ export function MessageList({
       root.scrollTop = root.scrollHeight;
       setUnseen(0);
     }
-  }, [messages, loading, loadingMore]);
+  }, [messages, loading, loadingMore, selfUserName]);
 
   function captureRestoreAnchor(): void {
     const root = viewportOf(areaRef.current);
@@ -289,6 +305,8 @@ export function MessageList({
     [filters.careUsers],
   );
   const shieldRules = filters.shield;
+
+  const scrollVersion = `${windowEpoch}:${messages.length}:${messages[messages.length - 1]?.id ?? ""}`;
 
   return (
     <section className="chat-stream" aria-label="聊天室消息">
@@ -366,28 +384,42 @@ export function MessageList({
           </div>
         </ScrollArea>
       </div>
+      <MessageScrollbar containerRef={areaRef} contentVersion={scrollVersion} />
 
       {unseen > 0 && (
-        <Button
-          type="button"
-          className="chat-jump-latest"
-          onClick={() => {
-            const targetId = firstUnseenIdRef.current;
-            firstUnseenIdRef.current = null;
-            if (targetId != null && jumpToMessage(targetId)) {
+        <div className="chat-jump-latest">
+          <button
+            type="button"
+            className="chat-jump-latest-go"
+            onClick={() => {
+              const targetId = firstUnseenIdRef.current;
+              firstUnseenIdRef.current = null;
+              if (targetId != null && jumpToMessage(targetId)) {
+                setUnseen(0);
+                return;
+              }
+              const last = messages[messages.length - 1];
+              if (last == null || !jumpToMessage(last.id)) {
+                jumpToLatest();
+                return;
+              }
               setUnseen(0);
-              return;
-            }
-            const last = messages[messages.length - 1];
-            if (last == null || !jumpToMessage(last.id)) {
-              jumpToLatest();
-              return;
-            }
-            setUnseen(0);
-          }}
-        >
-          {unseen} 条新消息
-        </Button>
+            }}
+          >
+            {unseen} 条新消息
+          </button>
+          <button
+            type="button"
+            className="chat-jump-latest-close"
+            aria-label="关闭新消息提示"
+            onClick={() => {
+              firstUnseenIdRef.current = null;
+              setUnseen(0);
+            }}
+          >
+            ×
+          </button>
+        </div>
       )}
 
       {isUnknownStatus(connectionStatus) && messages.length > 0 && (

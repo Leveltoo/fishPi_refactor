@@ -1,5 +1,6 @@
-//! 对齐旧版 `update.js`：查 GitHub latest，镜像只替换下载主机。
+//! 查本应用 GitHub 仓库的 latest。镜像只替换下载主机。
 //!
+//! 仓库尚未发布时明确失败，禁止回落到旧 Electron 仓库。
 //! 不执行下载文件，不写更新脚本，不调用 cmd / shell。安装失败必须返回错误。
 
 use std::io::Write;
@@ -13,10 +14,12 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::error::AppError;
 
-const REPO: &str = "imlinhanchao/fishpi-desktop";
+/// 本应用仓库。禁止再查 `imlinhanchao/fishpi-desktop`（那是旧 Electron 安装包）。
+const REPO: &str = "leveltoo/fishpi-desktop";
 const API_HOSTS: [&str; 2] = ["api.github.com", "gitapi.librejo.cn"];
 const DEFAULT_MIRROR: &str = "dgm.librejo.cn";
 const MAX_BYTES: usize = 200 * 1024 * 1024;
+const UNPUBLISHED: &str = "本仓库尚未发布";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,7 +60,7 @@ struct Asset {
     browser_download_url: String,
 }
 
-/// 检查 `imlinhanchao/fishpi-desktop` 的 latest。API 失败返回错误，不假装已是最新。
+/// 检查本应用仓库的 latest。尚未发布或 API 失败都返回错误，不假装已是最新。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn update_check() -> Result<UpdateInfo, AppError> {
     let fetched = fetch_latest().await?;
@@ -108,24 +111,60 @@ struct Fetched {
 async fn fetch_latest() -> Result<Fetched, AppError> {
     let client = http_client(ApiHosts)?;
     let mut last = AppError::business("检查更新失败");
+    let mut unpublished = false;
     for host in API_HOSTS {
         let url = format!("https://{host}/repos/{REPO}/releases/latest");
         match client.get(url).send().await {
             Ok(response) if response.status().is_success() => {
-                let release = response
-                    .json::<Release>()
+                let value = response
+                    .json::<serde_json::Value>()
                     .await
                     .map_err(|_| AppError::business("检查更新失败，发布信息无法解析"))?;
+                if is_unpublished_payload(&value) {
+                    unpublished = true;
+                    last = unpublished_error();
+                    continue;
+                }
+                let release = serde_json::from_value::<Release>(value)
+                    .map_err(|_| AppError::business("检查更新失败，发布信息无法解析"))?;
                 if release.tag_name.trim().is_empty() {
-                    return Err(AppError::business("检查更新失败，没有版本号"));
+                    unpublished = true;
+                    last = unpublished_error();
+                    continue;
                 }
                 return Ok(Fetched { release });
+            }
+            Ok(response) if response.status().as_u16() == 404 => {
+                unpublished = true;
+                last = unpublished_error();
             }
             Ok(_) => last = AppError::business("检查更新失败"),
             Err(_) => last = AppError::business("检查更新失败"),
         }
     }
+    if unpublished {
+        return Err(unpublished_error());
+    }
     Err(last)
+}
+
+fn unpublished_error() -> AppError {
+    AppError::business(UNPUBLISHED)
+}
+
+fn is_unpublished_payload(value: &serde_json::Value) -> bool {
+    let has_tag = value
+        .get("tag_name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .is_some_and(|tag| !tag.is_empty());
+    if has_tag {
+        return false;
+    }
+    value
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|message| message.eq_ignore_ascii_case("Not Found"))
 }
 
 fn describe(release: &Release) -> UpdateInfo {
@@ -152,15 +191,20 @@ fn same_version(tag: &str, current: &str) -> bool {
 }
 
 fn pick_asset(assets: &[Asset]) -> Option<&Asset> {
-    if let Some(pack) = assets.iter().find(|asset| asset.name == "update-pack.zip") {
-        return Some(pack);
-    }
-    let needle = if cfg!(target_arch = "x86_64") {
-        "win32-x64"
-    } else {
-        "win32-x86"
-    };
-    assets.iter().find(|asset| asset.name.contains(needle))
+    assets
+        .iter()
+        .find(|asset| is_tauri_windows_installer(&asset.name))
+        .or_else(|| {
+            assets.iter().find(|asset| {
+                let name = asset.name.to_ascii_lowercase();
+                name.ends_with(".exe") && !name.contains("win32-")
+            })
+        })
+}
+
+fn is_tauri_windows_installer(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.ends_with(".msi") || name.contains("nsis") || name.ends_with("-setup.exe")
 }
 
 fn rewrite_download(url: &str, mirror: &str) -> Result<String, AppError> {
@@ -184,6 +228,34 @@ fn mirror_origin(mirror: &str) -> Result<String, AppError> {
         return Err(AppError::business("更新镜像域名无效"));
     }
     Ok(format!("https://{host}"))
+}
+
+/// 把旧配置里的 `https://host` / `http://host/path` 剥成纯域名。空串表示用默认镜像。
+pub(crate) fn normalize_mirror_host(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let rest = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed)
+        .trim();
+    let hostport = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(rest)
+        .trim();
+    let host = match hostport.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit()) => name,
+        _ => hostport,
+    };
+    let host = host.trim().trim_matches('.');
+    if valid_host(host) {
+        Ok(host.to_string())
+    } else {
+        Err("更新镜像域名无效".to_string())
+    }
 }
 
 pub(crate) fn valid_host(host: &str) -> bool {
@@ -256,6 +328,72 @@ async fn download_asset(url: &str, name: &str, mirror: &str) -> Result<PathBuf, 
         return Err(AppError::business("下载失败，文件是空的"));
     }
     Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_unpublished_payload, normalize_mirror_host, pick_asset, Asset};
+
+    #[test]
+    fn strips_https_prefix() {
+        assert_eq!(
+            normalize_mirror_host("https://dgm.librejo.cn").expect("host"),
+            "dgm.librejo.cn"
+        );
+        assert_eq!(
+            normalize_mirror_host("http://gitapi.librejo.cn/foo").expect("host"),
+            "gitapi.librejo.cn"
+        );
+        assert_eq!(normalize_mirror_host("  ").expect("empty"), "");
+    }
+
+    #[test]
+    fn rejects_junk() {
+        assert!(normalize_mirror_host("not a host").is_err());
+        assert!(normalize_mirror_host("https://").is_err());
+    }
+
+    #[test]
+    fn unpublished_payload_without_tag() {
+        let value = serde_json::json!({
+            "message": "Not Found",
+            "documentation_url": "https://docs.github.com"
+        });
+        assert!(is_unpublished_payload(&value));
+        let tagged = serde_json::json!({ "tag_name": "v0.1.0", "message": "Not Found" });
+        assert!(!is_unpublished_payload(&tagged));
+    }
+
+    #[test]
+    fn pick_tauri_installer_not_electron_pack() {
+        let assets = [
+            Asset {
+                name: "fishpi-desktop-win32-x64.exe".into(),
+                browser_download_url: "https://github.com/old".into(),
+            },
+            Asset {
+                name: "fishpi-desktop_0.1.0_x64_en-US.msi".into(),
+                browser_download_url: "https://github.com/new".into(),
+            },
+        ];
+        let picked = pick_asset(&assets).expect("asset");
+        assert_eq!(picked.name, "fishpi-desktop_0.1.0_x64_en-US.msi");
+    }
+
+    #[test]
+    fn never_picks_electron_win32_exe() {
+        let assets = [Asset {
+            name: "fishpi-desktop Setup 1.2.3.exe".into(),
+            browser_download_url: "https://github.com/electron".into(),
+        }];
+        let picked = pick_asset(&assets).expect("setup exe");
+        assert!(picked.name.to_ascii_lowercase().ends_with("-setup.exe") || picked.name.contains("Setup"));
+        let electron = [Asset {
+            name: "app-win32-x64.exe".into(),
+            browser_download_url: "https://github.com/electron".into(),
+        }];
+        assert!(pick_asset(&electron).is_none());
+    }
 }
 
 fn download_path(name: &str) -> Result<PathBuf, AppError> {

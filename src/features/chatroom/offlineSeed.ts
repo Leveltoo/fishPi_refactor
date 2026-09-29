@@ -1,4 +1,9 @@
-import type { ChatMessageDto, ChatMessageKind } from "../../lib/types";
+import type {
+  ChatMessageDto,
+  ChatMessageKind,
+  RedpacketCardDto,
+  RedpacketWhoDto,
+} from "../../lib/types";
 import type { MusicCard, RichChatMessage, WeatherCard } from "./messageView";
 
 const KINDS: ReadonlySet<string> = new Set([
@@ -92,6 +97,64 @@ function mapMusic(value: unknown): MusicCard | undefined {
   return card;
 }
 
+function mapRedpacketWho(value: unknown): RedpacketWhoDto[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const who: RedpacketWhoDto[] = [];
+  for (const item of value) {
+    const rec = asRecord(item);
+    const userName = rec ? asString(rec.userName) : asString(item);
+    if (userName == null || userName.length === 0) {
+      continue;
+    }
+    const userId = rec ? asString(rec.userId) : undefined;
+    const avatar = rec
+      ? (asString(rec.avatar) ?? asString(rec.userAvatarUrl) ?? "")
+      : "";
+    who.push({
+      userName,
+      avatar,
+      ...(userId ? { userId } : {}),
+    });
+  }
+  return who;
+}
+
+function mapRedpacket(value: unknown): RedpacketCardDto | undefined {
+  const rec = asRecord(value);
+  if (rec == null) {
+    return undefined;
+  }
+  const packetType = asString(rec.type) ?? "";
+  const who = mapRedpacketWho(rec.who);
+  const recivers = Array.isArray(rec.recivers)
+    ? rec.recivers.filter((item): item is string => typeof item === "string")
+    : Array.isArray(rec.receivers)
+      ? rec.receivers.filter((item): item is string => typeof item === "string")
+      : [];
+  return {
+    type: packetType,
+    msg: asString(rec.msg) ?? asString(rec.message) ?? "",
+    money: asNumber(rec.money),
+    got: asNumber(rec.got),
+    count: asNumber(rec.count),
+    recivers,
+    who,
+  };
+}
+
+function asNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 /**
  * 离线库原始记录 → 可展示聊天室消息。
  * 无 ID / 非对象的条目直接跳过：不编造 ID，也不当成发送成功。
@@ -154,6 +217,10 @@ export function mapOfflineChatroomRecord(raw: unknown): RichChatMessage | null {
   const music = mapMusic(source.music);
   if (music != null) {
     message.music = music;
+  }
+  const redpacket = mapRedpacket(source.redpacket);
+  if (redpacket != null) {
+    message.redpacket = redpacket;
   }
   return message;
 }

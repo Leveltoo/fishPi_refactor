@@ -3,11 +3,21 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { ChatHtmlView, looksLikeHtml } from "../../chatroom/components/ChatHtmlView";
+import { expandEmojiShortcodes, isDefaultEmojiSrc, isEmojiImage } from "../../chatroom/emojiShortcode";
+import { chatJumpIdFromHref } from "../../chatroom/components/MarkdownView";
+import { MusicCard } from "../../chatroom/components/MusicCard";
+import {
+  dispatchPreviewImage,
+  dispatchUserCard,
+  mentionUserFromLink,
+} from "../../overlay/events";
 import {
   markdownUrlTransform,
   openSafeExternalUrl,
   sanitizeHttpUrl,
 } from "../../../lib/markdown";
+import { musicCardFromContent, stripNeteaseIframes } from "../musicEmbed";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 
@@ -47,16 +57,7 @@ const MARKDOWN_COMPONENTS: Components = {
       return <span>{children}</span>;
     }
     return (
-      <a
-        href={safeHref}
-        target="_blank"
-        rel="noreferrer noopener"
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          void openSafeExternalUrl(safeHref);
-        }}
-      >
+      <a href={safeHref} target="_blank" rel="noreferrer noopener">
         {children}
       </a>
     );
@@ -66,7 +67,15 @@ const MARKDOWN_COMPONENTS: Components = {
     if (safeSrc == null) {
       return alt ? <span>{alt}</span> : null;
     }
-    return <img src={safeSrc} alt={alt ?? ""} loading="lazy" />;
+    const emoji = isDefaultEmojiSrc(safeSrc);
+    return (
+      <img
+        src={safeSrc}
+        alt={alt ?? ""}
+        loading="lazy"
+        className={emoji ? "emoji" : "cursor-pointer"}
+      />
+    );
   },
 };
 
@@ -77,34 +86,98 @@ function repairBrokenImageMarkdown(source: string): string {
 
 type MarkdownBodyProps = {
   source: string;
+  onJump?: (messageId: string) => void;
 };
 
-function onMarkdownClick(event: MouseEvent<HTMLDivElement>): void {
+function onMarkdownClick(
+  event: MouseEvent<HTMLDivElement>,
+  onJump?: (messageId: string) => void,
+): void {
   const target = event.target;
   if (!(target instanceof Element)) {
     return;
   }
+
+  const image = target.closest("img");
+  if (image instanceof HTMLImageElement) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isEmojiImage(image)) {
+      return;
+    }
+    const src = sanitizeHttpUrl(image.getAttribute("src"));
+    if (src) {
+      dispatchPreviewImage({
+        src,
+        ...(image.alt.trim() ? { alt: image.alt } : {}),
+      });
+    }
+    return;
+  }
+
   const anchor = target.closest("a");
   if (anchor == null) {
     return;
   }
   event.preventDefault();
   event.stopPropagation();
-  void openSafeExternalUrl(anchor.getAttribute("href"));
+  const href = anchor.getAttribute("href");
+  const jumpId = chatJumpIdFromHref(href);
+  if (jumpId != null) {
+    onJump?.(jumpId);
+    return;
+  }
+  const userName = mentionUserFromLink(href, anchor.textContent);
+  if (userName) {
+    dispatchUserCard(userName);
+    return;
+  }
+  void openSafeExternalUrl(href);
 }
 
-export function MarkdownBody({ source }: MarkdownBodyProps) {
+function looksLikeMarkdown(text: string): boolean {
   return (
-    <div className="im-md" onClick={onMarkdownClick}>
-      <ReactMarkdown
-        unwrapDisallowed
-        allowedElements={ALLOWED_ELEMENTS}
-        urlTransform={markdownUrlTransform}
-        remarkPlugins={REMARK_PLUGINS}
-        components={MARKDOWN_COMPONENTS}
+    /!\[[^\]]*\]\([^)]+\)/.test(text) ||
+    /\[[^\]]+\]\([^)]+\)/.test(text) ||
+    /:[a-zA-Z0-9_+-]+:/.test(text)
+  );
+}
+
+/**
+ * 私聊正文：HTML 走净化渲染；Markdown 展开短码；网易云 iframe/链接转播放卡。
+ * 回复锚点走 onJump，不打开系统浏览器。
+ */
+export function MarkdownBody({ source, onJump }: MarkdownBodyProps) {
+  const music = musicCardFromContent(source);
+  const remainder = music ? stripNeteaseIframes(source) : source;
+  const body =
+    remainder.length === 0 ? null : looksLikeHtml(remainder) ? (
+      <ChatHtmlView source={remainder} onJump={onJump} />
+    ) : looksLikeMarkdown(remainder) || remainder.includes(":") ? (
+      <div
+        className="im-md"
+        onClick={(event) => {
+          onMarkdownClick(event, onJump);
+        }}
       >
-        {repairBrokenImageMarkdown(source)}
-      </ReactMarkdown>
-    </div>
+        <ReactMarkdown
+          unwrapDisallowed
+          allowedElements={ALLOWED_ELEMENTS}
+          urlTransform={markdownUrlTransform}
+          remarkPlugins={REMARK_PLUGINS}
+          components={MARKDOWN_COMPONENTS}
+        >
+          {repairBrokenImageMarkdown(expandEmojiShortcodes(remainder))}
+        </ReactMarkdown>
+      </div>
+    ) : (
+      <p className="im-msg-plain">{remainder}</p>
+    );
+
+  return (
+    <>
+      {music ? <MusicCard card={music} fallback="网易云音乐" /> : null}
+      {body}
+    </>
   );
 }

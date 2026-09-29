@@ -21,6 +21,7 @@ export const ARTICLE_COMMAND = {
 } as const;
 
 export const ARTICLE_HEAT_EVENT = "article://heat";
+export const ARTICLE_COMMENT_EVENT = "article://comment";
 
 export const ARTICLE_LIST_TYPES = [
   "recent",
@@ -65,10 +66,26 @@ export type ArticleDetailRequest = {
   page?: number;
 };
 
-/** 对齐 SDK `CommentPost` 的必要字段。 */
+/** 对齐 SDK `CommentPost`：回复、匿名、仅楼主可见都由界面传入。 */
 export type CommentPostRequest = {
   articleId: string;
   commentContent: string;
+  replyId?: string;
+  anonymous: boolean;
+  visible: boolean;
+};
+
+export type CommentSubmit = {
+  content: string;
+  replyId?: string;
+  anonymous: boolean;
+  visible: boolean;
+};
+
+export type CommentReplyTarget = {
+  id: string;
+  userName: string;
+  content: string;
 };
 
 export type CommentIdRequest = {
@@ -115,6 +132,11 @@ export type ArticleHeatEvent = {
   delta: number;
 };
 
+export type ArticleCommentPushEvent = {
+  articleId: string;
+  comment: unknown;
+};
+
 export type ArticleSummary = {
   id: string;
   title: string;
@@ -138,6 +160,13 @@ export type ArticleComment = {
   avatarUrl: string;
   time: string;
   markdown: string;
+  html: string;
+  replyId: string;
+  /**
+   * 被回复者头像。仅当服务端/频道 JSON 自带
+   * `commentOriginalAuthorThumbnailURL` 时才有；SDK 详情没有该字段则空串。
+   */
+  replyAvatarUrl: string;
   /** 评论感谢数（旧客户端 commentThankCnt）。 */
   thankCount: number;
   /** 当前用户是否已感谢过。 */
@@ -156,11 +185,17 @@ export type ArticleDetail = {
   time: string;
   tags: string;
   markdown: string;
+  html: string;
   commentCount: number;
   commentable: boolean;
   comments: ArticleComment[];
+  /** 已加载区间的最早评论页（往前翻用这个 - 1）。 */
   commentPage: number;
+  /** 已加载区间的最晚评论页（往后翻用这个 + 1）。 */
+  commentLatestPage: number;
+  commentPageCount: number;
   commentHasMore: boolean;
+  commentHasEarlier: boolean;
   thanked: boolean;
   thankCount: number;
   goodCount: number;
@@ -172,6 +207,7 @@ export type ArticleDetail = {
   /** 仅 rewarded 时有正文。未打赏必须是空串。 */
   rewardContent: string;
   articleType: number;
+  viewCount: number;
 };
 
 export type ArticleListResult = {

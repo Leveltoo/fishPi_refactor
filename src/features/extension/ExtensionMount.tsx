@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { commandError, desktopPrefsGet, desktopPrefsSet } from "../desktop/api";
-import { extensionCall, extensionLoadTheme, extensionScan, type ExtensionScan } from "./api";
+import { extensionLoadTheme, extensionScan, type ExtensionItem, type ExtensionScan } from "./api";
 import "../desktop/panel.css";
 
 const STYLE_ID = "fishpi-local-theme";
@@ -19,15 +20,25 @@ function applyCss(css: string): void {
   }
 }
 
+function safeDataIcon(icon: string): string | null {
+  if (!icon.startsWith("data:image/")) {
+    return null;
+  }
+  return icon;
+}
+
+function pluginLink(item: ExtensionItem): string {
+  return item.homepage || item.repository;
+}
+
 /**
- * 本机扩展目录：列出插件，只注入一个本地主题 CSS。
- * 不执行插件脚本。父组件自己挂到设置页。
+ * 本机扩展目录：列出插件（图标 / 作者 / 主页），只注入一个本地主题 CSS。
+ * 不执行 activate，不提供调试用 API 调用。
  */
 export function ExtensionMount() {
   const [root, setRoot] = useState("");
   const [theme, setTheme] = useState("Default");
   const [scan, setScan] = useState<ExtensionScan | null>(null);
-  const [apiName, setApiName] = useState("electron.shell");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const mounted = useRef(true);
@@ -105,15 +116,7 @@ export function ExtensionMount() {
     }
   }
 
-  async function callApi(): Promise<void> {
-    setError("");
-    try {
-      await extensionCall(apiName);
-      setNote("调用返回了成功，这不符合预期");
-    } catch (err: unknown) {
-      setError(commandError(err));
-    }
-  }
+  const plugins = scan?.plugins ?? [];
 
   return (
     <section className="parity-panel" aria-label="扩展">
@@ -143,18 +146,18 @@ export function ExtensionMount() {
             ) : null}
             {(scan?.themes ?? []).map((item) => (
               <option key={item.key} value={item.key}>
-                {item.description || item.name}
+                {item.description || item.displayName || item.name}
               </option>
             ))}
           </select>
         </label>
-        <p className="parity-note">{note || scan?.message || "只读取本机目录，不下载远程插件。"}</p>
-        {scan?.plugins.length ? (
-          <ul className="parity-list">
-            {scan.plugins.map((item) => (
-              <li key={item.key}>
-                {item.name} {item.version}（未执行）
-              </li>
+        <p className="parity-note">
+          {note || scan?.message || "只读取本机目录，不下载远程插件，也不执行 activate。"}
+        </p>
+        {plugins.length ? (
+          <ul className="parity-ext-list">
+            {plugins.map((item) => (
+              <ExtensionCard key={item.key} item={item} />
             ))}
           </ul>
         ) : (
@@ -164,19 +167,66 @@ export function ExtensionMount() {
 
       <section className="parity-section">
         <h2>不支持的插件 API</h2>
+        <p className="parity-note">
+          旧 Electron 插件 API 没有安全等价物。下列能力一律拒绝，不会在本页提供调试调用。
+        </p>
         <ul className="parity-list">
           {(scan?.unsupported ?? []).map((name) => (
             <li key={name}>{name}</li>
           ))}
         </ul>
-        <div className="parity-row">
-          <input value={apiName} onChange={(event) => setApiName(event.target.value)} />
-          <button type="button" onClick={() => void callApi()}>
-            调用
-          </button>
-        </div>
       </section>
       {error ? <p className="parity-error">{error}</p> : null}
     </section>
+  );
+}
+
+function ExtensionCard({ item }: { item: ExtensionItem }) {
+  const icon = safeDataIcon(item.icon);
+  const link = pluginLink(item);
+  const title = item.displayName || item.name;
+
+  return (
+    <li className="parity-ext">
+      {icon ? (
+        <img className="parity-ext__icon" src={icon} alt="" />
+      ) : (
+        <span className="parity-ext__icon parity-ext__icon--empty" aria-hidden="true" />
+      )}
+      <div className="parity-ext__info">
+        <h3 className="parity-ext__title">
+          {link ? (
+            <button
+              type="button"
+              className="parity-ext__link"
+              onClick={() => {
+                void openUrl(link).catch(() => undefined);
+              }}
+            >
+              {title}
+            </button>
+          ) : (
+            title
+          )}
+          {item.version ? <sub>{item.version}</sub> : null}
+        </h3>
+        <p className="parity-ext__desc">{item.description || "作者什么也没有介绍。"}</p>
+        <p className="parity-ext__author">{item.author || "神秘开发者"}（未执行）</p>
+        {link ? (
+          <p className="parity-ext__author">
+            主页{" "}
+            <button
+              type="button"
+              className="parity-ext__link"
+              onClick={() => {
+                void openUrl(link).catch(() => undefined);
+              }}
+            >
+              {link}
+            </button>
+          </p>
+        ) : null}
+      </div>
+    </li>
   );
 }

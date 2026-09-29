@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatMessageDto, ChatroomListenEvent, OnlineEvent } from "../../lib/types";
+import type { ChatMessageDto, ChatroomListenEvent, OnlineEvent, RedpacketWhoDto } from "../../lib/types";
 import {
   invokeAuthMe,
   invokeChatroomConnect,
@@ -37,7 +37,14 @@ import {
 } from "./messageWindow";
 import { mapOfflineChatroomRecords } from "./offlineSeed";
 import { loadOffline } from "../desktop/offline";
+import {
+  hasChatroomHooks,
+  hasSendMsgHooks,
+  runChatroomHooks,
+  runSendMsgHooks,
+} from "../extension/hooks";
 import { isOutcomeUnknown, toUserErrorMessage } from "./toUserError";
+import { rememberOnlineUsers } from "./onlineUsers";
 
 type Phase = "boot" | "await-history" | "live";
 type OnlineUser = OnlineEvent["users"][number];
@@ -100,7 +107,7 @@ export function useChatroomSession() {
   const [selfRole, setSelfRole] = useState<string | null>(null);
   const [windowEpoch, setWindowEpoch] = useState(0);
   /** 红包领取人快照：数组引用跨快照共享，内容随 redpacket-status 就地累计。 */
-  const [redpacketWho, setRedpacketWho] = useState<Map<string, string[]>>(
+  const [redpacketWho, setRedpacketWho] = useState<Map<string, RedpacketWhoDto[]>>(
     () => new Map(),
   );
 
@@ -166,7 +173,9 @@ export function useChatroomSession() {
       const normalized = normalizeChatroomEvent(event);
       switch (normalized.kind) {
         case "online": {
-          setUsers(normalized.payload.users ?? []);
+          const nextUsers = normalized.payload.users ?? [];
+          rememberOnlineUsers(nextUsers);
+          setUsers(nextUsers);
           if (normalized.payload.onlineCount != null) {
             setOnlineCount(Number(normalized.payload.onlineCount));
           }
@@ -181,10 +190,27 @@ export function useChatroomSession() {
         case "connection":
           setConnectionStatus(normalized.payload.status);
           return;
-        case "msg":
-          applyMessage(windowRef.current, normalized.payload);
-          publish();
+        case "msg": {
+          // 扩展 hooks（fishpi.hooks.chatroom）：无扩展时保持原同步路径。
+          if (!hasChatroomHooks()) {
+            applyMessage(windowRef.current, normalized.payload);
+            publish();
+            return;
+          }
+          const payload = normalized.payload;
+          void runChatroomHooks(payload).then((hooked) => {
+            // 异步过 hook 后代次可能已推进（重建/换号），旧流不允许回流。
+            if (!activeRef.current || !matchesGeneration(event, gensRef.current)) {
+              return;
+            }
+            if (hooked == null) {
+              return;
+            }
+            applyMessage(windowRef.current, hooked);
+            publish();
+          });
           return;
+        }
         case "revoke":
           applyRevoke(windowRef.current, normalized.payload.messageId);
           publish();
@@ -477,8 +503,18 @@ export function useChatroomSession() {
     setSending(true);
     setError(null);
     try {
+      // 扩展 hooks（fishpi.hooks.sendMsg）：返回空视为扩展丢弃这次发送，
+      // 返回 false 让 Composer 保留草稿（对齐旧版不清 this.msg）。
+      let outgoing = content;
+      if (hasSendMsgHooks()) {
+        const hooked = await runSendMsgHooks(content);
+        if (hooked == null || hooked.length === 0) {
+          return false;
+        }
+        outgoing = hooked;
+      }
       // 成功只表示请求已接受，禁止插入伪造成功气泡；等 WS / 历史真实消息。
-      const result = await invokeChatroomSend({ content });
+      const result = await invokeChatroomSend({ content: outgoing });
       if (!activeRef.current) {
         return false;
       }

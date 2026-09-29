@@ -13,6 +13,7 @@ import {
   getPlayerSnapshot,
   playerClear,
   playerNext,
+  playerOnEnded,
   playerPrev,
   playerRemoveCurrent,
   setPlayerError,
@@ -49,7 +50,7 @@ function getServerSnapshot(): ReturnType<typeof getPlayerSnapshot> {
  */
 export function PlaylistMount() {
   const player = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const { tracks, index, mode, playing, error } = player;
+  const { tracks, index, mode, error } = player;
   const [songId, setSongId] = useState("");
   const tracksRef = useRef(tracks);
   const indexRef = useRef(index);
@@ -223,15 +224,10 @@ export function PlaylistMount() {
               src={current.url}
               controls
               autoPlay
+              muted={player.muted}
               onPlay={() => setPlayerPlaying(true)}
               onPause={() => setPlayerPlaying(false)}
-              onEnded={() => {
-                if (tracks.length > 1) {
-                  setPlayerIndex((index + 1) % tracks.length);
-                } else {
-                  setPlayerPlaying(false);
-                }
-              }}
+              onEnded={() => playerOnEnded()}
               onError={() => setPlayerError("这一首没有播起来")}
             />
           </>

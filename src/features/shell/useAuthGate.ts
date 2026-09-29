@@ -10,6 +10,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invokeAuthLogout, invokeAuthRestore } from "../../lib/tauri";
+import { listen } from "@tauri-apps/api/event";
+import { REQUEST_LOGOUT_EVENT } from "../usercard/window";
 import type { AuthSession } from "../../lib/types";
 import { asAuthError, authErrorMessage } from "../auth/auth-errors";
 import {
@@ -159,6 +161,15 @@ export function useAuthGate(): AuthGate {
       }
     }
   }, []);
+
+  useEffect(() => {
+    const unlisten = listen(REQUEST_LOGOUT_EVENT, () => {
+      void logout();
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [logout]);
 
   return {
     phase,

@@ -130,11 +130,13 @@ mod tests {
 
     #[test]
     fn missing_fields_use_default_then_sanitize() {
-        let settings = settings_from_store(json!({ "themeId": "  ", "opacity": 0.1 }));
+        let settings = settings_from_store(json!({ "themeId": "  ", "opacity": 0.05 }));
         assert_eq!(settings.theme_id, "default");
-        assert_eq!(settings.opacity, 0.3);
-        assert_eq!(settings.close_to_tray, true);
+        assert_eq!(settings.opacity, 0.1);
+        assert_eq!(settings.close_to_tray, false);
+        assert!(!settings.opacity_enabled);
         assert_eq!(settings.hotkey, settings.boss_key);
+        assert_eq!(settings.boss_key, "Win+F2");
     }
 
     #[test]

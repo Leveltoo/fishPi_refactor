@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { PencilSimpleIcon, TrashIcon } from "@phosphor-icons/react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { sanitizeHttpUrl } from "../../../lib/markdown";
 import { dispatchUserCard } from "../events";
 import type { BreezemoonDto } from "../types";
-import { MarkdownBody } from "./MarkdownBody";
+import { BreezemoonBody } from "./MarkdownBody";
 
 const NEAR_BOTTOM_PX = 72;
 
@@ -17,6 +18,7 @@ type TimelineProps = {
   loading: boolean;
   loadingMore: boolean;
   hasMore: boolean;
+  selfUserName?: string | null;
   onLoadMore: () => void;
 };
 
@@ -32,10 +34,19 @@ function viewportOf(root: HTMLElement | null): HTMLElement | null {
   return root.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
 }
 
-function Item({ item }: { item: BreezemoonDto }) {
+function Item({
+  item,
+  selfUserName,
+}: {
+  item: BreezemoonDto;
+  selfUserName?: string | null;
+}) {
   const avatarSrc = sanitizeHttpUrl(item.authorAvatarUrl);
   const name = item.authorName.trim() || "未知用户";
   const time = item.timeAgo.trim() || item.created.trim();
+  const own =
+    (selfUserName?.trim() ?? "").length > 0 &&
+    item.authorName.trim() === selfUserName?.trim();
 
   function openCard(): void {
     dispatchUserCard({
@@ -68,12 +79,30 @@ function Item({ item }: { item: BreezemoonDto }) {
           ) : null}
         </header>
         <div className="bm-item-content">
-          {item.content.trim().length > 0 ? (
-            <MarkdownBody source={item.content} />
-          ) : (
-            <p className="bm-item-plain">（空）</p>
-          )}
+          <BreezemoonBody source={item.content} />
         </div>
+        {own ? (
+          <div className="bm-item-actions">
+            <button
+              type="button"
+              className="bm-item-action"
+              disabled
+              title="SDK 没有编辑接口，不会假装成功"
+            >
+              <PencilSimpleIcon />
+              编辑
+            </button>
+            <button
+              type="button"
+              className="bm-item-action"
+              disabled
+              title="SDK 没有删除接口，不会假装成功"
+            >
+              <TrashIcon />
+              删除
+            </button>
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -96,6 +125,7 @@ export function Timeline({
   loading,
   loadingMore,
   hasMore,
+  selfUserName,
   onLoadMore,
 }: TimelineProps) {
   const areaRef = useRef<HTMLDivElement | null>(null);
@@ -152,7 +182,7 @@ export function Timeline({
             ) : null}
 
             {items.map((item) => (
-              <Item key={item.id} item={item} />
+              <Item key={item.id} item={item} selfUserName={selfUserName} />
             ))}
 
             {hasMore && items.length > 0 ? (

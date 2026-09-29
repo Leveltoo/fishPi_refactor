@@ -289,6 +289,28 @@
   overflow: hidden;
 }
 
+.im-thread-stream > .msg-scrollbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  height: 100%;
+}
+
+.im-thread-scroll [data-slot="scroll-area-viewport"] {
+  scrollbar-width: none;
+}
+
+.im-thread-scroll [data-slot="scroll-area-viewport"]::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.im-thread-scroll [data-slot="scroll-area-scrollbar"] {
+  display: none;
+}
+
 .im-thread-inner {
   display: flex;
   flex-direction: column;
@@ -589,6 +611,69 @@
   white-space: nowrap;
   font-size: 0.72rem;
   color: var(--im-muted);
+}
+
+.im-composer.is-resizing {
+  cursor: row-resize;
+}
+
+.im-composer-resize {
+  position: relative;
+  height: 8px;
+  margin: 0 -0.15rem;
+  cursor: row-resize;
+}
+
+.im-composer-resize hr {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  right: 0;
+  height: 0;
+  margin: 0;
+  border: 2px solid transparent;
+  border-left: 0;
+  border-right: 0;
+  cursor: row-resize;
+}
+
+.im-composer-resize:hover hr,
+.im-composer.is-resizing .im-composer-resize hr {
+  border-color: var(--im-accent);
+}
+
+.im-composer-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.im-composer-field textarea {
+  resize: none;
+}
+
+.im-thread-stream [data-msg-id].is-highlight {
+  position: relative;
+}
+
+.im-thread-stream [data-msg-id].is-highlight::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.1);
+  animation: im-msg-flash 700ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes im-msg-flash {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.im-md img,
+.im-msg-content img {
+  cursor: pointer;
 }
 
 .im-composer-group {

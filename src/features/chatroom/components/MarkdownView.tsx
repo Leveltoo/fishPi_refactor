@@ -8,7 +8,7 @@ import {
   dispatchUserCard,
   mentionUserFromLink,
 } from "@/features/overlay/events";
-import { expandEmojiShortcodes } from "../emojiShortcode";
+import { expandEmojiShortcodes, isDefaultEmojiSrc, isEmojiImage } from "../emojiShortcode";
 import { dispatchChatJump, dispatchDiscussPick } from "../jumpEvents";
 import {
   markdownUrlTransform,
@@ -64,12 +64,13 @@ const MARKDOWN_COMPONENTS: Components = {
     if (safeSrc == null) {
       return alt ? <span>{alt}</span> : null;
     }
+    const emoji = isDefaultEmojiSrc(safeSrc);
     return (
       <img
         src={safeSrc}
         alt={alt ?? ""}
         loading="lazy"
-        className="cursor-pointer"
+        className={emoji ? "emoji" : "cursor-pointer"}
       />
     );
   },
@@ -94,13 +95,17 @@ export function topicFromTarget(target: Element): string | null {
   return match == null ? null : match[1].trim();
 }
 
-/** 回复锚点 `#chatroom123`：返回原消息 id。 */
+/** 回复锚点：聊天室 `#chatroom123` 或私聊 `#chat123`。 */
 export function chatJumpIdFromHref(href: string | null): string | null {
   if (href == null) {
     return null;
   }
-  const match = /#chatroom(\d+)/.exec(href);
-  return match == null ? null : match[1];
+  const room = /#chatroom(\d+)/.exec(href);
+  if (room != null) {
+    return room[1];
+  }
+  const chat = /#chat(\d+)/.exec(href);
+  return chat == null ? null : chat[1];
 }
 
 function onMarkdownClick(event: MouseEvent<HTMLDivElement>): void {
@@ -113,6 +118,9 @@ function onMarkdownClick(event: MouseEvent<HTMLDivElement>): void {
   if (image instanceof HTMLImageElement) {
     event.preventDefault();
     event.stopPropagation();
+    if (isEmojiImage(image)) {
+      return;
+    }
     const src = sanitizeHttpUrl(image.getAttribute("src"));
     if (src) {
       dispatchPreviewImage({

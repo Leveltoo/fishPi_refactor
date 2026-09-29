@@ -1,14 +1,9 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Pin, X } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import {
-  DEFAULT_SETTINGS,
-  OPACITY_MIN,
-} from "@/features/settings/constants";
+import { DEFAULT_SETTINGS } from "@/features/settings/constants";
 import {
   invokeAlwaysOnTop,
   invokeSettingsSet,
-  invokeWindowOpacity,
   normalizeSettings,
 } from "@/features/settings/api";
 import {
@@ -16,6 +11,11 @@ import {
   publishDesktopSettings,
   subscribeDesktopSettings,
 } from "@/features/settings/settingsStore";
+import {
+  closeMainWindow,
+  hideMainToTray,
+  toggleWindowOpacity,
+} from "./windowActions";
 
 type WinBtnProps = {
   label: string;
@@ -55,48 +55,33 @@ function WinBtn({
   );
 }
 
-/** 唯一顶栏右侧窗控：最小化=缩到托盘、透明、置顶、关闭（close_to_tray）。 */
+/** 唯一顶栏右侧窗控：最小化=藏到托盘、透明、置顶、关闭（close_to_tray）。 */
 export function WindowControls({ compact = false }: { compact?: boolean }) {
   const [alwaysOnTop, setAlwaysOnTop] = useState(DEFAULT_SETTINGS.alwaysOnTop);
   const [settingsOpacity, setSettingsOpacity] = useState(
     DEFAULT_SETTINGS.opacity,
   );
-  const [dimmed, setDimmed] = useState(false);
+  const [opacityEnabled, setOpacityEnabled] = useState(
+    DEFAULT_SETTINGS.opacityEnabled,
+  );
 
   useEffect(() => {
     return subscribeDesktopSettings((snapshot) => {
       setAlwaysOnTop(snapshot.settings.alwaysOnTop);
       setSettingsOpacity(snapshot.settings.opacity);
+      setOpacityEnabled(snapshot.settings.opacityEnabled);
     });
   }, []);
 
   const onMinimize = useCallback(() => {
-    void (async () => {
-      try {
-        const win = getCurrentWindow();
-        await win.minimize();
-      } catch {
-        try {
-          await getCurrentWindow().hide();
-        } catch {
-          // 非 Tauri
-        }
-      }
-    })();
+    void hideMainToTray();
   }, []);
 
   const onToggleOpacity = useCallback(() => {
-    void (async () => {
-      const nextDimmed = !dimmed;
-      const target = nextDimmed ? OPACITY_MIN : settingsOpacity;
-      try {
-        await invokeWindowOpacity(target);
-        setDimmed(nextDimmed);
-      } catch {
-        setDimmed(nextDimmed);
-      }
-    })();
-  }, [dimmed, settingsOpacity]);
+    void toggleWindowOpacity(opacityEnabled, settingsOpacity).then(
+      setOpacityEnabled,
+    );
+  }, [opacityEnabled, settingsOpacity]);
 
   const onTogglePin = useCallback(() => {
     void (async () => {
@@ -117,16 +102,9 @@ export function WindowControls({ compact = false }: { compact?: boolean }) {
   }, [alwaysOnTop]);
 
   const onClose = useCallback(() => {
-    void (async () => {
-      try {
-        await getCurrentWindow().close();
-      } catch {
-        // 非 Tauri 环境
-      }
-    })();
+    void closeMainWindow();
   }, []);
 
-  // compact（登录等 simple 顶栏）：只留最小化/关闭，对齐旧版 simple 模式
   return (
     <div className="shell__win-ctrl">
       <WinBtn label="最小化" Icon={Minus} onClick={onMinimize} />
@@ -136,7 +114,7 @@ export function WindowControls({ compact = false }: { compact?: boolean }) {
             label="透明窗体"
             className="win-opacity-btn"
             customIcon={<span className="cirle-empty" aria-hidden="true" />}
-            pressed={dimmed}
+            pressed={opacityEnabled}
             onClick={onToggleOpacity}
           />
           <WinBtn

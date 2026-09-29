@@ -1,6 +1,7 @@
 /** 跨页面导航：聊天室右键「单独聊聊」→ 壳切到私聊并打开会话。 */
 
 export const OPEN_IM_EVENT = "fishpi:open-im";
+export const OPEN_SETTINGS_EVENT = "fishpi:open-settings";
 
 export type OpenImDetail = { userName: string };
 

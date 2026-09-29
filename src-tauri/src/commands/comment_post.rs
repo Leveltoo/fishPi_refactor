@@ -30,7 +30,7 @@ pub async fn comment_post(
     map_send_result(session_generation, result)
 }
 
-/// Bridge DTO → SDK `CommentPost`。API 需要的字段都带上；`visible` 用 SDK 默认 `false`。
+/// Bridge DTO → SDK `CommentPost`。匿名 / 仅楼主可见 / 回复 ID 都按前端传入，不写死。
 fn to_sdk_post(article_id: String, content: String, request: &CommentPostRequest) -> CommentPost {
     let reply_id = request
         .reply_id
@@ -39,6 +39,7 @@ fn to_sdk_post(article_id: String, content: String, request: &CommentPostRequest
         .filter(|id| !id.is_empty())
         .unwrap_or("");
     CommentPost::new(article_id, content)
-        .with_anonymous(request.anonymous.unwrap_or(false))
+        .with_anonymous(request.anonymous)
+        .with_visible(request.visible)
         .with_reply_id(reply_id)
 }

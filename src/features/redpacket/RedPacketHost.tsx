@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
 
 import { openRedPacket, readSelfUserName, sendRedPacket } from "./api";
 import { DEFAULT_BLESSING } from "./constants";
@@ -79,9 +80,16 @@ export function RedPacketHost() {
 
     window.addEventListener(REDPACKET_OPEN_EVENT, onOpen);
     window.addEventListener(REDPACKET_SEND_EVENT, onSend);
+    const unlistenSend = listen(REDPACKET_SEND_EVENT, (event) => {
+      const synthetic = new CustomEvent(REDPACKET_SEND_EVENT, {
+        detail: event.payload,
+      });
+      onSend(synthetic);
+    });
     return () => {
       window.removeEventListener(REDPACKET_OPEN_EVENT, onOpen);
       window.removeEventListener(REDPACKET_SEND_EVENT, onSend);
+      void unlistenSend.then((fn) => fn());
     };
   }, []);
 

@@ -3,15 +3,27 @@ import { invoke } from "@tauri-apps/api/core";
 export type ExtensionItem = {
   key: string;
   name: string;
+  displayName: string;
   description: string;
   version: string;
   kind: string;
+  author: string;
+  homepage: string;
+  repository: string;
+  icon: string;
+};
+
+/** 扩展目录里的 hook 脚本原文；Rust 只读取，执行由本模块负责。 */
+export type HookScript = {
+  key: string;
+  source: string;
 };
 
 export type ExtensionScan = {
   root: string;
   themes: ExtensionItem[];
   plugins: ExtensionItem[];
+  hooks: HookScript[];
   unsupported: string[];
   message: string;
 };

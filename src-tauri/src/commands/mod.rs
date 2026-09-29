@@ -67,6 +67,7 @@ pub use article_heat::*;
 
 pub mod config_import;
 pub mod extension_host;
+pub mod fetch_image;
 pub mod file_upload;
 pub mod music;
 pub mod offline_store;
@@ -75,6 +76,7 @@ pub mod updater;
 
 pub use config_import::*;
 pub use extension_host::*;
+pub use fetch_image::*;
 pub use file_upload::*;
 pub use music::*;
 pub use offline_store::*;

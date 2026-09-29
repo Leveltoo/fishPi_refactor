@@ -29,11 +29,11 @@ pub fn install(app: &tauri::App) -> Result<(), String> {
 
 /// 设置保存后重绑。失败用 [`AppError::business`]，文案给用户，不转发系统原文。
 pub fn rebind(app: &tauri::AppHandle, hotkey: &str) -> Result<(), crate::error::AppError> {
-    let hotkey = hotkey.trim();
+    let hotkey = to_shortcut_token(hotkey);
     if hotkey.is_empty() {
         return Err(AppError::business("hotkey 不能为空"));
     }
-    let parsed = Shortcut::from_str(hotkey).map_err(|_| AppError::business("老板键格式无效"))?;
+    let parsed = Shortcut::from_str(&hotkey).map_err(|_| AppError::business("老板键格式无效"))?;
 
     let mut registered = REGISTERED_HOTKEY
         .lock()
@@ -50,7 +50,7 @@ pub fn rebind(app: &tauri::AppHandle, hotkey: &str) -> Result<(), crate::error::
     let previous = registered.clone();
     // 2.x 的 `on_shortcut` 允许新旧热键并存，所以先注册新的，成功后再卸旧的。
     // 不能先卸：卸完再注册失败就会没有老板键。若必须先卸，失败时把旧键注册回去。
-    if let Err(err) = register_keeping_previous(shortcuts, hotkey, previous.as_deref()) {
+    if let Err(err) = register_keeping_previous(shortcuts, &hotkey, previous.as_deref()) {
         return Err(err);
     }
 
@@ -95,6 +95,27 @@ fn on_boss_key(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutEvent) {
     toggle_main(app);
 }
 
+/// global-hotkey 0.8 只认 SUPER/CMD。对齐旧版把 win 换成 Super。
+/// 设置里仍可写 Win/Meta，注册前换成 SUPER。
+fn to_shortcut_token(hotkey: &str) -> String {
+    hotkey
+        .split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            if part.eq_ignore_ascii_case("win")
+                || part.eq_ignore_ascii_case("windows")
+                || part.eq_ignore_ascii_case("meta")
+            {
+                "SUPER".to_string()
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// 主窗口当前可见且未最小化则隐藏，否则显示、取消最小化并聚焦。
 fn toggle_main(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
@@ -109,4 +130,20 @@ fn toggle_main(app: &AppHandle) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_shortcut_token;
+
+    #[test]
+    fn win_and_meta_become_super() {
+        assert_eq!(to_shortcut_token("Win+F2"), "SUPER+F2");
+        assert_eq!(to_shortcut_token("win+x"), "SUPER+x");
+        assert_eq!(to_shortcut_token("Meta+Shift+A"), "SUPER+Shift+A");
+        assert_eq!(to_shortcut_token("WINDOWS+F2"), "SUPER+F2");
+        assert_eq!(to_shortcut_token("SUPER+F2"), "SUPER+F2");
+        assert_eq!(to_shortcut_token("Ctrl+Alt+Q"), "Ctrl+Alt+Q");
+        assert_eq!(to_shortcut_token("  "), "");
+    }
 }

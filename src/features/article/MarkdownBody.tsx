@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { RichHtml } from "../../lib/RichHtml";
+import { looksLikeHtml } from "../../lib/safeHtml";
 import {
   markdownUrlTransform,
   openSafeExternalUrl,
@@ -85,7 +87,8 @@ const MARKDOWN_COMPONENTS: Components = {
 };
 
 type MarkdownBodyProps = {
-  source: string;
+  source?: string;
+  html?: string;
   className?: string;
 };
 
@@ -114,12 +117,21 @@ function onMarkdownClick(event: MouseEvent<HTMLDivElement>): void {
 }
 
 /**
- * 成熟 Markdown 渲染：react-markdown 默认不执行原始 HTML。
+ * 正文 / 评论：HTML 走 DOMPurify；Markdown 不执行原始 HTML。
  * 链接仅 http(s)；图片点击派发 `fishpi:preview-image`。
  */
-export function MarkdownBody({ source, className }: MarkdownBodyProps) {
+export function MarkdownBody({ source, html, className }: MarkdownBodyProps) {
+  const htmlSource = html?.trim() ?? "";
+  const mdSource = source?.trim() ?? "";
+  const classNames = className ?? "article-md";
+  if (htmlSource || looksLikeHtml(mdSource)) {
+    return <RichHtml source={htmlSource || mdSource} className={classNames} />;
+  }
+  if (!mdSource) {
+    return null;
+  }
   return (
-    <div className={className ?? "article-md"} onClick={onMarkdownClick}>
+    <div className={classNames} onClick={onMarkdownClick}>
       <ReactMarkdown
         unwrapDisallowed
         allowedElements={ALLOWED_ELEMENTS}
@@ -127,8 +139,28 @@ export function MarkdownBody({ source, className }: MarkdownBodyProps) {
         remarkPlugins={REMARK_PLUGINS}
         components={MARKDOWN_COMPONENTS}
       >
-        {source}
+        {mdSource}
       </ReactMarkdown>
     </div>
   );
+}
+
+type ArticleRichBodyProps = {
+  markdown?: string;
+  html?: string;
+  className?: string;
+  empty?: string;
+};
+
+/** HTML 优先，否则 Markdown；都空则显示 empty。 */
+export function ArticleRichBody({
+  markdown,
+  html,
+  className,
+  empty,
+}: ArticleRichBodyProps) {
+  if (!html?.trim() && !markdown?.trim()) {
+    return empty ? <p className="article-empty-copy">{empty}</p> : null;
+  }
+  return <MarkdownBody source={markdown} html={html} className={className} />;
 }

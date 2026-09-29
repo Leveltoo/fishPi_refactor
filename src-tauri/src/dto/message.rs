@@ -4,11 +4,17 @@
 //! 天气 / 音乐带上消息里已有的字段，缺了就留空，前端退化成摘要，不编造。
 //! 弹幕颜色只保留安全的 CSS 颜色。绝不把 `content` 对象当 HTML 交给前端。
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use fishpi_sdk::domain::chatroom::{
     BarragerMsg, ChatRoomContentKind, ChatRoomEvent, ChatRoomMsg, CustomMsg, MusicMsg,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// 弹幕 / 进出场没有服务端 oId。每次事件生成新 ID，禁止用正文当稳定 ID，也不要拿去撤回。
+static SYNTHETIC_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// 消息类别。历史 `content.msgType` 与实时 `ChatRoomEvent` 变体都映射到这里。
 ///
@@ -67,10 +73,38 @@ pub struct MusicCardDto {
     pub audio_url: Option<String>,
 }
 
+/// 红包领取人。头像只保留公开 HTTP(S) URL，缺了就空字符串，不编造。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RedpacketWhoDto {
+    pub user_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub avatar: String,
+}
+
+/// 聊天室消息里的红包卡片。字段来自 SDK `ChatRoomMsg.content`，缺了就空/0。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RedpacketCardDto {
+    /// `random` / `average` / `specify` / `heartbeat` / `rockPaperScissors`。未知类型保持原字符串。
+    #[serde(rename = "type")]
+    pub packet_type: String,
+    pub msg: String,
+    pub money: u64,
+    pub got: u64,
+    pub count: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recivers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub who: Vec<RedpacketWhoDto>,
+}
+
 /// 一条聊天室消息（历史与实时同一形状）。
 ///
 /// `id` 用字符串：服务端 `oId` 是雪花数字串，前端 `number` 会丢精度，撤回/去重必须对得上。
-/// `md` 是优先展示的 Markdown；`text` 仅在没有 Markdown 时作为不可信回退。
+/// `md` 是 Markdown 原文（复制 / 回复 / 复读）；`text` 在 Html 模式下是服务端 HTML。
 /// `rawHint` 是特殊消息的纯文本摘要，不是原始 JSON。
 /// 新增字段都有 `serde(default)`，旧消息缺这些键时仍能反序列化。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -101,6 +135,9 @@ pub struct ChatMessageDto {
     pub weather: Option<WeatherCardDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub music: Option<MusicCardDto>,
+    /// 红包卡片。历史 `content` 里的 got/count/money/who 原样映射，不只压成 rawHint。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redpacket: Option<RedpacketCardDto>,
 }
 
 impl ChatMessageDto {
@@ -144,6 +181,7 @@ impl ChatMessageDto {
             color: None,
             weather: None,
             music: None,
+            redpacket: None,
         }
     }
 }
@@ -151,10 +189,10 @@ impl ChatMessageDto {
 impl From<&ChatRoomMsg> for ChatMessageDto {
     fn from(msg: &ChatRoomMsg) -> Self {
         let kind = classify_chat_msg(msg);
-        let (md, text, raw_hint, weather, music) = match kind {
+        let (md, text, raw_hint, weather, music, redpacket) = match kind {
             ChatMessageKind::Msg => {
                 let (md, text, hint) = normal_body(msg);
-                (md, text, hint, None, None)
+                (md, text, hint, None, None, None)
             }
             ChatMessageKind::Music => (
                 None,
@@ -162,6 +200,7 @@ impl From<&ChatRoomMsg> for ChatMessageDto {
                 Some(music_hint(&msg.content)),
                 None,
                 music_card_from_content(&msg.content),
+                None,
             ),
             ChatMessageKind::Weather => (
                 None,
@@ -169,11 +208,19 @@ impl From<&ChatRoomMsg> for ChatMessageDto {
                 Some(weather_hint(&msg.content)),
                 weather_card(&msg.content),
                 None,
+                None,
             ),
-            ChatMessageKind::Redpacket => (None, None, Some(redpacket_hint(&msg.content)), None, None),
+            ChatMessageKind::Redpacket => (
+                None,
+                None,
+                Some(redpacket_hint(&msg.content)),
+                None,
+                None,
+                redpacket_card(&msg.content),
+            ),
             ChatMessageKind::Unknown
             | ChatMessageKind::Barrager
-            | ChatMessageKind::Custom => (None, None, Some(unknown_hint()), None, None),
+            | ChatMessageKind::Custom => (None, None, Some(unknown_hint()), None, None, None),
         };
         let (via_client, via_version) = via_parts(&msg.client);
 
@@ -193,6 +240,7 @@ impl From<&ChatRoomMsg> for ChatMessageDto {
             color: None,
             weather,
             music,
+            redpacket,
         }
     }
 }
@@ -212,6 +260,7 @@ impl From<&MusicMsg> for ChatMessageDto {
         dto.raw_hint = Some(music_title_hint(&msg.title));
         dto.weather = None;
         dto.music = music_card(&msg.title, &msg.source, &msg.cover_url, &msg.from);
+        dto.redpacket = None;
         dto
     }
 }
@@ -226,7 +275,7 @@ impl From<&BarragerMsg> for ChatMessageDto {
     fn from(msg: &BarragerMsg) -> Self {
         Self {
             // 弹幕没有服务端 oId；此前缀 ID 仅供前端 key，不能拿去 revoke。
-            id: format!("barrager:{}:{}", msg.user_name, msg.barrager_content),
+            id: unique_client_id("barrager"),
             kind: ChatMessageKind::Barrager,
             md: None,
             text: nonempty(&msg.barrager_content),
@@ -241,6 +290,7 @@ impl From<&BarragerMsg> for ChatMessageDto {
             color: safe_css_color(&msg.barrager_color),
             weather: None,
             music: None,
+            redpacket: None,
         }
     }
 }
@@ -254,7 +304,7 @@ impl From<BarragerMsg> for ChatMessageDto {
 impl From<&CustomMsg> for ChatMessageDto {
     fn from(msg: &CustomMsg) -> Self {
         Self {
-            id: format!("custom:{}", msg.message),
+            id: unique_client_id("custom"),
             kind: ChatMessageKind::Custom,
             md: None,
             text: nonempty(&msg.message),
@@ -269,6 +319,7 @@ impl From<&CustomMsg> for ChatMessageDto {
             color: None,
             weather: None,
             music: None,
+            redpacket: None,
         }
     }
 }
@@ -293,13 +344,11 @@ fn classify_chat_msg(msg: &ChatRoomMsg) -> ChatMessageKind {
 
 fn normal_body(msg: &ChatRoomMsg) -> (Option<String>, Option<String>, Option<String>) {
     let md = nonempty(&msg.md);
-    let text = if md.is_some() {
-        None
-    } else {
-        match &msg.content {
-            Value::String(s) => nonempty(s),
-            _ => None,
-        }
+    // `type=Html` 时 content 是服务端 HTML；md 仍是 Markdown。两者都保留：
+    // 展示走 HTML，复制 / 回复 / 复读走 md。
+    let text = match &msg.content {
+        Value::String(s) => nonempty(s),
+        _ => None,
     };
     (md, text, None)
 }
@@ -455,8 +504,102 @@ fn redpacket_hint(content: &Value) -> String {
     hint
 }
 
+/// 从历史/实时 `content` 抽出红包卡片。who 只拷贝已有 userName/avatar，不查在线列表。
+fn redpacket_card(content: &Value) -> Option<RedpacketCardDto> {
+    if !content.is_object() {
+        return Some(RedpacketCardDto::default());
+    }
+    Some(RedpacketCardDto {
+        packet_type: json_str(content, &["type"]).unwrap_or("").to_string(),
+        msg: json_str(content, &["msg", "message"])
+            .unwrap_or("")
+            .to_string(),
+        money: json_u64(content, "money"),
+        got: json_u64(content, "got"),
+        count: json_u64(content, "count"),
+        recivers: json_string_vec(content, &["recivers", "receivers"]),
+        who: redpacket_who(content),
+    })
+}
+
+fn redpacket_who(content: &Value) -> Vec<RedpacketWhoDto> {
+    let Some(items) = content.get("who").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut who = Vec::new();
+    for item in items {
+        let user_name = json_str(item, &["userName", "user_name"])
+            .unwrap_or("")
+            .to_string();
+        if user_name.is_empty() {
+            continue;
+        }
+        let user_id = json_str(item, &["userId", "user_id"])
+            .unwrap_or("")
+            .to_string();
+        let avatar = json_str(item, &["avatar", "userAvatarUrl", "userAvatarURL"])
+            .and_then(public_http_url)
+            .unwrap_or_default();
+        who.push(RedpacketWhoDto {
+            user_name,
+            user_id,
+            avatar,
+        });
+    }
+    who
+}
+
+fn json_string_vec(content: &Value, keys: &[&str]) -> Vec<String> {
+    for key in keys {
+        let Some(value) = content.get(*key) else {
+            continue;
+        };
+        match value {
+            Value::Array(items) => {
+                return items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(ToString::to_string)
+                    .collect();
+            }
+            Value::String(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    return Vec::new();
+                }
+                if trimmed.starts_with('[') {
+                    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(trimmed) {
+                        return items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::trim)
+                            .filter(|t| !t.is_empty())
+                            .map(ToString::to_string)
+                            .collect();
+                    }
+                }
+                return vec![trimmed.to_string()];
+            }
+            _ => {}
+        }
+    }
+    Vec::new()
+}
+
 fn unknown_hint() -> String {
     "暂不支持的消息类型".to_string()
+}
+
+/// 弹幕/进出场没有服务端 oId。时间戳 + 序号保证同人同文也能进窗，且不会撞上可撤回的数字 oId。
+fn unique_client_id(kind: &str) -> String {
+    let seq = SYNTHETIC_SEQ.fetch_add(1, Ordering::Relaxed);
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("{kind}:{millis}:{seq}")
 }
 
 /// `Windows/1.2.3` 拆成客户端和版本。空值和 SDK 的 `Other` 占位不展示。
@@ -491,7 +634,19 @@ fn json_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
 }
 
 fn json_u64(value: &Value, key: &str) -> u64 {
-    value.get(key).and_then(Value::as_u64).unwrap_or(0)
+    let Some(raw) = value.get(key) else {
+        return 0;
+    };
+    if let Some(n) = raw.as_u64() {
+        return n;
+    }
+    if let Some(n) = raw.as_i64() {
+        return n.max(0) as u64;
+    }
+    if let Some(text) = raw.as_str() {
+        return text.trim().parse().unwrap_or(0);
+    }
+    0
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {
@@ -504,7 +659,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     }
 }
 
-fn public_http_url(value: &str) -> Option<String> {
+pub(crate) fn public_http_url(value: &str) -> Option<String> {
     let trimmed = value.trim();
     let lower = trimmed.to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
@@ -576,4 +731,102 @@ fn is_functional_color(value: &str) -> bool {
 
 fn is_named_color(value: &str) -> bool {
     (3..=20).contains(&value.len()) && value.chars().all(|ch| ch.is_ascii_alphabetic())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn redpacket_card_maps_got_count_money_who() {
+        let content = json!({
+            "msgType": "redPacket",
+            "type": "random",
+            "msg": "摸鱼者，事竟成！",
+            "money": 32,
+            "got": 2,
+            "count": 3,
+            "recivers": [],
+            "who": [
+                {
+                    "userName": "alice",
+                    "userId": "1",
+                    "avatar": "https://example.com/a.png"
+                },
+                {
+                    "userName": "bob",
+                    "avatar": "javascript:alert(1)"
+                }
+            ]
+        });
+        let card = redpacket_card(&content).expect("card");
+        assert_eq!(card.packet_type, "random");
+        assert_eq!(card.msg, "摸鱼者，事竟成！");
+        assert_eq!(card.money, 32);
+        assert_eq!(card.got, 2);
+        assert_eq!(card.count, 3);
+        assert_eq!(card.who.len(), 2);
+        assert_eq!(card.who[0].user_name, "alice");
+        assert_eq!(card.who[0].avatar, "https://example.com/a.png");
+        assert_eq!(card.who[1].user_name, "bob");
+        assert_eq!(card.who[1].avatar, "");
+    }
+
+    #[test]
+    fn redpacket_card_serializes_type_not_packet_type() {
+        let card = RedpacketCardDto {
+            packet_type: "specify".into(),
+            msg: "给你".into(),
+            money: 16,
+            got: 0,
+            count: 1,
+            recivers: vec!["carol".into()],
+            who: Vec::new(),
+        };
+        let value = serde_json::to_value(&card).expect("serialize");
+        assert_eq!(value["type"], "specify");
+        assert_eq!(value["msg"], "给你");
+        assert_eq!(value["money"], 16);
+        assert_eq!(value["recivers"][0], "carol");
+        assert!(value.get("packetType").is_none());
+    }
+
+    fn sample_barrager(content: &str) -> BarragerMsg {
+        BarragerMsg {
+            user_name: "alice".into(),
+            user_nickname: "Alice".into(),
+            barrager_content: content.into(),
+            barrager_color: "#fff".into(),
+            user_avatar_url: String::new(),
+            user_avatar_url20: String::new(),
+            user_avatar_url48: String::new(),
+            user_avatar_url210: String::new(),
+        }
+    }
+
+    #[test]
+    fn barrager_ids_are_unique_for_same_content() {
+        let msg = sample_barrager("摸鱼");
+        let first = ChatMessageDto::from(&msg);
+        let second = ChatMessageDto::from(&msg);
+        assert_ne!(first.id, second.id);
+        assert!(first.id.starts_with("barrager:"));
+        assert!(second.id.starts_with("barrager:"));
+        assert_ne!(first.id, format!("barrager:{}:{}", msg.user_name, msg.barrager_content));
+        assert!(!first.id.chars().all(|ch| ch.is_ascii_digit()));
+    }
+
+    #[test]
+    fn custom_ids_are_unique_for_same_content() {
+        let msg = CustomMsg {
+            message: "进入了聊天室".into(),
+        };
+        let first = ChatMessageDto::from(&msg);
+        let second = ChatMessageDto::from(&msg);
+        assert_ne!(first.id, second.id);
+        assert!(first.id.starts_with("custom:"));
+        assert_ne!(first.id, format!("custom:{}", msg.message));
+        assert!(!first.id.chars().all(|ch| ch.is_ascii_digit()));
+    }
 }

@@ -121,7 +121,7 @@ function asMessage(payload: unknown): ChatMessageDto | null {
   if (typeof inner.id !== "string" || inner.id.length === 0) {
     return null;
   }
-  return inner as ChatMessageDto;
+  return inner as unknown as ChatMessageDto;
 }
 
 function asRevoke(payload: unknown): Pick<RevokeEvent, "messageId"> | null {

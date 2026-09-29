@@ -15,13 +15,15 @@
         "title": "摸鱼派桌面",
         "width": 800,
         "height": 600,
+        "minWidth": 350,
+        "minHeight": 200,
         "decorations": false
       }
     ],
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self'",
+        "script-src": "'self' 'unsafe-eval'",
         "style-src": "'self' 'unsafe-inline'",
         "img-src": [
           "'self'",
@@ -55,10 +57,14 @@
           "https://*.126.net"
         ],
         "font-src": "'self' data:",
-        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost asset: http://asset.localhost https://asset.localhost",
         "media-src": [
           "'self'",
           "blob:",
+          "https://fishpi.cn",
+          "https://*.fishpi.cn",
+          "https://b3logfile.com",
+          "https://*.b3logfile.com",
           "http://music.163.com",
           "https://music.163.com",
           "http://*.music.126.net",
@@ -67,7 +73,10 @@
           "https://*.126.net"
         ],
         "object-src": "'none'",
-        "frame-src": "'none'",
+        "frame-src": [
+          "https://music.163.com",
+          "http://music.163.com"
+        ],
         "frame-ancestors": "'none'",
         "worker-src": "'none'",
         "base-uri": "'self'",

@@ -1,4 +1,4 @@
-//! 不可信 HTML 剥离：DTO 只给 markdown / 纯文本，禁止把服务端 HTML 当可信内容。
+//! HTML 处理：列表预览等可剥标签；详情正文 / 评论 / 清风明月走 [`keep_renderable`]。
 
 /// 去掉标签并还原常见实体。输入不是 HTML 时原样返回（trim）。
 pub fn html_to_text(input: &str) -> String {
@@ -43,18 +43,68 @@ pub fn markdown_or_none(input: &str) -> Option<String> {
     }
 }
 
-fn looks_like_html(input: &str) -> bool {
-    let lower = input.trim_start().to_ascii_lowercase();
-    lower.starts_with("<p")
-        || lower.starts_with("<div")
-        || lower.starts_with("<span")
-        || lower.starts_with("<br")
-        || lower.starts_with("<ul")
-        || lower.starts_with("<ol")
-        || lower.starts_with("<h1")
-        || lower.starts_with("<h2")
-        || lower.starts_with("<h3")
-        || lower.starts_with("<article")
+/// 私聊等需要前端净化渲染的正文：保留原文（含 HTML/md），空则 None。
+/// 不要用 [`html_to_text`]，剥标签会丢掉图和链接。
+pub fn keep_renderable(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// 正文拆成 markdown 或 HTML，互斥；不要剥标签。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RichBody {
+    pub markdown: Option<String>,
+    pub html: Option<String>,
+}
+
+pub fn split_rich_body(input: &str) -> RichBody {
+    let Some(trimmed) = keep_renderable(input) else {
+        return RichBody {
+            markdown: None,
+            html: None,
+        };
+    };
+    if looks_like_html(&trimmed) {
+        RichBody {
+            markdown: None,
+            html: Some(trimmed),
+        }
+    } else {
+        RichBody {
+            markdown: Some(trimmed),
+            html: None,
+        }
+    }
+}
+
+pub fn looks_like_html(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    contains_tag(&lower, "p")
+        || contains_tag(&lower, "div")
+        || contains_tag(&lower, "span")
+        || contains_tag(&lower, "br")
+        || contains_tag(&lower, "img")
+        || contains_tag(&lower, "a")
+        || contains_tag(&lower, "ul")
+        || contains_tag(&lower, "ol")
+        || contains_tag(&lower, "li")
+        || contains_tag(&lower, "h1")
+        || contains_tag(&lower, "h2")
+        || contains_tag(&lower, "h3")
+        || contains_tag(&lower, "blockquote")
+        || contains_tag(&lower, "pre")
+        || contains_tag(&lower, "code")
+        || contains_tag(&lower, "table")
+        || contains_tag(&lower, "article")
+        || contains_tag(&lower, "iframe")
+}
+
+fn contains_tag(lower: &str, name: &str) -> bool {
+    lower.contains(&format!("<{name}")) || lower.contains(&format!("</{name}>"))
 }
 
 fn unescape_entities(input: &str) -> String {
@@ -84,6 +134,24 @@ mod tests {
     #[test]
     fn markdown_rejects_html_fragment() {
         assert!(markdown_or_none("<p>hi</p>").is_none());
+        assert!(markdown_or_none("<iframe src=\"//music.163.com/x\"></iframe>").is_none());
         assert_eq!(markdown_or_none("**hi**").as_deref(), Some("**hi**"));
+    }
+
+    #[test]
+    fn keep_renderable_preserves_html() {
+        assert_eq!(
+            keep_renderable("<p><img src=\"https://a/b.png\"></p>").as_deref(),
+            Some("<p><img src=\"https://a/b.png\"></p>")
+        );
+        assert!(keep_renderable("  ").is_none());
+    }
+
+    #[test]
+    fn html_with_mid_sentence_image_is_html() {
+        let html = "看图 <img src=\"https://a.test/x.png\">";
+        assert!(looks_like_html(html));
+        assert_eq!(split_rich_body(html).html.as_deref(), Some(html));
+        assert!(split_rich_body(html).markdown.is_none());
     }
 }

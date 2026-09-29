@@ -102,6 +102,13 @@ html[data-theme="feishu"] .shell__header-slot--feishu {
   app-region: no-drag;
 }
 
+.shell__header-music-player {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
 .shell__header-music-name {
   overflow: hidden;
   max-width: 180px;
@@ -138,6 +145,35 @@ html[data-theme="feishu"] .shell__header-slot--feishu {
 .shell__header-icon-btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.shell__header-music-toggle {
+  display: none;
+}
+
+@media (max-width: 500px) {
+  .shell__header-music-toggle {
+    display: grid;
+  }
+
+  .shell__header-music-player {
+    position: absolute;
+    top: var(--header-height, 40px);
+    left: 0;
+    z-index: 20;
+    display: none;
+    width: 100vw;
+    max-width: 100vw;
+    padding: 4px 8px;
+    background: var(--global-background-color, var(--color-bg));
+    opacity: 0.92;
+  }
+
+  .shell__header-music-player.is-open {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
 }
 
 .shell__header-cx {

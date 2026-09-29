@@ -6,7 +6,7 @@
  */
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Eye, EyeOff, Lock, Shield, User } from "lucide-react";
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
+import { desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
 import { invokeAuthLogin } from "../../lib/tauri";
 import type { AuthSession } from "../../lib/types";
 import { FishMark } from "../shell/FishMark";
@@ -52,6 +53,20 @@ export function LoginPage({
   const [error, setError] = useState<string | null>(null);
   const [registerHint, setRegisterHint] = useState(false);
 
+  useEffect(() => {
+    let alive = true;
+    void desktopPrefsGet()
+      .then((prefs) => {
+        if (alive && prefs.loginUsername) {
+          setUsername(prefs.loginUsername);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const busy = submitting || submittingFromGate;
   const invalid = Boolean(error);
   const describedBy =
@@ -84,6 +99,7 @@ export function LoginPage({
       });
       setPassword("");
       setMfaCode("");
+      void desktopPrefsSet({ loginUsername: trimmedName }).catch(() => undefined);
       onLoggedIn(session);
     } catch (err) {
       setError(authErrorMessage(err));
@@ -150,6 +166,12 @@ export function LoginPage({
               aria-invalid={invalid}
               aria-describedby={describedBy}
               onChange={(event) => setUsername(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  focusField(passwordId);
+                }
+              }}
             />
           </InputGroup>
 
@@ -169,6 +191,12 @@ export function LoginPage({
               aria-invalid={invalid}
               aria-describedby={describedBy}
               onChange={(event) => setPassword(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  focusField(mfaId);
+                }
+              }}
             />
             <InputGroupAddon align="inline-end">
               <InputGroupButton
@@ -201,6 +229,12 @@ export function LoginPage({
               aria-label="两步验证码"
               aria-describedby={describedBy}
               onChange={(event) => setMfaCode(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
             />
           </InputGroup>
         </div>
@@ -238,4 +272,11 @@ export function LoginPage({
       </div>
     </div>
   );
+}
+
+function focusField(id: string): void {
+  const node = document.getElementById(id);
+  if (node instanceof HTMLElement) {
+    node.focus();
+  }
 }

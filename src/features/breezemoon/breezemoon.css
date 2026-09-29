@@ -75,6 +75,15 @@
   letter-spacing: 0.06em;
 }
 
+.bm-sdk-note {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.75rem;
+  color: var(--bm-muted);
+  border-bottom: 1px solid var(--bm-line);
+}
+
 .bm-banner {
   flex: 0 0 auto;
   margin: 0;
@@ -198,6 +207,28 @@
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.bm-item-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.bm-item-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--bm-muted);
+  font-size: 0.72rem;
+}
+
+.bm-item-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .bm-md {

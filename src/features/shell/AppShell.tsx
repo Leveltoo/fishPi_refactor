@@ -1,4 +1,3 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Bell,
   Leaf,
@@ -53,10 +52,9 @@ import { SettingsHost } from "@/features/settings";
 import {
   invokeAlwaysOnTop,
   invokeSettingsSet,
-  invokeWindowOpacity,
   normalizeSettings,
 } from "@/features/settings/api";
-import { DEFAULT_SETTINGS, OPACITY_MIN } from "@/features/settings/constants";
+import { DEFAULT_SETTINGS } from "@/features/settings/constants";
 import {
   currentDesktopSettings,
   publishDesktopSettings,
@@ -64,7 +62,7 @@ import {
 } from "@/features/settings/settingsStore";
 import { FishMark } from "./FishMark";
 import { HeaderMusic } from "./HeaderMusic";
-import { OPEN_IM_EVENT } from "../../lib/nav";
+import { OPEN_IM_EVENT, OPEN_SETTINGS_EVENT } from "../../lib/nav";
 import {
   subscribeHeaderTitle,
   type HeaderTitleDetail,
@@ -73,7 +71,13 @@ import { LivenessEdge } from "./LivenessEdge";
 import { avatarInitial, displayName, type ShellUser } from "./session-snapshot";
 import { useAutoReward } from "./useAutoReward";
 import { useMessageNotices } from "./useMessageNotices";
+import { useStartupUpdateCheck } from "./useStartupUpdateCheck";
 import { WarnBroadcastDialog } from "./WarnBroadcast";
+import {
+  closeMainWindow,
+  hideMainToTray,
+  toggleWindowOpacity,
+} from "./windowActions";
 import "./AppShell.css";
 
 type AppShellProps = {
@@ -208,11 +212,14 @@ export function AppShell({
   const [settingsOpacity, setSettingsOpacity] = useState(
     DEFAULT_SETTINGS.opacity,
   );
-  const [dimmed, setDimmed] = useState(false);
+  const [opacityEnabled, setOpacityEnabled] = useState(
+    DEFAULT_SETTINGS.opacityEnabled,
+  );
   const unread = useImUnreadTotal();
   const liveness = useWindowLiveness();
   const { broadcast, dismissBroadcast } = useMessageNotices(user.userName);
   useAutoReward();
+  useStartupUpdateCheck();
   const name = displayName(user);
   const avatarSrc = user.userAvatarUrl || undefined;
   const [titleOverride, setTitleOverride] = useState<HeaderTitleDetail | null>(
@@ -227,6 +234,7 @@ export function AppShell({
     return subscribeDesktopSettings((snapshot) => {
       setAlwaysOnTop(snapshot.settings.alwaysOnTop);
       setSettingsOpacity(snapshot.settings.opacity);
+      setOpacityEnabled(snapshot.settings.opacityEnabled);
     });
   }, []);
 
@@ -240,41 +248,26 @@ export function AppShell({
     function onOpenIm(): void {
       setPage("im");
     }
+    function onOpenSettings(): void {
+      setPage("settings");
+    }
     window.addEventListener(OPEN_IM_EVENT, onOpenIm);
+    window.addEventListener(OPEN_SETTINGS_EVENT, onOpenSettings);
     return () => {
       window.removeEventListener(OPEN_IM_EVENT, onOpenIm);
+      window.removeEventListener(OPEN_SETTINGS_EVENT, onOpenSettings);
     };
   }, []);
 
   const onMinimize = useCallback(() => {
-    void (async () => {
-      try {
-        const win = getCurrentWindow();
-        // 标准最小化：缩到任务栏。不要 hide——用户会以为按钮没反应。
-        await win.minimize();
-      } catch {
-        try {
-          await getCurrentWindow().hide();
-        } catch {
-          // 非 Tauri / 权限不足
-        }
-      }
-    })();
+    void hideMainToTray();
   }, []);
 
   const onToggleOpacity = useCallback(() => {
-    void (async () => {
-      const nextDimmed = !dimmed;
-      const target = nextDimmed ? OPACITY_MIN : settingsOpacity;
-      try {
-        await invokeWindowOpacity(target);
-        setDimmed(nextDimmed);
-      } catch {
-        // 命令缺失时只翻转视觉，不假装已写入系统
-        setDimmed(nextDimmed);
-      }
-    })();
-  }, [dimmed, settingsOpacity]);
+    void toggleWindowOpacity(opacityEnabled, settingsOpacity).then(
+      setOpacityEnabled,
+    );
+  }, [opacityEnabled, settingsOpacity]);
 
   const onTogglePin = useCallback(() => {
     void (async () => {
@@ -295,14 +288,7 @@ export function AppShell({
   }, [alwaysOnTop]);
 
   const onClose = useCallback(() => {
-    void (async () => {
-      try {
-        // close() 发 CloseRequested，由 window_close.rs 按 close_to_tray 藏或真关。
-        await getCurrentWindow().close();
-      } catch {
-        // 非 Tauri 环境：保持视觉按钮
-      }
-    })();
+    void closeMainWindow();
   }, []);
 
   return (
@@ -368,7 +354,7 @@ export function AppShell({
                   label="透明窗体"
                   className="win-opacity-btn"
                   customIcon={<span className="cirle-empty" aria-hidden="true" />}
-                  pressed={dimmed}
+                  pressed={opacityEnabled}
                   onClick={onToggleOpacity}
                 />
                 <WinCtrlButton

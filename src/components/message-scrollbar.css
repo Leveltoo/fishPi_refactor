@@ -1,0 +1,45 @@
+.msg-scrollbar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 0.5em;
+  height: 100%;
+  text-align: center;
+  color: var(--global-scroll-bar-color, var(--color-text-muted));
+  user-select: none;
+}
+
+.msg-scrollbar__btn {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 0.5em;
+  line-height: 0.5em;
+  cursor: pointer;
+}
+
+.msg-scrollbar__btn--down {
+  transform: none;
+}
+
+.msg-scrollbar__track {
+  position: relative;
+  flex: 1;
+  margin-top: 4px;
+  min-height: 32px;
+}
+
+.msg-scrollbar__thumb {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: var(--global-scroll-bar-color, var(--color-text-muted));
+  cursor: pointer;
+  transform: translateY(-50%);
+}

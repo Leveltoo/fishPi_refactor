@@ -7,6 +7,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import { looksLikeHtml } from "../../lib/safeHtml";
 import { AppInvokeError, parseInvokeError } from "../../lib/errors";
 import {
   BridgeGapError,
@@ -48,7 +49,7 @@ export function invokeArticleDetail(
   request: ArticleDetailRequest,
 ): Promise<ArticleDetail> {
   return invokeMapped(ARTICLE_COMMAND.detail, { request }, (payload) =>
-    mapDetail(payload, request.page ?? 1),
+    mapDetail(payload, request.page),
   );
 }
 
@@ -233,7 +234,7 @@ function mapSummary(raw: unknown): ArticleSummary | null {
   };
 }
 
-function mapDetail(payload: unknown, requestedPage: number): ArticleDetail {
+function mapDetail(payload: unknown, requestedPage?: number): ArticleDetail {
   const root = unwrapRecord(payload);
   const article =
     asRecord(root?.article) ??
@@ -245,12 +246,25 @@ function mapDetail(payload: unknown, requestedPage: number): ArticleDetail {
   const comments = unwrapComments(root, article)
     .map(mapComment)
     .filter((item): item is ArticleComment => item != null);
+  const pageCount =
+    asPositiveInt(root?.pageCount) ??
+    asPositiveInt(article.pageCount) ??
+    asPositiveInt(asRecord(root?.pagination)?.count) ??
+    1;
   const page =
     asPositiveInt(root?.commentPage) ??
+    asPositiveInt(article.commentPage) ??
     asPositiveInt(root?.page) ??
-    requestedPage;
-  const markdown = pickMarkdown(article);
+    requestedPage ??
+    pageCount;
+  const body = pickBody(article);
   const rewarded = pickBoolean(article, ["rewarded"]);
+  const hasEarlier =
+    typeof root?.commentHasEarlier === "boolean"
+      ? root.commentHasEarlier
+      : typeof article.commentHasEarlier === "boolean"
+        ? Boolean(article.commentHasEarlier)
+        : page > 1;
   return {
     id: id || "",
     title: summary?.title || displayTitle(article) || "无标题",
@@ -259,7 +273,8 @@ function mapDetail(payload: unknown, requestedPage: number): ArticleDetail {
     avatarUrl: summary?.avatarUrl ?? "",
     time: summary?.time ?? "",
     tags: summary?.tags ?? "",
-    markdown,
+    markdown: body.markdown,
+    html: body.html,
     commentCount: pickNumber(article, [
       "commentCount",
       "articleCommentCount",
@@ -267,7 +282,13 @@ function mapDetail(payload: unknown, requestedPage: number): ArticleDetail {
     commentable: pickBoolean(article, ["commentable", "articleCommentable"], true),
     comments,
     commentPage: page,
+    commentLatestPage:
+      asPositiveInt(root?.commentLatestPage) ??
+      asPositiveInt(article.commentLatestPage) ??
+      page,
+    commentPageCount: pageCount,
     commentHasMore: readCommentHasMore(root, article, page, comments.length),
+    commentHasEarlier: hasEarlier,
     thanked: pickBoolean(article, ["thanked"]),
     thankCount: pickNumber(article, ["thankCount", "articleThankCnt"]),
     goodCount: pickNumber(article, ["goodCount", "articleGoodCnt"]),
@@ -276,14 +297,13 @@ function mapDetail(payload: unknown, requestedPage: number): ArticleDetail {
     rewarded,
     rewardPoint: pickNumber(article, ["rewardPoint", "articleRewardPoint"]),
     rewardedCount: pickNumber(article, ["rewardedCount", "rewardedCnt"]),
-    rewardContent: rewarded
-      ? toMarkdownSource(pickString(article, ["rewardContent", "articleRewardContent"]))
-      : "",
+    rewardContent: rewarded ? pickRich(article, ["rewardContent", "articleRewardContent"]) : "",
     articleType: Math.max(0, Math.trunc(pickNumber(article, ["articleType"]))),
+    viewCount: pickNumber(article, ["viewCount", "articleViewCount"]),
   };
 }
 
-function mapComment(raw: unknown): ArticleComment | null {
+export function mapComment(raw: unknown): ArticleComment | null {
   const rec = asRecord(raw);
   if (!rec) {
     return null;
@@ -294,12 +314,17 @@ function mapComment(raw: unknown): ArticleComment | null {
     return null;
   }
   const userName =
-    pickString(rec, ["userName", "commentAuthorName", "author"]) ||
-    pickString(commenter, ["userName", "user_name"]);
+    pickString(rec, [
+      "userName",
+      "authorUserName",
+      "commentAuthorName",
+      "author",
+    ]) || pickString(commenter, ["userName", "user_name"]);
   const displayName =
     pickString(rec, ["displayName", "authorNickname"]) ||
     pickString(commenter, ["nickname", "userNickname"]) ||
     userName;
+  const body = pickBody(rec);
   return {
     id,
     userName,
@@ -319,14 +344,17 @@ function mapComment(raw: unknown): ArticleComment | null {
         "createTimeStr",
         "commentCreateTimeStr",
       ]) || "",
-    markdown: toMarkdownSource(
-      pickString(rec, [
-        "markdown",
-        "md",
-        "content",
-        "commentContent",
-      ]),
-    ),
+    markdown: body.markdown,
+    html: body.html,
+    replyId: pickString(rec, [
+      "replyId",
+      "commentOriginalCommentId",
+      "originalCommentId",
+    ]),
+    replyAvatarUrl: pickString(rec, [
+      "replyAvatarUrl",
+      "commentOriginalAuthorThumbnailURL",
+    ]),
     thankCount: pickNumber(rec, ["thankCount", "commentThankCnt", "thankCnt"]),
     thanked: pickBoolean(rec, ["rewarded", "thanked"]),
     goodCount: pickNumber(rec, ["goodCount", "commentGoodCnt"]),
@@ -362,7 +390,7 @@ function mapRewardResult(payload: unknown): ArticleRewardResult {
     ...ack,
     rewarded,
     rewardContent: rewarded
-      ? toMarkdownSource(pickString(record, ["rewardContent"]))
+      ? pickRich(record, ["rewardContent"])
       : "",
     rewardedCount: rewarded ? pickNumber(record, ["rewardedCount"]) : 0,
   };
@@ -400,24 +428,36 @@ function readVote(article: Record<string, unknown>): "up" | "down" | "none" {
   return "none";
 }
 
-function pickMarkdown(article: Record<string, unknown>): string {
-  const source = pickString(article, [
+function pickBody(record: Record<string, unknown>): { markdown: string; html: string } {
+  const html = pickString(record, ["html"]);
+  if (html && looksLikeHtml(html)) {
+    return { markdown: "", html };
+  }
+  const source = pickString(record, [
     "markdown",
     "source",
     "articleOriginalContent",
     "md",
+    "content",
+    "articleContent",
+    "commentContent",
   ]);
-  if (source) {
-    return toMarkdownSource(source);
+  if (looksLikeHtml(source)) {
+    return { markdown: "", html: source };
   }
-  return toMarkdownSource(
-    pickString(article, ["content", "articleContent", "html"]),
-  );
+  return { markdown: source, html: html };
+}
+
+function pickRich(
+  record: Record<string, unknown> | undefined,
+  keys: string[],
+): string {
+  const raw = pickString(record, keys);
+  return raw;
 }
 
 /**
- * 服务端评论/正文常是 HTML。转成 markdown 再走 react-markdown，
- * 不要把原始 HTML 交给 dangerouslySetInnerHTML。
+ * 服务端评论/正文常是 HTML。列表预览仍可剥标签；详情走 DOMPurify。
  */
 export function toMarkdownSource(raw: string): string {
   const text = raw.trim();

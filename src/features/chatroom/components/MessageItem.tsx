@@ -16,17 +16,14 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { toast } from "sonner";
-import type { ChatMessageDto } from "../../../lib/types";
+import type { ChatMessageDto, RedpacketWhoDto } from "../../../lib/types";
 import { sanitizeHttpUrl } from "../../../lib/markdown";
 import { canReplyMessage, canRevokeMessage, isModeratorRole } from "../permissions";
 import {
-  dispatchRedpacketOpen,
   dispatchRedpacketSend,
   isRedpacketMessage,
-  FISHPI_REDPACKET_EVENT,
-  toRedpacketDetail,
-  type FishpiRedpacketDetail,
 } from "../redpacketEvents";
+import { RedpacketCard, RedpacketWhoRow, resendRedpacket } from "./RedpacketCard";
 import { displayNameOf, messagePlainBody } from "../replyQuote";
 import {
   asRich,
@@ -51,9 +48,10 @@ import {
 import { UserContextMenu } from "./UserContextMenu";
 import { userCardProps } from "../../usercard/hover";
 import { MarkdownView } from "./MarkdownView";
-import { ChatHtmlView, looksLikeHtml } from "./ChatHtmlView";
+import { ChatHtmlView, looksLikeHtml, messageHtmlSource } from "./ChatHtmlView";
 import { MusicCard } from "./MusicCard";
 import { WeatherCard } from "./WeatherCard";
+import { isEmojiImage } from "../emojiShortcode";
 
 type MessageItemProps = {
   message: ChatMessageDto;
@@ -70,8 +68,8 @@ type MessageItemProps = {
   onMention: (userName: string) => void;
   onInsertToken?: (token: string) => void;
   onAddEmoji?: (url: string) => void;
-  /** 该红包的领取人（用户名，按到达顺序去重）。 */
-  redpacketWho?: string[];
+  /** 该红包的领取人（历史 who + 实时 status，带头像）。 */
+  redpacketWho?: RedpacketWhoDto[];
   /** 用户名 → 在线列表头像；缺省时回退首字母。 */
   userAvatarMap?: Map<string, string>;
 };
@@ -205,7 +203,13 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
     a.userAvatarUrl === b.userAvatarUrl &&
     a.kind === b.kind &&
     asRich(a).color === asRich(b).color &&
-    asRich(a).viaClient === asRich(b).viaClient
+    asRich(a).viaClient === asRich(b).viaClient &&
+    a.redpacket?.got === b.redpacket?.got &&
+    a.redpacket?.count === b.redpacket?.count &&
+    a.redpacket?.money === b.redpacket?.money &&
+    a.redpacket?.type === b.redpacket?.type &&
+    a.redpacket?.msg === b.redpacket?.msg &&
+    (a.redpacket?.who?.length ?? 0) === (b.redpacket?.who?.length ?? 0)
   );
 }
 
@@ -251,8 +255,10 @@ export const MessageItem = memo(function MessageItem({
     alsoSaid.some((entry) => /^\d+$/.test(entry.id));
   const mdSource = message.md?.trim() ?? "";
   const textSource = message.text?.trim() ?? "";
-  /** 与渲染分流同源：md 优先，空则 text。 */
-  const bodySource = mdSource.length > 0 ? mdSource : textSource;
+  const htmlSource = messageHtmlSource(message);
+  /** 与渲染分流同源：HTML 优先，否则 md，再 text。 */
+  const bodySource =
+    htmlSource ?? (mdSource.length > 0 ? mdSource : textSource);
   const imgOnly =
     message.kind !== "barrager" &&
     !isSpecialKind(message.kind) &&
@@ -381,40 +387,6 @@ export const MessageItem = memo(function MessageItem({
     toast.success("已复制消息");
   }
 
-  function handleRedpacketClick(): void {
-    if (message.revoked) {
-      return;
-    }
-    dispatchRedpacketOpen(message);
-  }
-
-  /**
-   * 猜拳红包手势（旧 gesture()）：复用现有 `fishpi:redpacket` 打开通道，
-   * detail 里带 type/gesture（RedPacketHost.parseOpenEvent 已支持），不新增 IPC。
-   * DTO 没有 who 字段，"我是否已领" 用 rawHint 的 已领 N/M 近似。
-   */
-  const rpHint = redpacket ? message.rawHint ?? "" : "";
-  const rpProgress = /已领\s*(\d+)\s*\/\s*(\d+)/.exec(rpHint);
-  const gestureVisible =
-    redpacket &&
-    rpHint.includes("【猜拳红包】") &&
-    !mine &&
-    !message.revoked &&
-    (rpProgress == null ||
-      Number(rpProgress[1]) < Number(rpProgress[2]));
-
-  function pickGesture(gesture: 0 | 1 | 2): void {
-    const detail: FishpiRedpacketDetail & {
-      type: "rockPaperScissors";
-      gesture: 0 | 1 | 2;
-    } = {
-      ...toRedpacketDetail(message),
-      type: "rockPaperScissors",
-      gesture,
-    };
-    window.dispatchEvent(new CustomEvent(FISHPI_REDPACKET_EVENT, { detail }));
-  }
-
   function msgImageAction(): {
     kind: "emoji" | "image" | null;
     src: string;
@@ -425,8 +397,7 @@ export const MessageItem = memo(function MessageItem({
       return { kind: null, src: "", code: null };
     }
     const src = (target as HTMLImageElement).src;
-    const classNameAttr = target.getAttribute("class") ?? "";
-    if (classNameAttr.split(/\s+/).includes("emoji")) {
+    if (isEmojiImage(target)) {
       return { kind: "emoji", src, code: emojiCodeFromSrc(src) };
     }
     return { kind: "image", src, code: null };
@@ -454,7 +425,7 @@ export const MessageItem = memo(function MessageItem({
   const musicInPlaylist =
     musicSongId != null ? playlistHasSong(musicSongId) : false;
 
-  /** 红包卡：复制地址 + 再发一个（打开发送面板并带上对方）。 */
+  /** 红包卡：复制地址 + 再发一个（按原参数直接重发）。 */
   function redpacketExtraItems(): ReactNode {
     if (!redpacket || message.revoked) {
       return null;
@@ -470,15 +441,15 @@ export const MessageItem = memo(function MessageItem({
         >
           复制红包地址
         </ContextMenuItem>
-        {message.userName ? (
-          <ContextMenuItem
-            onSelect={() => {
-              dispatchRedpacketSend({ userName: message.userName });
-            }}
-          >
-            再发一个
-          </ContextMenuItem>
-        ) : null}
+        <ContextMenuItem
+          onSelect={() => {
+            if (!resendRedpacket(message)) {
+              toast.error("这条红包缺少原参数，无法重发。");
+            }
+          }}
+        >
+          再发一个
+        </ContextMenuItem>
         <ContextMenuSeparator />
       </>
     );
@@ -559,41 +530,12 @@ export const MessageItem = memo(function MessageItem({
                 {message.revoked ? (
                   <p className="chat-msg-revoked">此消息已撤回</p>
                 ) : redpacket ? (
-                  <>
-                    <button
-                      type="button"
-                      className="chat-msg-redpacket"
-                      onClick={handleRedpacketClick}
-                    >
-                      <Badge variant="default">{kindLabel(message.kind)}</Badge>
-                      <p>{specialSummary(message)}</p>
-                    </button>
-                    {gestureVisible ? (
-                      <div className="chat-gesture" title="猜猜我出什么呢~">
-                        <button
-                          type="button"
-                          title="石头"
-                          onClick={() => pickGesture(0)}
-                        >
-                          ✊
-                        </button>
-                        <button
-                          type="button"
-                          title="剪刀"
-                          onClick={() => pickGesture(1)}
-                        >
-                          ✌️
-                        </button>
-                        <button
-                          type="button"
-                          title="布"
-                          onClick={() => pickGesture(2)}
-                        >
-                          ✋
-                        </button>
-                      </div>
-                    ) : null}
-                  </>
+                  <RedpacketCard
+                    message={message}
+                    selfUserName={selfUserName}
+                    mine={mine}
+                    statusWho={redpacketWho}
+                  />
                 ) : message.kind === "weather" ? (
                   <WeatherCard
                     card={rich.weather ?? { area: "", summary: "", days: [] }}
@@ -618,6 +560,10 @@ export const MessageItem = memo(function MessageItem({
                   >
                     {message.text?.trim() || specialSummary(message)}
                   </p>
+                ) : message.kind === "custom" ? (
+                  <ChatHtmlView
+                    source={message.text?.trim() || specialSummary(message)}
+                  />
                 ) : isSpecialKind(message.kind) ? (
                   <div className="chat-msg-special">
                     <Badge variant="outline">{kindLabel(message.kind)}</Badge>
@@ -626,16 +572,11 @@ export const MessageItem = memo(function MessageItem({
                 ) : (() => {
                   const md = message.md?.trim() ?? "";
                   const text = message.text?.trim() ?? "";
-                  // 服务端可能把 HTML 写进 md（引用块、强标签等）——旧版始终 v-html。
-                  // react-markdown 不渲染 HTML，会把 <strong> 等当字面文本，故优先分流。
-                  if (md.length > 0 && looksLikeHtml(md)) {
-                    return <ChatHtmlView source={md} />;
+                  if (htmlSource != null) {
+                    return <ChatHtmlView source={htmlSource} />;
                   }
                   if (md.length > 0) {
                     return <MarkdownView source={md} />;
-                  }
-                  if (text.length > 0 && looksLikeHtml(text)) {
-                    return <ChatHtmlView source={text} />;
                   }
                   if (
                     text.length > 0 &&
@@ -672,7 +613,7 @@ export const MessageItem = memo(function MessageItem({
                 ) : null}
               </div>
             </ContextMenuTrigger>
-            <ContextMenuContent className="chat-menu" sideOffset={4}>
+            <ContextMenuContent className="chat-menu">
               {/* 顺序对齐旧 msgMenuShow */}
               {!mine && !system && !redpacket ? (
                 <ContextMenuItem
@@ -739,7 +680,7 @@ export const MessageItem = memo(function MessageItem({
               {!system && !mine && message.userName.length > 0 && !redpacket ? (
                 <ContextMenuItem
                   onSelect={() => {
-                    dispatchRedpacketSend({ userName: message.userName });
+                    dispatchRedpacketSend({ user: message.userName });
                   }}
                 >
                   发个专属红包给 {name}
@@ -814,50 +755,14 @@ export const MessageItem = memo(function MessageItem({
             </ContextMenuContent>
           </ContextMenu>
         </div>
-        {redpacket &&
-        !message.revoked &&
-        redpacketWho != null &&
-        redpacketWho.length > 0 ? (
-          <div className="chat-redpacket-who">
-            {redpacketWho.map((userName) => {
-              if (userName.length === 0) {
-                return null;
-              }
-              const src = sanitizeHttpUrl(userAvatarMap?.get(userName));
-              const inner = (
-                <Avatar className="size-[22px]">
-                  {src ? <AvatarImage src={src} alt="" /> : null}
-                  <AvatarFallback>{avatarLetter(userName)}</AvatarFallback>
-                </Avatar>
-              );
-              if (userName === selfUserName) {
-                return (
-                  <span
-                    key={userName}
-                    className="chat-redpacket-user"
-                    title={userName}
-                  >
-                    {inner}
-                  </span>
-                );
-              }
-              return (
-                <ContextMenu key={userName}>
-                  <ContextMenuTrigger asChild>
-                    <span
-                      className="chat-redpacket-user"
-                      title={userName}
-                      {...userCardProps(userName)}
-                    >
-                      {inner}
-                    </span>
-                  </ContextMenuTrigger>
-                  <UserContextMenu userName={userName} onMention={onMention} />
-                </ContextMenu>
-              );
-            })}
-            <span className="chat-redpacket-word">领取了</span>
-          </div>
+        {redpacket && !message.revoked ? (
+          <RedpacketWhoRow
+            message={message}
+            selfUserName={selfUserName}
+            statusWho={redpacketWho}
+            userAvatarMap={userAvatarMap}
+            onMention={onMention}
+          />
         ) : null}
         {showPlusOne ? (
           <button

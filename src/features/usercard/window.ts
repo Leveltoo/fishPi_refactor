@@ -11,6 +11,8 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export const USER_CARD_LABEL = "user-card";
 export const USER_CARD_UPDATE_EVENT = "user-update";
+/** 名片子窗请求主窗退出登录，不在子窗清凭据。 */
+export const REQUEST_LOGOUT_EVENT = "fishpi:request-logout";
 
 export const CARD_WIDTH = 400;
 /** 含顶部 52px 头像 padding + 正文；过小会再次裁头像。 */

@@ -14,9 +14,14 @@ import {
   OPACITY_MIN,
   SETTINGS_COMMAND,
   TALK_PATTERN_MAX,
+  TRAY_COMMAND,
   WINDOW_COMMAND,
 } from "./constants";
 import { isMissingCommandError, toUserFacingMessage } from "./errors";
+import {
+  currentDesktopSettings,
+  publishDesktopSettings,
+} from "./settingsStore";
 import { resolveThemeId } from "./theme";
 import type {
   AlwaysOnTopRequest,
@@ -65,6 +70,24 @@ export function invokeNotifyShow(
   return invokeVoid(NOTIFY_COMMAND.show, { request });
 }
 
+export function invokeTrayFlash(): Promise<BridgeOutcome> {
+  return invokeVoid(TRAY_COMMAND.flash);
+}
+
+export function windowOpacityValue(settings: DesktopSettings): number {
+  return settings.opacityEnabled ? settings.opacity : 1;
+}
+
+/** 合并当前设置、发布到订阅方并写入 Bridge。 */
+export function persistSettingsPatch(
+  partial: Partial<DesktopSettings>,
+): Promise<BridgeOutcome> {
+  const base = currentDesktopSettings()?.settings ?? DEFAULT_SETTINGS;
+  const settings = normalizeSettings({ ...base, ...partial });
+  publishDesktopSettings({ ready: true, settings });
+  return invokeSettingsSet(settings);
+}
+
 export function normalizeSettings(
   input: Partial<DesktopSettings> | null | undefined,
 ): DesktopSettings {
@@ -73,6 +96,10 @@ export function normalizeSettings(
     themeId: resolveThemeId(source.themeId),
     alwaysOnTop: Boolean(source.alwaysOnTop),
     opacity: clampOpacity(source.opacity ?? DEFAULT_SETTINGS.opacity),
+    opacityEnabled: readBoolean(
+      source.opacityEnabled,
+      DEFAULT_SETTINGS.opacityEnabled,
+    ),
     closeToTray:
       typeof source.closeToTray === "boolean"
         ? source.closeToTray
@@ -89,6 +116,7 @@ export function normalizeSettings(
     notifySound: readBoolean(source.notifySound),
     notifySystem: readBoolean(source.notifySystem),
     autoReward: readBoolean(source.autoReward),
+    redpackNotice: readBoolean(source.redpackNotice),
   };
 }
 
@@ -119,6 +147,10 @@ function parseSettings(payload: unknown): DesktopSettings {
       nested.alwaysOnTop ?? nested.topWindow ?? nested.always_on_top,
     ),
     opacity: readOpacity(nested.opacity),
+    opacityEnabled: readBoolean(
+      nested.opacityEnabled ?? nested.opacity_enabled,
+      DEFAULT_SETTINGS.opacityEnabled,
+    ),
     closeToTray: readBoolean(
       nested.closeToTray ?? nested.close_to_tray,
       DEFAULT_SETTINGS.closeToTray,
@@ -139,6 +171,7 @@ function parseSettings(payload: unknown): DesktopSettings {
     notifySound: readBoolean(nested.notifySound ?? nested.notify_sound),
     notifySystem: readBoolean(nested.notifySystem ?? nested.notify_system),
     autoReward: readBoolean(nested.autoReward ?? nested.auto_reward),
+    redpackNotice: readBoolean(nested.redpackNotice ?? nested.redpack_notice),
   };
 }
 

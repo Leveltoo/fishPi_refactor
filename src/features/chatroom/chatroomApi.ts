@@ -116,3 +116,8 @@ export type BarrageCost = {
 export function fetchChatroomBarrageCost(): Promise<BarrageCost> {
   return call<BarrageCost>("chatroom_barrage_cost");
 }
+
+/** 服务端消息原文（对齐旧 `chatroom.raw`）。 */
+export function fetchChatroomRaw(messageId: string): Promise<string> {
+  return call("chatroom_raw", { request: { messageId } });
+}

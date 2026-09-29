@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   lookupUserName,
@@ -30,6 +30,15 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   const [careDraft, setCareDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const persistTimer = useRef(0);
+  const ready = useRef(false);
+
+  useEffect(() => {
+    ready.current = true;
+    return () => {
+      window.clearTimeout(persistTimer.current);
+    };
+  }, []);
 
   async function persist(next: ChatroomFilters): Promise<boolean> {
     setBusy(true);
@@ -46,6 +55,21 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function schedulePersist(next: ChatroomFilters): void {
+    if (!ready.current) {
+      return;
+    }
+    window.clearTimeout(persistTimer.current);
+    persistTimer.current = window.setTimeout(() => {
+      void persist(next);
+    }, 400);
+  }
+
+  function updateShield(next: ShieldRule[]): void {
+    setShield(next);
+    schedulePersist({ shield: next, careUsers });
   }
 
   async function addCare(): Promise<void> {
@@ -74,7 +98,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
 
   return (
     <div className="chat-filters">
-      <p className="chat-emoji-note">屏蔽和特别关心只存在本机，不会写入登录凭据。设置页还没有这个入口。</p>
+      <p className="chat-emoji-note">屏蔽和特别关心只存在本机，不会写入登录凭据。改完自动保存。也可在设置页编辑。</p>
       {error ? <p className="chat-emoji-note">{error}</p> : null}
       <ul className="chat-filter-list">
         {shield.map((rule, index) => (
@@ -84,8 +108,8 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
               value={rule.type}
               onChange={(event) => {
                 const type = event.target.value as ShieldKind;
-                setShield((current) =>
-                  current.map((item, itemIndex) =>
+                updateShield(
+                  shield.map((item, itemIndex) =>
                     itemIndex === index ? { ...item, type } : item,
                   ),
                 );
@@ -105,10 +129,11 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
                 value={rule.value}
                 placeholder={rule.type === "username" ? "用户名" : "正则"}
                 onChange={(event) => {
-                  const value = event.target.value;
-                  setShield((current) =>
-                    current.map((item, itemIndex) =>
-                      itemIndex === index ? { ...item, value } : item,
+                  updateShield(
+                    shield.map((item, itemIndex) =>
+                      itemIndex === index
+                        ? { ...item, value: event.target.value }
+                        : item,
                     ),
                   );
                 }}
@@ -119,7 +144,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
               size="xs"
               variant="ghost"
               onClick={() => {
-                setShield((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                updateShield(shield.filter((_, itemIndex) => itemIndex !== index));
               }}
             >
               删除
@@ -128,19 +153,17 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
         ))}
       </ul>
       <div className="chat-emoji-tabs">
-        <Button type="button" size="xs" variant="outline" onClick={() => setShield((current) => [...current, emptyRule()])}>
-          加一条屏蔽
-        </Button>
         <Button
           type="button"
           size="xs"
-          disabled={busy}
-          onClick={() => {
-            void persist({ shield, careUsers });
-          }}
+          variant="outline"
+          onClick={() => updateShield([...shield, emptyRule()])}
         >
-          保存屏蔽
+          加一条屏蔽
         </Button>
+        <span className="chat-emoji-note">
+          {busy ? "正在保存" : "改完即保存"}
+        </span>
       </div>
       <p className="chat-emoji-note">特别关心</p>
       <div className="chat-care-list">

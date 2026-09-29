@@ -1,9 +1,9 @@
-//! 清风明月 DTO。正文只给剥过的纯文本。
+//! 清风明月 DTO。正文保留富文本，由前端净化渲染。
 
 use fishpi_sdk::domain::breezemoon::Breezemoon;
 use serde::{Deserialize, Serialize};
 
-use crate::text::{html_to_text, nonempty_text};
+use crate::text::keep_renderable;
 
 /// `breezemoon_list` 查询。
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -43,8 +43,8 @@ pub struct BreezemoonDto {
 
 impl From<Breezemoon> for BreezemoonDto {
     fn from(item: Breezemoon) -> Self {
-        let content = html_to_text(&item.content);
-        let text = nonempty_text(&content);
+        let content = keep_renderable(&item.content).unwrap_or_default();
+        let text = keep_renderable(&content);
         let time = if item.time_ago.trim().is_empty() {
             item.create_time.clone()
         } else {

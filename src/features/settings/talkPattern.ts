@@ -4,7 +4,8 @@ export type TalkPattern = RegExp | "empty" | "invalid";
 
 /**
  * 把用户输入编译成正则。非法或超长时返回 invalid，调用方忽略该条并提示。
- * 只用 RegExp 构造，不把字符串当脚本执行。空串不匹配任何内容。
+ * 只用 RegExp 构造，不把字符串当脚本执行。
+ * 空串对齐旧版 `new RegExp('')`：匹配所有聊天室消息。
  */
 export function compileTalkPattern(source: string): TalkPattern {
   const trimmed = source.trim();
@@ -22,8 +23,11 @@ export function compileTalkPattern(source: string): TalkPattern {
 }
 
 export function talkPatternHits(pattern: TalkPattern, text: string): boolean {
-  if (pattern === "empty" || pattern === "invalid") {
+  if (pattern === "invalid") {
     return false;
+  }
+  if (pattern === "empty") {
+    return true;
   }
   return pattern.test(text);
 }

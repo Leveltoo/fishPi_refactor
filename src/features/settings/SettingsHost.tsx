@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { WarningIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -13,11 +13,17 @@ import {
   type ShieldKind,
   type ShieldRule,
 } from "@/features/chatroom/chatroomApi";
+import { commandError, desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
+import { clampMusicMode, MUSIC_MODE_OPTIONS } from "@/features/music/modes";
+import {
+  getPlayerSnapshot,
+  setPlayerMode,
+  subscribePlayer,
+} from "@/features/music/playerStore";
 import {
   BRIDGE_GAP_COPY,
-  OPACITY_MAX,
-  OPACITY_MIN,
-  OPACITY_STEP,
+  OPACITY_PERCENT_MAX,
+  OPACITY_PERCENT_MIN,
   THEME_OPTIONS,
 } from "./constants";
 import { compileTalkPattern } from "./talkPattern";
@@ -112,34 +118,52 @@ export function SettingsHost() {
               pressed={desktop.settings.alwaysOnTop}
               onPressedChange={desktop.setAlwaysOnTop}
             />
+            <ToggleRow
+              label="透明窗体"
+              description="打开后按下面的百分比设置整窗透明度。顶栏透明按钮使用这个值，不会写死 30%。"
+              pressed={desktop.settings.opacityEnabled}
+              onPressedChange={desktop.setOpacityEnabled}
+            />
             <div className="settings-row">
               <div className="settings-row__copy">
                 <div className="settings-row__label" id="settings-opacity-label">
-                  窗口透明度
+                  透明度
                 </div>
                 <p className="settings-row__hint">
-                  有效范围 30%–100%。当前 {opacityPercent}%。
+                  范围 10%–100%，与旧版一致。当前 {opacityPercent}%。
                 </p>
               </div>
               <input
                 className="settings-range"
                 type="range"
-                min={OPACITY_MIN}
-                max={OPACITY_MAX}
-                step={OPACITY_STEP}
-                value={desktop.settings.opacity}
+                min={OPACITY_PERCENT_MIN}
+                max={OPACITY_PERCENT_MAX}
+                step={1}
+                disabled={!desktop.settings.opacityEnabled}
+                value={opacityPercent}
                 aria-labelledby="settings-opacity-label"
                 onChange={(event) => {
-                  desktop.setOpacity(Number(event.target.value));
+                  desktop.setOpacity(Number(event.target.value) / 100);
                 }}
               />
             </div>
             <ToggleRow
               label="关闭到托盘"
-              description="点关闭时隐藏到托盘，而不是退出。由 Bridge 读配置生效。"
+              description="默认关闭：点关闭即退出，对齐旧版。打开后点关闭只藏到托盘，退出请用托盘菜单。"
               pressed={desktop.settings.closeToTray}
               onPressedChange={desktop.setCloseToTray}
             />
+            <div className="settings-row">
+              <div className="settings-row__copy">
+                <label className="settings-row__label" htmlFor="settings-music-mode">
+                  网易音乐
+                </label>
+                <p className="settings-row__hint">
+                  点击聊天室封面时的行为。数值与旧版一致（含 1/2 文案对调）。与播放列表页共用同一份偏好。
+                </p>
+              </div>
+              <MusicModeSelect />
+            </div>
           </section>
 
           <section className="settings-section" aria-labelledby="settings-hotkey">
@@ -181,7 +205,10 @@ export function SettingsHost() {
               </Button>
             </div>
             <p className="settings-row__hint">
-              关闭的类别不响、也不弹。系统消息还要打开上面的总开关。
+              关闭的类别不响、也不弹。系统消息还要打开上面的总开关。聊天室普通发言不弹系统通知（旧版「聊天室除外」）。
+            </p>
+            <p className="settings-row__hint">
+              系统通知点击无法跳到对应页面：当前 tauri-plugin-notification 2.4 在 Windows 上没有点击回调，不会假装能跳。
             </p>
             <ToggleRow
               label="聊天室新消息"
@@ -231,7 +258,7 @@ export function SettingsHost() {
                 <p className="settings-row__hint">
                   {talkPattern === "invalid"
                     ? "这不是合法正则，匹配时会忽略并提示，不会把这段文字当代码执行。"
-                    : "空正则不匹配任何消息。"}
+                    : "空正则匹配所有聊天室消息，与旧版 new RegExp('') 一致。"}
                 </p>
               </div>
               <Input
@@ -255,7 +282,7 @@ export function SettingsHost() {
             />
             <ToggleRow
               label="系统消息"
-              description="类别打开且总开关打开时弹出系统通知。聊天室消息也会走这一项。"
+              description="类别打开且总开关打开时弹出系统通知。聊天室普通发言除外；关键词命中、私聊、@、回复、系统公告仍会弹。"
               pressed={desktop.settings.notifySystem}
               onPressedChange={(notifySystem) =>
                 desktop.update({ notifySystem })
@@ -273,6 +300,14 @@ export function SettingsHost() {
               pressed={desktop.settings.autoReward}
               onPressedChange={(autoReward) => desktop.update({ autoReward })}
             />
+            <ToggleRow
+              label="红包提醒"
+              description="别人发红包时提示。自己发的不提示。"
+              pressed={desktop.settings.redpackNotice}
+              onPressedChange={(redpackNotice) =>
+                desktop.update({ redpackNotice })
+              }
+            />
           </section>
 
           <ChatroomFiltersSection />
@@ -285,6 +320,49 @@ export function SettingsHost() {
         </p>
       ) : null}
     </div>
+  );
+}
+
+function MusicModeSelect() {
+  const mode = useSyncExternalStore(
+    subscribePlayer,
+    getPlayerSnapshot,
+    getPlayerSnapshot,
+  ).mode;
+
+  useEffect(() => {
+    let alive = true;
+    void desktopPrefsGet()
+      .then((prefs) => {
+        if (alive) {
+          setPlayerMode(clampMusicMode(prefs.musicMode));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return (
+    <select
+      id="settings-music-mode"
+      className="settings-filter-select"
+      value={String(clampMusicMode(mode))}
+      onChange={(event) => {
+        const next = clampMusicMode(Number(event.target.value));
+        setPlayerMode(next);
+        void desktopPrefsSet({ musicMode: next }).catch((err: unknown) => {
+          toast.error(commandError(err));
+        });
+      }}
+    >
+      {MUSIC_MODE_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -335,6 +413,8 @@ function ChatroomFiltersSection() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const persistTimer = useRef(0);
+  const ready = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -345,6 +425,7 @@ function ChatroomFiltersSection() {
         }
         setShield(loaded.shield);
         setCareUsers(loaded.careUsers);
+        ready.current = true;
       })
       .catch(() => {
         if (!cancelled) {
@@ -358,17 +439,20 @@ function ChatroomFiltersSection() {
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(persistTimer.current);
     };
   }, []);
 
-  async function persist(next: ChatroomFilters): Promise<boolean> {
+  async function persist(next: ChatroomFilters, quiet = true): Promise<boolean> {
     setBusy(true);
     setError(null);
     try {
       const saved = await saveChatroomFilters(next);
       setShield(saved.shield);
       setCareUsers(saved.careUsers);
-      toast.success("已保存屏蔽与特别关心");
+      if (!quiet) {
+        toast.success("已保存屏蔽与特别关心");
+      }
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "保存失败";
@@ -378,6 +462,21 @@ function ChatroomFiltersSection() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function schedulePersist(next: ChatroomFilters): void {
+    if (!ready.current) {
+      return;
+    }
+    window.clearTimeout(persistTimer.current);
+    persistTimer.current = window.setTimeout(() => {
+      void persist(next);
+    }, 400);
+  }
+
+  function updateShield(next: ShieldRule[]): void {
+    setShield(next);
+    schedulePersist({ shield: next, careUsers });
   }
 
   async function addCare(): Promise<void> {
@@ -419,7 +518,7 @@ function ChatroomFiltersSection() {
         消息屏蔽 / 特别关心
       </h2>
       <p className="settings-row__hint">
-        仅存本机 chatroom-filters.json，不写登录凭据。也可在聊天室顶栏「屏蔽」里编辑。
+        仅存本机 chatroom-filters.json，不写登录凭据。改完自动保存。也可在聊天室顶栏「屏蔽」里编辑。
       </p>
       {error ? (
         <p className="settings-row__hint settings-filter-error" role="status">
@@ -449,8 +548,8 @@ function ChatroomFiltersSection() {
                     aria-label="屏蔽类型"
                     onChange={(event) => {
                       const type = event.target.value as ShieldKind;
-                      setShield((current) =>
-                        current.map((item, itemIndex) =>
+                      updateShield(
+                        shield.map((item, itemIndex) =>
                           itemIndex === index ? { ...item, type } : item,
                         ),
                       );
@@ -470,10 +569,11 @@ function ChatroomFiltersSection() {
                       value={rule.value}
                       placeholder={rule.type === "username" ? "用户名" : "正则"}
                       onChange={(event) => {
-                        const value = event.target.value;
-                        setShield((current) =>
-                          current.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, value } : item,
+                        updateShield(
+                          shield.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, value: event.target.value }
+                              : item,
                           ),
                         );
                       }}
@@ -485,8 +585,8 @@ function ChatroomFiltersSection() {
                     variant="ghost"
                     disabled={busy}
                     onClick={() => {
-                      setShield((current) =>
-                        current.filter((_, itemIndex) => itemIndex !== index),
+                      updateShield(
+                        shield.filter((_, itemIndex) => itemIndex !== index),
                       );
                     }}
                   >
@@ -503,24 +603,17 @@ function ChatroomFiltersSection() {
               variant="outline"
               disabled={busy}
               onClick={() => {
-                setShield((current) => [
-                  ...current,
+                updateShield([
+                  ...shield,
                   { type: "username", value: "" },
                 ]);
               }}
             >
               加一条屏蔽
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy}
-              onClick={() => {
-                void persist({ shield, careUsers });
-              }}
-            >
-              {busy ? "保存中" : "保存屏蔽"}
-            </Button>
+            <span className="settings-row__hint">
+              {busy ? "正在保存" : "改完即保存，不必再点保存。"}
+            </span>
           </div>
 
           <div className="settings-row__label">特别关心</div>
@@ -627,7 +720,7 @@ function HotkeyRow({
         onBlur={() => setListening(false)}
         onClick={() => setListening((current) => !current)}
       >
-        {listening ? "按下组合键" : value}
+        {listening ? "按下组合键" : displayHotkey(value)}
       </Button>
     </div>
   );
@@ -647,7 +740,8 @@ function readHotkey(event: KeyboardEvent): string | null {
     parts.push("Ctrl");
   }
   if (event.metaKey) {
-    parts.push("Win");
+    // global-hotkey 0.8 只认 SUPER/CMD；UI 再显示成 Win。
+    parts.push("SUPER");
   }
   if (event.altKey) {
     parts.push("Alt");
@@ -661,6 +755,20 @@ function readHotkey(event: KeyboardEvent): string | null {
   }
   parts.push(key);
   return parts.join("+");
+}
+
+function displayHotkey(value: string): string {
+  return value
+    .split("+")
+    .map((part) => {
+      const token = part.trim();
+      if (/^(SUPER|CMD|META|COMMAND)$/i.test(token)) {
+        return "Win";
+      }
+      return token;
+    })
+    .filter((part) => part.length > 0)
+    .join("+");
 }
 
 function hotkeyToken(event: KeyboardEvent): string {

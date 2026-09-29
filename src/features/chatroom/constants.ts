@@ -4,6 +4,7 @@ export const MESSAGE_WINDOW_LIMIT = 800;
 export const HISTORY_FIRST_PAGE = 1;
 export const BEFORE_PAGE_SIZE = 25;
 export const MAX_BEFORE_PAGES = 16;
-export const NEAR_BOTTOM_PX = 96;
+/** 对齐旧版：离底部约 500px 仍跟随滚到底。 */
+export const NEAR_BOTTOM_PX = 500;
 
 export const INITIAL_CONNECTION_STATUS = "unknown";

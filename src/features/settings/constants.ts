@@ -15,17 +15,26 @@ export const NOTIFY_COMMAND = {
   show: "notify_show",
 } as const;
 
-export const OPACITY_MIN = 0.3;
-export const OPACITY_MAX = 1;
-export const OPACITY_STEP = 0.05;
+export const TRAY_COMMAND = {
+  flash: "tray_flash",
+} as const;
 
-export const DEFAULT_BOSS_KEY = "Ctrl+Shift+H";
+/** 与 Rust `OPACITY_MIN`、旧版 10% 对齐。Win32 分层窗口可到 10%。 */
+export const OPACITY_MIN = 0.1;
+export const OPACITY_MAX = 1;
+export const OPACITY_STEP = 0.01;
+export const OPACITY_PERCENT_MIN = 10;
+export const OPACITY_PERCENT_MAX = 100;
+
+/** 与旧版 `hotkey.boss` 默认一致。 */
+export const DEFAULT_BOSS_KEY = "Win+F2";
 
 export const DEFAULT_SETTINGS: DesktopSettings = {
   themeId: "desk",
   alwaysOnTop: false,
   opacity: 1,
-  closeToTray: true,
+  opacityEnabled: false,
+  closeToTray: false,
   bossKey: DEFAULT_BOSS_KEY,
   notifyEnabled: false,
   notifyChatroom: false,
@@ -38,6 +47,7 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   notifySound: false,
   notifySystem: false,
   autoReward: false,
+  redpackNotice: false,
 };
 
 export const THEME_OPTIONS: readonly {

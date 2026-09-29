@@ -118,10 +118,12 @@ export function useDesktopSettings() {
         });
       }
 
-      if (partial.opacity !== undefined) {
+      if (partial.opacity !== undefined || partial.opacityEnabled !== undefined) {
         window.clearTimeout(opacityTimer.current);
         opacityTimer.current = window.setTimeout(() => {
-          void invokeWindowOpacity(next.opacity).then((result) => {
+          void invokeWindowOpacity(
+            next.opacityEnabled ? next.opacity : 1,
+          ).then((result) => {
             if (result.status === "gap") {
               pushNotice({ kind: "gap", text: BRIDGE_GAP_DETAIL });
             } else if (result.status === "error") {
@@ -155,6 +157,13 @@ export function useDesktopSettings() {
   const setOpacity = useCallback(
     (opacity: number) => {
       patch({ opacity: clampOpacity(opacity) });
+    },
+    [patch],
+  );
+
+  const setOpacityEnabled = useCallback(
+    (opacityEnabled: boolean) => {
+      patch({ opacityEnabled });
     },
     [patch],
   );
@@ -213,6 +222,7 @@ export function useDesktopSettings() {
     setTheme,
     setAlwaysOnTop,
     setOpacity,
+    setOpacityEnabled,
     setCloseToTray,
     setBossKey,
     setNotifyEnabled,

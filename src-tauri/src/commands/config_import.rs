@@ -25,6 +25,21 @@ pub struct DesktopPrefs {
     pub extension_root: String,
     pub theme: String,
     pub music_mode: u8,
+    /// 记住的登录用户名。不存密码。
+    #[serde(default)]
+    pub login_username: String,
+    #[serde(default = "default_window_width")]
+    pub window_width: u32,
+    #[serde(default = "default_window_height")]
+    pub window_height: u32,
+}
+
+fn default_window_width() -> u32 {
+    800
+}
+
+fn default_window_height() -> u32 {
+    600
 }
 
 impl Default for DesktopPrefs {
@@ -34,6 +49,9 @@ impl Default for DesktopPrefs {
             extension_root: default_extension_root().display().to_string(),
             theme: "Default".to_string(),
             music_mode: 0,
+            login_username: String::new(),
+            window_width: default_window_width(),
+            window_height: default_window_height(),
         }
     }
 }
@@ -55,6 +73,7 @@ pub struct DesktopPrefsPatch {
     pub extension_root: Option<String>,
     pub theme: Option<String>,
     pub music_mode: Option<u8>,
+    pub login_username: Option<String>,
 }
 
 /// 查找旧客户端并导入。找不到就明确失败，不写假的成功。
@@ -129,6 +148,10 @@ pub async fn config_import(app: AppHandle) -> Result<ImportResult, AppError> {
 
     let mut prefs = load_prefs(&app);
     apply_legacy_prefs(&mut prefs, &found.setting, &mut notes);
+    if let Some(username) = found.username {
+        prefs.login_username = username;
+        notes.push("已记住登录用户名，没有导入密码".to_string());
+    }
     let prefs_saved = match save_prefs(&app, &prefs) {
         Ok(()) => true,
         Err(_) => {
@@ -158,11 +181,8 @@ pub fn desktop_prefs_get(app: AppHandle) -> Result<DesktopPrefs, AppError> {
 pub fn desktop_prefs_set(app: AppHandle, patch: DesktopPrefsPatch) -> Result<DesktopPrefs, AppError> {
     let mut prefs = load_prefs(&app);
     if let Some(mirror) = patch.update_mirror {
-        let mirror = mirror.trim();
-        if !mirror.is_empty() && !super::updater::valid_host(mirror) {
-            return Err(AppError::business("更新镜像域名无效"));
-        }
-        prefs.update_mirror = mirror.to_string();
+        prefs.update_mirror = super::updater::normalize_mirror_host(&mirror)
+            .map_err(AppError::business)?;
     }
     if let Some(root) = patch.extension_root {
         let root = root.trim();
@@ -183,6 +203,9 @@ pub fn desktop_prefs_set(app: AppHandle, patch: DesktopPrefsPatch) -> Result<Des
             return Err(AppError::business("播放模式无效"));
         }
         prefs.music_mode = mode;
+    }
+    if let Some(username) = patch.login_username {
+        prefs.login_username = clip_username(&username);
     }
     save_prefs(&app, &prefs)?;
     Ok(prefs)
@@ -228,9 +251,15 @@ fn prefs_path(app: &AppHandle) -> Result<PathBuf, AppError> {
 }
 
 fn sanitize_prefs(prefs: &mut DesktopPrefs) {
-    prefs.update_mirror = prefs.update_mirror.trim().to_string();
-    if !prefs.update_mirror.is_empty() && !super::updater::valid_host(&prefs.update_mirror) {
-        prefs.update_mirror.clear();
+    prefs.update_mirror = match super::updater::normalize_mirror_host(&prefs.update_mirror) {
+        Ok(host) => host,
+        Err(_) => String::new(),
+    };
+    if prefs.window_width < 350 {
+        prefs.window_width = default_window_width();
+    }
+    if prefs.window_height < 200 {
+        prefs.window_height = default_window_height();
     }
     prefs.extension_root = prefs.extension_root.trim().to_string();
     if prefs.extension_root.is_empty() {
@@ -243,6 +272,7 @@ fn sanitize_prefs(prefs: &mut DesktopPrefs) {
     if prefs.music_mode > 2 {
         prefs.music_mode = 0;
     }
+    prefs.login_username = clip_username(&prefs.login_username);
 }
 
 fn default_extension_root() -> PathBuf {
@@ -261,6 +291,7 @@ struct LegacyFound {
     location: String,
     credential: Option<String>,
     setting: Value,
+    username: Option<String>,
 }
 
 enum Lookup {
@@ -295,8 +326,9 @@ fn read_legacy() -> Lookup {
         match read_leveldb(&leveldb) {
             Ok(Some(item)) => found.push(LegacyFound {
                 location: user_data.display().to_string(),
-                credential: item.0,
-                setting: item.1,
+                credential: item.credential,
+                setting: item.setting,
+                username: item.username,
             }),
             Ok(None) => {}
             Err(_) => {}
@@ -336,7 +368,13 @@ fn leveldb_is_allowed(roaming: &Path, leveldb: &Path) -> bool {
         && parts[2].as_os_str().to_string_lossy().eq_ignore_ascii_case("leveldb")
 }
 
-fn read_leveldb(source: &Path) -> Result<Option<(Option<String>, Value)>, ()> {
+struct LeveldbItem {
+    credential: Option<String>,
+    setting: Value,
+    username: Option<String>,
+}
+
+fn read_leveldb(source: &Path) -> Result<Option<LeveldbItem>, ()> {
     let temp = std::env::temp_dir().join(format!(
         "fishpi-legacy-{}",
         std::process::id()
@@ -359,6 +397,7 @@ fn read_leveldb(source: &Path) -> Result<Option<(Option<String>, Value)>, ()> {
     let mut iter = database.new_iter().map_err(|_| ())?;
     let mut setting = None;
     let mut credential = None;
+    let mut username = None;
     while let Some((key, value)) = LdbIterator::next(&mut iter) {
         let Some(name) = storage_name(&key) else {
             continue;
@@ -380,13 +419,23 @@ fn read_leveldb(source: &Path) -> Result<Option<(Option<String>, Value)>, ()> {
                 .map(|text| text.trim_matches('\0').trim().to_string())
                 .find(|text| looks_like_credential(text));
         }
+        if name == "username" && username.is_none() {
+            username = decode_texts(&value)
+                .into_iter()
+                .map(|text| clip_username(&text.trim_matches('\0')))
+                .find(|text| !text.is_empty());
+        }
     }
     drop(iter);
     drop(database);
     let Some(setting) = setting else {
         return Ok(None);
     };
-    Ok(Some((credential, setting)))
+    Ok(Some(LeveldbItem {
+        credential,
+        setting,
+        username,
+    }))
 }
 
 fn open_copy(path: &Path) -> Result<rusty_leveldb::DB, ()> {
@@ -473,11 +522,16 @@ fn patch_from_legacy(setting: &Value) -> (SettingsPatch, WindowPatch) {
     let global = setting.get("global").and_then(Value::as_object);
     if let Some(global) = global {
         if let Some(opacity) = global.get("opacity").and_then(Value::as_object) {
-            if opacity.get("enable").and_then(Value::as_bool) == Some(true) {
-                if let Some(value) = opacity.get("value").and_then(Value::as_f64) {
-                    let scaled = (value / 100.0).clamp(0.3, 1.0);
-                    patch.opacity = Some(scaled);
-                    window.opacity = Some(scaled);
+            if let Some(value) = opacity.get("value").and_then(Value::as_f64) {
+                let scaled = (value / 100.0).clamp(0.1, 1.0);
+                patch.opacity = Some(scaled);
+            }
+            if let Some(enable) = opacity.get("enable").and_then(Value::as_bool) {
+                patch.opacity_enabled = Some(enable);
+                if enable {
+                    window.opacity = patch.opacity;
+                } else {
+                    window.opacity = Some(1.0);
                 }
             }
         }
@@ -488,6 +542,16 @@ fn patch_from_legacy(setting: &Value) -> (SettingsPatch, WindowPatch) {
         if let Some(on) = global.get("autoReward").and_then(Value::as_bool) {
             patch.auto_reward = Some(on);
         }
+    }
+    if let Some(redpack) = setting
+        .pointer("/chatroom/redpackNotice")
+        .and_then(Value::as_bool)
+    {
+        patch.redpack_notice = Some(redpack);
+    }
+    if let Some(boss) = legacy_hotkey(setting) {
+        patch.hotkey = Some(boss.clone());
+        patch.boss_key = Some(boss);
     }
     if let Some(message) = setting.get("message").and_then(Value::as_object) {
         if let Some(notice) = message.get("notice").and_then(Value::as_object) {
@@ -513,8 +577,22 @@ fn patch_from_legacy(setting: &Value) -> (SettingsPatch, WindowPatch) {
     (patch, window)
 }
 
+fn legacy_hotkey(setting: &Value) -> Option<String> {
+    let boss = setting.pointer("/hotkey/boss")?;
+    let text = boss
+        .as_str()
+        .or_else(|| boss.get("text").and_then(Value::as_str))?
+        .trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
 fn patch_touched(patch: &SettingsPatch) -> bool {
     patch.opacity.is_some()
+        || patch.opacity_enabled.is_some()
         || patch.always_on_top.is_some()
         || patch.auto_reward.is_some()
         || patch.notify_chatroom.is_some()
@@ -527,6 +605,9 @@ fn patch_touched(patch: &SettingsPatch) -> bool {
         || patch.notify_sound.is_some()
         || patch.notify_system.is_some()
         || patch.notify_enabled.is_some()
+        || patch.hotkey.is_some()
+        || patch.boss_key.is_some()
+        || patch.redpack_notice.is_some()
 }
 
 fn apply_legacy_prefs(prefs: &mut DesktopPrefs, setting: &Value, notes: &mut Vec<String>) {
@@ -534,11 +615,9 @@ fn apply_legacy_prefs(prefs: &mut DesktopPrefs, setting: &Value, notes: &mut Vec
         .pointer("/global/updateMirror")
         .and_then(Value::as_str)
     {
-        let mirror = mirror.trim();
-        if mirror.is_empty() || super::updater::valid_host(mirror) {
-            prefs.update_mirror = mirror.to_string();
-        } else {
-            notes.push("更新镜像域名无效，已跳过".to_string());
+        match super::updater::normalize_mirror_host(mirror) {
+            Ok(host) => prefs.update_mirror = host,
+            Err(_) => notes.push("更新镜像域名无效，已跳过".to_string()),
         }
     }
     if let Some(root) = setting
@@ -566,6 +645,22 @@ fn apply_legacy_prefs(prefs: &mut DesktopPrefs, setting: &Value, notes: &mut Vec
 
 fn clip(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
+}
+
+const USERNAME_MAX: usize = 64;
+
+fn clip_username(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('{') {
+        return String::new();
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return String::new();
+    }
+    clip(trimmed, USERNAME_MAX)
 }
 
 fn scrub(value: &mut Value) -> bool {

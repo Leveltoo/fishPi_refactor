@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { MessageScrollbar } from "@/components/MessageScrollbar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,6 +9,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { NEAR_BOTTOM_PX } from "../constants";
 import type { PrivateMessageDto } from "../types";
 import { MessageBubble } from "./MessageBubble";
+
+const TOP_LOAD_PX = 48;
+const JUMP_RETRY_MS = 300;
+const JUMP_RETRY_MAX = 15;
 
 type MessageThreadProps = {
   peerUserName: string;
@@ -22,6 +27,21 @@ type MessageThreadProps = {
   onMention?: (userName: string) => void;
   onInsertToken?: (token: string) => void;
 };
+
+function jumpInRoot(root: HTMLElement, messageId: string): boolean {
+  const el = root.querySelector<HTMLElement>(
+    `[data-msg-id="${CSS.escape(messageId)}"]`,
+  );
+  if (el == null || el.hidden) {
+    return false;
+  }
+  el.scrollIntoView({ block: "center" });
+  el.classList.add("is-highlight");
+  window.setTimeout(() => {
+    el.classList.remove("is-highlight");
+  }, 700);
+  return true;
+}
 
 export function MessageThread({
   peerUserName,
@@ -39,6 +59,8 @@ export function MessageThread({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
   const previousCountRef = useRef(0);
+  const restoreRef = useRef<{ height: number; top: number } | null>(null);
+  const pendingJumpRef = useRef<string | null>(null);
   const [unseen, setUnseen] = useState(0);
 
   function viewport(): HTMLElement | null {
@@ -47,23 +69,39 @@ export function MessageThread({
     );
   }
 
+  function jumpTo(messageId: string): boolean {
+    const root = rootRef.current;
+    if (root == null) {
+      return false;
+    }
+    stickToBottomRef.current = false;
+    return jumpInRoot(root, messageId);
+  }
+
   useEffect(() => {
     stickToBottomRef.current = true;
     previousCountRef.current = 0;
     setUnseen(0);
+    pendingJumpRef.current = null;
   }, [peerUserName]);
 
   useEffect(() => {
     const previous = previousCountRef.current;
     const delta = messages.length - previous;
     previousCountRef.current = messages.length;
-    if (delta > 0 && !stickToBottomRef.current) {
+    if (delta > 0 && !stickToBottomRef.current && restoreRef.current == null) {
       setUnseen((count) => count + delta);
     }
   }, [messages.length]);
 
   useLayoutEffect(() => {
     const root = viewport();
+    const restore = restoreRef.current;
+    if (root != null && restore != null) {
+      root.scrollTop = restore.top + (root.scrollHeight - restore.height);
+      restoreRef.current = null;
+      return;
+    }
     if (root == null || !stickToBottomRef.current) {
       return;
     }
@@ -84,12 +122,57 @@ export function MessageThread({
       if (stickToBottomRef.current) {
         setUnseen(0);
       }
+      if (root.scrollTop <= TOP_LOAD_PX && hasMore && !loadingMore && !loading) {
+        restoreRef.current = { height: root.scrollHeight, top: root.scrollTop };
+        onLoadMore();
+      }
     }
     root.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       root.removeEventListener("scroll", onScroll);
     };
-  }, [loading]);
+  }, [loading, loadingMore, hasMore, onLoadMore]);
+
+  useEffect(() => {
+    const target = pendingJumpRef.current;
+    if (target == null) {
+      return;
+    }
+    if (jumpTo(target)) {
+      pendingJumpRef.current = null;
+    }
+  }, [messages]);
+
+  function handleJump(messageId: string): void {
+    if (jumpTo(messageId)) {
+      pendingJumpRef.current = null;
+      return;
+    }
+    pendingJumpRef.current = messageId;
+    if (hasMore && !loadingMore) {
+      onLoadMore();
+    }
+    let attempts = 0;
+    const tick = (): void => {
+      if (pendingJumpRef.current !== messageId) {
+        return;
+      }
+      if (jumpTo(messageId)) {
+        pendingJumpRef.current = null;
+        return;
+      }
+      attempts += 1;
+      if (attempts <= JUMP_RETRY_MAX) {
+        if (hasMore && !loadingMore) {
+          onLoadMore();
+        }
+        window.setTimeout(tick, JUMP_RETRY_MS);
+      } else {
+        pendingJumpRef.current = null;
+      }
+    };
+    window.setTimeout(tick, JUMP_RETRY_MS);
+  }
 
   function jumpLatest(): void {
     const root = viewport();
@@ -135,12 +218,17 @@ export function MessageThread({
                   onQuote={onQuote}
                   onMention={onMention}
                   onInsertToken={onInsertToken}
+                  onJump={handleJump}
                 />
               ))
             )}
           </div>
         )}
       </ScrollArea>
+      <MessageScrollbar
+        containerRef={rootRef}
+        contentVersion={`${peerUserName}:${messages.length}:${messages[messages.length - 1]?.id ?? ""}`}
+      />
       {unseen > 0 ? (
         <Button
           type="button"

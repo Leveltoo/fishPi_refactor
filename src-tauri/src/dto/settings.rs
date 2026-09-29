@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 默认老板键。可在设置里改。
-pub const DEFAULT_BOSS_HOTKEY: &str = "Ctrl+Shift+H";
+/// 默认老板键。可在设置里改。对齐旧版 `hotkey.boss`。
+pub const DEFAULT_BOSS_HOTKEY: &str = "Win+F2";
 
-/// 透明度下限，与前端 `OPACITY_MIN` 对齐。
-pub const OPACITY_MIN: f64 = 0.3;
+/// 透明度下限，与前端 `OPACITY_MIN` 对齐。Win32 分层窗口可到 10%。
+pub const OPACITY_MIN: f64 = 0.1;
 /// 透明度上限。
 pub const OPACITY_MAX: f64 = 1.0;
 
@@ -20,7 +20,12 @@ pub struct AppSettings {
     pub hotkey: String,
     pub boss_key: String,
     pub opacity: f64,
+    /// 透明窗体开关。关则窗口不透明，开则用 `opacity`。
+    #[serde(default)]
+    pub opacity_enabled: bool,
     pub always_on_top: bool,
+    /// 关闭到托盘。缺省关，对齐旧版关闭即退出。
+    #[serde(default)]
     pub close_to_tray: bool,
     pub notify_enabled: bool,
     /// 聊天室新消息。缺省关，对齐旧版 `message.notice.chatroom`。
@@ -41,7 +46,7 @@ pub struct AppSettings {
     /// 聊天室关键词。缺省关。
     #[serde(default)]
     pub notify_talk: bool,
-    /// 关键词正则，只当正则用，不当代码执行。空字符串不匹配。
+    /// 关键词正则，只当正则用，不当代码执行。空串对齐旧版 `new RegExp('')`，由前端匹配所有聊天室消息。
     #[serde(default)]
     pub notify_talk_pattern: String,
     /// 新消息声音。缺省关。
@@ -53,6 +58,9 @@ pub struct AppSettings {
     /// 登录后自动领取昨日活跃。缺省关。
     #[serde(default)]
     pub auto_reward: bool,
+    /// 聊天室别人发红包时提醒。缺省关，对齐旧版 `chatroom.redpackNotice`。
+    #[serde(default)]
+    pub redpack_notice: bool,
 }
 
 impl Default for AppSettings {
@@ -62,8 +70,9 @@ impl Default for AppSettings {
             hotkey: DEFAULT_BOSS_HOTKEY.to_string(),
             boss_key: DEFAULT_BOSS_HOTKEY.to_string(),
             opacity: 1.0,
+            opacity_enabled: false,
             always_on_top: false,
-            close_to_tray: true,
+            close_to_tray: false,
             notify_enabled: false,
             notify_chatroom: false,
             notify_chat: false,
@@ -75,6 +84,7 @@ impl Default for AppSettings {
             notify_sound: false,
             notify_system: false,
             auto_reward: false,
+            redpack_notice: false,
         }
     }
 }
@@ -117,6 +127,8 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub opacity: Option<f64>,
     #[serde(default)]
+    pub opacity_enabled: Option<bool>,
+    #[serde(default)]
     pub always_on_top: Option<bool>,
     #[serde(default)]
     pub close_to_tray: Option<bool>,
@@ -142,6 +154,8 @@ pub struct SettingsPatch {
     pub notify_system: Option<bool>,
     #[serde(default)]
     pub auto_reward: Option<bool>,
+    #[serde(default)]
+    pub redpack_notice: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -177,9 +191,12 @@ impl SettingsPatch {
         }
         if let Some(opacity) = self.opacity {
             if !(OPACITY_MIN..=OPACITY_MAX).contains(&opacity) {
-                return Err("透明度必须在 0.3 到 1 之间".to_string());
+                return Err("透明度必须在 0.1 到 1 之间".to_string());
             }
             current.opacity = opacity;
+        }
+        if let Some(opacity_enabled) = self.opacity_enabled {
+            current.opacity_enabled = opacity_enabled;
         }
         if let Some(always_on_top) = self.always_on_top {
             current.always_on_top = always_on_top;
@@ -219,6 +236,9 @@ impl SettingsPatch {
         }
         if let Some(auto_reward) = self.auto_reward {
             current.auto_reward = auto_reward;
+        }
+        if let Some(redpack_notice) = self.redpack_notice {
+            current.redpack_notice = redpack_notice;
         }
         Ok(current.sanitize())
     }
@@ -292,10 +312,11 @@ mod tests {
         let settings = AppSettings::default();
         let value = serde_json::to_value(&settings).expect("serialize");
         assert_eq!(value["themeId"], "default");
-        assert_eq!(value["hotkey"], "Ctrl+Shift+H");
-        assert_eq!(value["bossKey"], "Ctrl+Shift+H");
+        assert_eq!(value["hotkey"], "Win+F2");
+        assert_eq!(value["bossKey"], "Win+F2");
         assert_eq!(value["alwaysOnTop"], false);
-        assert_eq!(value["closeToTray"], true);
+        assert_eq!(value["closeToTray"], false);
+        assert_eq!(value["opacityEnabled"], false);
         assert_eq!(value["notifyEnabled"], false);
         assert_eq!(value["notifyChatroom"], false);
         assert_eq!(value["notifyChat"], false);
@@ -307,6 +328,7 @@ mod tests {
         assert_eq!(value["notifySound"], false);
         assert_eq!(value["notifySystem"], false);
         assert_eq!(value["autoReward"], false);
+        assert_eq!(value["redpackNotice"], false);
         assert!(value.get("token").is_none());
         assert!(value.get("apiKey").is_none());
     }
@@ -315,8 +337,8 @@ mod tests {
     fn legacy_settings_keep_new_flags_off() {
         let settings: AppSettings = serde_json::from_value(json!({
             "themeId": "default",
-            "hotkey": "Ctrl+Shift+H",
-            "bossKey": "Ctrl+Shift+H",
+            "hotkey": "Win+F2",
+            "bossKey": "Win+F2",
             "opacity": 1.0,
             "alwaysOnTop": false,
             "closeToTray": true,
@@ -325,6 +347,7 @@ mod tests {
         .expect("deserialize");
         assert!(settings.notify_enabled);
         assert!(!settings.auto_reward);
+        assert!(!settings.redpack_notice);
         assert!(!settings.notify_chatroom);
         assert!(settings.notify_talk_pattern.is_empty());
     }

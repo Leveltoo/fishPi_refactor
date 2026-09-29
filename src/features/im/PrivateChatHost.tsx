@@ -8,7 +8,8 @@ import { setHeaderTitle } from "../../lib/headerTitle";
 import { ConversationList } from "./components/ConversationList";
 import { MessagePane } from "./components/MessagePane";
 import { StartChatDialog } from "./components/StartChatDialog";
-import { usePrivateChat, replyTargetFromMessage } from "./usePrivateChat";
+import { usePrivateChat } from "./usePrivateChat";
+import { replyTargetFromMessage } from "./replyQuote";
 import "./im.css";
 
 /**

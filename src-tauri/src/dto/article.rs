@@ -1,11 +1,11 @@
-//! 帖子列表 / 详情 / 评论 DTO。只给 markdown 与剥过的纯文本，不转发原始 HTML。
+//! 帖子列表 / 详情 / 评论 DTO。列表预览可剥 HTML；详情正文与评论保留富文本。
 
 use fishpi_sdk::domain::article::{
     ArticleComment, ArticleDetail, ArticleList, Pagination, VoteStatus,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::text::{html_to_text, markdown_or_none, nonempty_text};
+use crate::text::{html_to_text, keep_renderable, markdown_or_none, nonempty_text, split_rich_body};
 
 /// `article_list` 查询。`type` 为 recent/hot/good/reply/long/perfect。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -126,12 +126,24 @@ pub struct ArticleDetailDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markdown: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     pub comment_count: u64,
     pub commentable: bool,
     pub perfect: bool,
     pub comments: Vec<ArticleCommentDto>,
     pub page_count: u32,
+    /// 本次返回的评论页。缺省请求时是最后一页。
+    #[serde(default)]
+    pub comment_page: u32,
+    /// 还有更早的评论页（page > 1）。
+    #[serde(default)]
+    pub comment_has_earlier: bool,
+    #[serde(default)]
+    pub comment_has_more: bool,
+    #[serde(default)]
+    pub view_count: u64,
     #[serde(default)]
     pub thanked: bool,
     #[serde(default)]
@@ -165,12 +177,14 @@ impl ArticleDetailDto {
         } else {
             detail.time_ago.clone()
         };
-        let md = markdown_or_none(detail.markdown_content());
-        let text = if md.is_some() {
-            None
+        let rich = split_rich_body(if detail.markdown_content().trim().is_empty() {
+            detail.html_content()
         } else {
-            nonempty_text(&html_to_text(detail.html_content()))
-        };
+            detail.markdown_content()
+        });
+        // 有独立 markdown 源时优先 md；否则保留 HTML，不要剥成纯文本。
+        let md = markdown_or_none(detail.markdown_content()).or(rich.markdown.clone());
+        let html = if md.is_some() { None } else { rich.html };
         let page_count = pagination_count(detail.pagination.as_ref());
         Self {
             id: detail.id,
@@ -182,7 +196,8 @@ impl ArticleDetailDto {
             tags: detail.tags,
             md: md.clone(),
             markdown: md,
-            text,
+            html,
+            text: None,
             comment_count: detail.comment_count,
             commentable: detail.commentable,
             perfect: detail.perfect,
@@ -192,6 +207,10 @@ impl ArticleDetailDto {
                 .map(ArticleCommentDto::from)
                 .collect(),
             page_count,
+            comment_page: 0,
+            comment_has_earlier: false,
+            comment_has_more: false,
+            view_count: detail.view_count,
             thanked: detail.thanked,
             thank_count: if detail.thank_count > 0 {
                 detail.thank_count
@@ -208,21 +227,28 @@ impl ArticleDetailDto {
             article_type: detail.type_ as u8,
         }
     }
+
+    /// 带上本次评论页。`comment_page == 0` 视为最后一页。
+    pub fn at_comment_page(mut self, comment_page: u32) -> Self {
+        let total = self.page_count.max(1);
+        let page = if comment_page == 0 {
+            total
+        } else {
+            comment_page.min(total)
+        };
+        self.comment_page = page;
+        self.comment_has_earlier = page > 1;
+        self.comment_has_more = page < total;
+        self
+    }
 }
 
-/// 未打赏一律 `None`，避免把隐藏正文交给 WebView。
+/// 未打赏一律 `None`，避免把隐藏正文交给 WebView。已打赏保留图和链。
 fn visible_reward_body(rewarded: bool, raw: &str) -> Option<String> {
     if !rewarded {
         return None;
     }
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Some(markdown) = markdown_or_none(trimmed) {
-        return Some(markdown);
-    }
-    nonempty_text(trimmed)
+    keep_renderable(raw)
 }
 
 fn vote_name(vote: VoteStatus) -> String {
@@ -247,9 +273,14 @@ pub struct ArticleCommentDto {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markdown: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
     pub time: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_id: Option<String>,
+    /// 被回复者头像。仅频道 JSON 自带时才有；SDK 详情没有该字段，不伪造。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_avatar_url: Option<String>,
     #[serde(default)]
     pub thank_count: u64,
     #[serde(default)]
@@ -276,24 +307,104 @@ impl From<ArticleComment> for ArticleCommentDto {
         } else {
             comment.time_ago
         };
-        let text = nonempty_text(&html_to_text(&comment.content));
+        let rich = split_rich_body(&comment.content);
+        let original = keep_renderable(&comment.content);
         Self {
             id: comment.id,
             author_user_name: author_user_name.clone(),
             user_name: author_user_name,
             author_avatar_url: comment.thumbnail_url.clone(),
             avatar_url: comment.thumbnail_url,
-            content: text.clone(),
-            markdown: text.clone(),
-            text,
+            content: original.clone(),
+            markdown: rich.markdown.clone(),
+            html: rich.html,
+            text: rich.markdown,
             time,
             reply_id: nonempty_owned(&comment.reply_id),
+            reply_avatar_url: None,
             thank_count: comment.thank_count,
             good_count: comment.good_count,
             bad_count: comment.bad_count,
             vote: vote_name(comment.vote),
             rewarded: comment.rewarded,
         }
+    }
+}
+
+impl ArticleCommentDto {
+    /// 文章频道推送。对不上 `commentOnArticleId` / 没有 `oId` 则不是评论。
+    /// 原作者头像只透传 JSON 里的 `commentOriginalAuthorThumbnailURL`；没有就不填。
+    pub fn try_from_channel(value: &serde_json::Value, expected_article_id: &str) -> Option<Self> {
+        let rec = match value {
+            serde_json::Value::Object(map) => map,
+            _ => return None,
+        };
+        if rec.get("type").and_then(serde_json::Value::as_str) == Some("articleHeat") {
+            return None;
+        }
+        if let Some(nested) = rec.get("comment") {
+            if nested.is_object() {
+                return Self::try_from_channel(nested, expected_article_id);
+            }
+        }
+        let article_id = json_string(rec, &["commentOnArticleId", "articleId"]).unwrap_or_default();
+        if !article_id.is_empty() && article_id != expected_article_id {
+            return None;
+        }
+        let id = json_string(rec, &["oId", "id", "commentId"])?;
+        let user_name = json_string(rec, &["commentAuthorName", "userName", "author"]).unwrap_or_default();
+        let avatar = json_string(
+            rec,
+            &[
+                "commentAuthorThumbnailURL",
+                "avatarUrl",
+                "thumbnailUrl",
+                "avatar",
+            ],
+        )
+        .unwrap_or_default();
+        let raw = json_string(
+            rec,
+            &["commentContent", "content", "markdown", "html", "md"],
+        )
+        .unwrap_or_default();
+        let rich = split_rich_body(&raw);
+        let original = keep_renderable(&raw);
+        Some(Self {
+            id,
+            author_user_name: user_name.clone(),
+            user_name,
+            author_avatar_url: avatar.clone(),
+            avatar_url: avatar,
+            content: original.clone(),
+            markdown: rich.markdown.clone(),
+            html: rich.html,
+            text: rich.markdown,
+            time: json_string(
+                rec,
+                &[
+                    "commentCreateTimeStr",
+                    "timeAgo",
+                    "time",
+                    "commentCreateTime",
+                ],
+            )
+            .unwrap_or_default(),
+            reply_id: json_string(rec, &["commentOriginalCommentId", "replyId"]),
+            reply_avatar_url: json_string(
+                rec,
+                &["commentOriginalAuthorThumbnailURL", "replyAvatarUrl"],
+            ),
+            thank_count: json_u64(rec, &["commentThankCnt", "thankCount"]),
+            good_count: json_u64(rec, &["commentGoodCnt", "goodCount"]),
+            bad_count: json_u64(rec, &["commentBadCnt", "badCount"]),
+            vote: match json_string(rec, &["commentVote", "vote"]).as_deref() {
+                Some("0") | Some("up") => "up".to_string(),
+                Some("1") | Some("down") => "down".to_string(),
+                _ => "none".to_string(),
+            },
+            rewarded: json_bool(rec, &["rewarded", "thanked"]),
+        })
     }
 }
 
@@ -306,10 +417,12 @@ pub struct CommentPostRequest {
     pub article_id: String,
     #[serde(alias = "content")]
     pub comment_content: String,
-    #[serde(default)]
+    #[serde(default, alias = "commentOriginalCommentId")]
     pub reply_id: Option<String>,
-    #[serde(default)]
-    pub anonymous: Option<bool>,
+    #[serde(default, alias = "commentAnonymous")]
+    pub anonymous: bool,
+    #[serde(default, alias = "commentVisible")]
+    pub visible: bool,
 }
 
 /// 感谢 / 在看人数等只需要帖子 ID 的入参。
@@ -440,6 +553,19 @@ pub struct ArticleHeatEvent {
     pub delta: i32,
 }
 
+/// `article://comment`。文章频道里除 heat 外、能识别的新评论。
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleCommentEvent {
+    pub session_generation: u64,
+    pub article_id: String,
+    pub comment: ArticleCommentDto,
+}
+
+pub(crate) fn pagination_count(pagination: Option<&Pagination>) -> u32 {
+    pagination.map(|p| p.count).unwrap_or(0)
+}
+
 fn display_title(item: &ArticleDetail) -> String {
     for candidate in [
         item.title_emoji_unicode.trim(),
@@ -453,10 +579,6 @@ fn display_title(item: &ArticleDetail) -> String {
     "[无标题]".to_string()
 }
 
-fn pagination_count(pagination: Option<&Pagination>) -> u32 {
-    pagination.map(|p| p.count).unwrap_or(0)
-}
-
 fn nonempty_owned(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -464,6 +586,58 @@ fn nonempty_owned(value: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn json_string(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        match map.get(*key) {
+            Some(serde_json::Value::String(text)) => {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+            Some(serde_json::Value::Number(num)) => return Some(num.to_string()),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn json_u64(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> u64 {
+    for key in keys {
+        match map.get(*key) {
+            Some(serde_json::Value::Number(num)) => {
+                if let Some(n) = num.as_u64() {
+                    return n;
+                }
+            }
+            Some(serde_json::Value::String(text)) => {
+                if let Ok(n) = text.trim().parse::<u64>() {
+                    return n;
+                }
+            }
+            _ => {}
+        }
+    }
+    0
+}
+
+fn json_bool(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> bool {
+    for key in keys {
+        match map.get(*key) {
+            Some(serde_json::Value::Bool(flag)) => return *flag,
+            Some(serde_json::Value::Number(num)) => return num.as_u64() == Some(1),
+            Some(serde_json::Value::String(text)) => {
+                let t = text.trim();
+                if t == "1" || t.eq_ignore_ascii_case("true") {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -500,11 +674,40 @@ mod tests {
         assert_eq!(super::visible_reward_body(false, "plain secret"), None);
         assert_eq!(
             super::visible_reward_body(true, "<p>hello</p>").as_deref(),
-            Some("hello")
+            Some("<p>hello</p>")
         );
         assert_eq!(
             super::visible_reward_body(true, "hello **x**").as_deref(),
             Some("hello **x**")
         );
+    }
+
+    #[test]
+    fn channel_comment_keeps_html_and_reply_id() {
+        let value = serde_json::json!({
+            "oId": "c1",
+            "commentOnArticleId": "a1",
+            "commentAuthorName": "bob",
+            "commentContent": "<p>看 <img src=\"https://a.test/x.png\"></p>",
+            "commentOriginalCommentId": "c0",
+            "commentAuthorThumbnailURL": "https://a.test/av.png",
+            "commentOriginalAuthorThumbnailURL": "https://a.test/orig.png"
+        });
+        let comment = ArticleCommentDto::try_from_channel(&value, "a1").expect("comment");
+        assert_eq!(comment.id, "c1");
+        assert_eq!(comment.user_name, "bob");
+        assert_eq!(comment.reply_id.as_deref(), Some("c0"));
+        assert_eq!(
+            comment.reply_avatar_url.as_deref(),
+            Some("https://a.test/orig.png")
+        );
+        assert!(comment.html.unwrap_or_default().contains("<img"));
+        assert!(comment.markdown.is_none());
+        assert!(ArticleCommentDto::try_from_channel(&value, "other").is_none());
+        assert!(ArticleCommentDto::try_from_channel(
+            &serde_json::json!({"type": "articleHeat", "operation": "+"}),
+            "a1"
+        )
+        .is_none());
     }
 }

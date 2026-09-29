@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import { mapComment } from "./api";
 import {
   invokeArticleDetail,
   invokeArticleHeat,
@@ -24,13 +25,15 @@ import { invokeAuthMe } from "../../lib/tauri";
 import type {
   ArticleCapabilities,
   ArticleComment,
+  ArticleCommentPushEvent,
   ArticleDetail,
   ArticleHeatEvent,
   ArticleListType,
   ArticleSummary,
   ArticleVoteDirection,
+  CommentSubmit,
 } from "./types";
-import { ARTICLE_COMMAND, ARTICLE_HEAT_EVENT } from "./types";
+import { ARTICLE_COMMAND, ARTICLE_COMMENT_EVENT, ARTICLE_HEAT_EVENT } from "./types";
 
 const ALL_READY: ArticleCapabilities = {
   list: true,
@@ -79,6 +82,7 @@ export function useArticles() {
   const [heatCount, setHeatCount] = useState<number | null>(null);
   const [heatLive, setHeatLive] = useState(false);
   const [heatNote, setHeatNote] = useState<string | null>(null);
+  const [commentLiveNote, setCommentLiveNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [capabilities, setCapabilities] =
@@ -175,7 +179,7 @@ export function useArticles() {
   );
 
   const loadDetail = useCallback(
-    async (id: string, page: number, append: boolean) => {
+    async (id: string, page: number | undefined, append: boolean) => {
       const seq = ++detailSeq.current;
       if (append) {
         setLoadingMoreComments(true);
@@ -185,17 +189,37 @@ export function useArticles() {
         setPendingConfirm(false);
       }
       try {
-        const result = await invokeArticleDetail({ id, page });
+        const result = await invokeArticleDetail(
+          page == null ? { id } : { id, page },
+        );
         if (!mounted.current || seq !== detailSeq.current) {
           return;
         }
         setDetail((prev) => {
           if (!append || prev == null || prev.id !== result.id) {
-            return result;
+            return {
+              ...result,
+              commentLatestPage: result.commentLatestPage || result.commentPage,
+            };
+          }
+          const goingEarlier = page != null && page < prev.commentPage;
+          if (goingEarlier) {
+            return {
+              ...result,
+              comments: mergeCommentsFront(result.comments, prev.comments),
+              commentPage: result.commentPage,
+              commentLatestPage: prev.commentLatestPage,
+              commentHasEarlier: result.commentHasEarlier,
+              commentHasMore: prev.commentHasMore,
+            };
           }
           return {
             ...result,
             comments: mergeComments(prev.comments, result.comments),
+            commentPage: prev.commentPage,
+            commentLatestPage: result.commentPage,
+            commentHasEarlier: prev.commentHasEarlier,
+            commentHasMore: result.commentHasMore,
           };
         });
       } catch (err) {
@@ -257,7 +281,7 @@ export function useArticles() {
       setActiveId(id);
       setDetail(null);
       setNotice(null);
-      void loadDetail(id, 1, false);
+      void loadDetail(id, undefined, false);
     },
     [loadDetail],
   );
@@ -271,12 +295,29 @@ export function useArticles() {
     setLoadingDetail(false);
   }, []);
 
-  const loadMoreComments = useCallback(() => {
+  const loadEarlierComments = useCallback(() => {
+    if (!detail || loadingDetail || loadingMoreComments) {
+      return;
+    }
+    if (detail.commentHasEarlier && detail.commentPage > 1) {
+      void loadDetail(detail.id, detail.commentPage - 1, true);
+    }
+  }, [detail, loadDetail, loadingDetail, loadingMoreComments]);
+
+  const loadLaterComments = useCallback(() => {
     if (!detail || loadingDetail || loadingMoreComments || !detail.commentHasMore) {
       return;
     }
-    void loadDetail(detail.id, detail.commentPage + 1, true);
+    void loadDetail(detail.id, detail.commentLatestPage + 1, true);
   }, [detail, loadDetail, loadingDetail, loadingMoreComments]);
+
+  const loadMoreComments = useCallback(() => {
+    if (detail?.commentHasEarlier && detail.commentPage > 1) {
+      loadEarlierComments();
+      return;
+    }
+    loadLaterComments();
+  }, [detail, loadEarlierComments, loadLaterComments]);
 
   const retryList = useCallback(() => {
     void loadList(listType, 1, false);
@@ -286,13 +327,13 @@ export function useArticles() {
     if (!activeId) {
       return;
     }
-    void loadDetail(activeId, 1, false);
+    void loadDetail(activeId, undefined, false);
   }, [activeId, loadDetail]);
 
   const sendComment = useCallback(
-    async (content: string): Promise<boolean> => {
+    async (draft: CommentSubmit): Promise<boolean> => {
       const id = activeId;
-      const text = content.trim();
+      const text = draft.content.trim();
       if (!id || !text || sendingLock.current) {
         return false;
       }
@@ -308,6 +349,9 @@ export function useArticles() {
         const result = await invokeCommentPost({
           articleId: id,
           commentContent: text,
+          replyId: draft.replyId?.trim() || undefined,
+          anonymous: draft.anonymous,
+          visible: draft.visible,
         });
         if (!mounted.current) {
           return false;
@@ -324,7 +368,7 @@ export function useArticles() {
           return false;
         }
         setPendingConfirm(false);
-        void loadDetail(id, 1, false);
+        void loadDetail(id, undefined, false);
         return true;
       } catch (err) {
         if (!mounted.current) {
@@ -433,7 +477,7 @@ export function useArticles() {
             };
           });
         },
-        invokeCommentDelete,
+        (id) => invokeCommentDelete({ id }),
       );
     },
     [capabilities.commentDelete, runCommentAction],
@@ -467,7 +511,7 @@ export function useArticles() {
             return changed ? { ...prev, comments } : prev;
           });
         },
-        invokeCommentThank,
+        (id) => invokeCommentThank({ id }),
       );
     },
     [capabilities.commentThank, runCommentAction],
@@ -544,6 +588,7 @@ export function useArticles() {
       setHeatCount(null);
       setHeatLive(false);
       setHeatNote(null);
+      setCommentLiveNote(null);
       return;
     }
     const id = heatArticleId;
@@ -551,16 +596,18 @@ export function useArticles() {
     const alive = {
       cancelled: false,
       generation: 0,
-      unlisten: undefined as UnlistenFn | undefined,
+      unlistenHeat: undefined as UnlistenFn | undefined,
+      unlistenComment: undefined as UnlistenFn | undefined,
     };
     const bucket = { ready: false, extra: 0 };
     setHeatCount(null);
     setHeatLive(false);
     setHeatNote(null);
+    setCommentLiveNote(null);
 
     void (async () => {
       try {
-        alive.unlisten = await listen<ArticleHeatEvent>(ARTICLE_HEAT_EVENT, (event) => {
+        alive.unlistenHeat = await listen<ArticleHeatEvent>(ARTICLE_HEAT_EVENT, (event) => {
           const payload = event.payload;
           if (!payload || payload.articleId !== id) {
             return;
@@ -577,8 +624,42 @@ export function useArticles() {
       } catch {
         // 监听挂不上时仍尝试拉 HTTP 人数。
       }
+      try {
+        alive.unlistenComment = await listen<ArticleCommentPushEvent>(
+          ARTICLE_COMMENT_EVENT,
+          (event) => {
+            const payload = event.payload;
+            if (!payload || payload.articleId !== id) {
+              return;
+            }
+            const comment = mapComment(payload.comment);
+            if (comment == null) {
+              setCommentLiveNote(
+                "收到无法识别的评论推送，已忽略。未按 SDK 对不上的形状伪造条目。",
+              );
+              return;
+            }
+            setDetail((prev) => {
+              if (!prev || prev.id !== id) {
+                return prev;
+              }
+              if (prev.comments.some((item) => item.id === comment.id)) {
+                return prev;
+              }
+              return {
+                ...prev,
+                comments: [...prev.comments, comment],
+                commentCount: prev.commentCount + 1,
+              };
+            });
+          },
+        );
+      } catch {
+        setCommentLiveNote("实时评论监听没有挂上，新评论不会自动出现。");
+      }
       if (alive.cancelled) {
-        alive.unlisten?.();
+        alive.unlistenHeat?.();
+        alive.unlistenComment?.();
         return;
       }
       try {
@@ -622,15 +703,18 @@ export function useArticles() {
         if (isBridgeGapError(err)) {
           markGap(err.command);
           setHeatNote("在看监听命令尚未接入，只显示拉取到的人数。");
+          setCommentLiveNote("文章频道未接入，新评论不会实时出现。");
         } else {
           setHeatNote("实时在看没有连上，显示的是拉取到的人数。");
+          setCommentLiveNote("实时评论没有连上，新评论不会自动出现。");
         }
       }
     })();
 
     return () => {
       alive.cancelled = true;
-      alive.unlisten?.();
+      alive.unlistenHeat?.();
+      alive.unlistenComment?.();
       if (alive.generation > 0) {
         void invokeArticleHeatClose({ watchGeneration: alive.generation }).catch(
           () => undefined,
@@ -827,6 +911,7 @@ export function useArticles() {
     heatCount,
     heatLive,
     heatNote,
+    commentLiveNote,
     error,
     notice,
     capabilities,
@@ -834,6 +919,8 @@ export function useArticles() {
     loadMore,
     openArticle,
     closeArticle,
+    loadEarlierComments,
+    loadLaterComments,
     loadMoreComments,
     retryList,
     retryDetail,
@@ -912,4 +999,13 @@ function mergeComments(
   const seen = new Set(prev.map((item) => item.id));
   const appended = next.filter((item) => !seen.has(item.id));
   return appended.length === 0 ? prev : [...prev, ...appended];
+}
+
+function mergeCommentsFront(
+  earlier: ArticleDetail["comments"],
+  later: ArticleDetail["comments"],
+): ArticleDetail["comments"] {
+  const seen = new Set(later.map((item) => item.id));
+  const prepended = earlier.filter((item) => !seen.has(item.id));
+  return prepended.length === 0 ? later : [...prepended, ...later];
 }

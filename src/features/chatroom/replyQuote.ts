@@ -40,14 +40,15 @@ export function toReplyTarget(message: ChatMessageDto): ReplyTarget {
 }
 
 /**
- * 把被回复消息填回 Composer：引用块 + 跳转链接，光标落在末尾继续输入。
- * 发送仍走现有 markdown `chatroom_send`。
+ * 发送时再拼接的引用块。前缀对齐旧版 `回复@x`（回复与 @ 之间无空格）。
+ * `raw` 优先为 `chatroom_raw` 原文，缺省回落本地 md/text。
  */
 export function formatReplyTemplate(
   target: ReplyTarget,
   selfUserName: string | null,
+  raw = target.body,
 ): string {
-  const quoted = target.body
+  const quoted = raw
     .split("\n")
     .map((line) => `>${line}`)
     .join("\n")
@@ -58,7 +59,7 @@ export function formatReplyTemplate(
     target.userName === selfUserName
       ? ""
       : `@${target.userName} `;
-  return `回复 ${mention}[↩](https://fishpi.cn/cr#chatroom${target.id} "跳转至原消息")：\n\n${quoted}\n\n`;
+  return `回复${mention}[↩](https://fishpi.cn/cr#chatroom${target.id} "跳转至原消息")：\n\n${quoted}\n\n`;
 }
 
 export function startsWithReplyTemplate(

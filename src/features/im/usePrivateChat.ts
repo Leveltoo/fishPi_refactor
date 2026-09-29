@@ -15,6 +15,7 @@ import {
   listenChatEvents,
 } from "./api";
 import { HISTORY_PAGE_SIZE } from "./constants";
+import { formatPrivateReply } from "./replyQuote";
 import { loadOfflineThread, mergeThreadMessages } from "./offlineSeed";
 import {
   applyUnreadCounts,
@@ -85,6 +86,8 @@ export function usePrivateChat() {
   const mountedRef = useRef(true);
   const revokingIdsRef = useRef(new Set<string>());
   const handleEventRef = useRef<(event: ChatListenEvent) => void>(() => undefined);
+  const quoteRef = useRef<ReplyTarget | null>(null);
+  quoteRef.current = quote;
 
   const markGap = useCallback((command: string): void => {
     setCapabilities((prev) => {
@@ -397,9 +400,11 @@ export function usePrivateChat() {
       toast.error("请先选择会话");
       return false;
     }
+    const quote = quoteRef.current;
+    const payload = quote != null ? formatPrivateReply(quote, content) : content;
     setSending(true);
     try {
-      const result = await invokeChatSend({ userName, content });
+      const result = await invokeChatSend({ userName, content: payload });
       if (!mountedRef.current) {
         return false;
       }
@@ -411,6 +416,7 @@ export function usePrivateChat() {
       }
       if (result.accepted) {
         setPendingConfirm(false);
+        setQuoteState(null);
         return true;
       }
       toast.error("发送未被接受，消息未发出");
@@ -775,17 +781,6 @@ export function usePrivateChat() {
 function previewOf(message: PrivateMessageDto): string {
   const text = message.text?.trim() || message.md?.trim() || "";
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
-}
-
-/** 从消息构造引用目标：displayName 取昵称回退用户名，body 取 md/text 首行。 */
-export function replyTargetFromMessage(message: PrivateMessageDto): ReplyTarget {
-  const raw = message.md?.trim() || message.text?.trim() || "";
-  const firstLine = raw.split(/\r?\n/, 1)[0] ?? "";
-  return {
-    id: message.id,
-    displayName: message.userNickname?.trim() || message.userName,
-    body: firstLine,
-  };
 }
 
 function appendMessage(

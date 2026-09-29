@@ -3,14 +3,15 @@ import { toast } from "sonner";
 
 import { invokeNoticeList, listenNoticeEvents } from "@/features/activity/api";
 import type { NoticeItemDto, NoticeListResult, NoticeType } from "@/features/activity/types";
+import { loadChatroomFilters } from "@/features/chatroom/chatroomApi";
 import { listenChatEvents } from "@/features/im/api";
 import { NOTICE_COMMAND } from "@/features/im/types";
 import { listenChatroom } from "@/lib/tauri";
-import type { ChatMessageEvent } from "@/lib/types";
+import type { ChatMessageEvent, OnlineUser } from "@/lib/types";
 import { CHATROOM_EVENT } from "@/lib/types";
 
 import { DEFAULT_SETTINGS } from "@/features/settings/constants";
-import { invokeNotifyShow } from "@/features/settings/api";
+import { invokeNotifyShow, invokeTrayFlash } from "@/features/settings/api";
 import { playNoticeSound } from "@/features/settings/noticeSound";
 import {
   currentDesktopSettings,
@@ -26,6 +27,8 @@ const WATCHED: readonly NoticeType[] = ["at", "reply", "commented", "sys-announc
 type Cue = {
   title: string;
   body: string;
+  /** 弹系统通知。聊天室普通发言为 false，对齐旧版「聊天室除外」。 */
+  popup: boolean;
 };
 
 /**
@@ -44,6 +47,8 @@ export function useMessageNotices(selfUserName: string): {
   const primedRef = useRef(false);
   const refreshSeq = useRef(0);
   const warnedPatterns = useRef(new Set<string>());
+  const lastOnlineRef = useRef<string[] | null>(null);
+  const careUsersRef = useRef<string[]>([]);
 
   selfRef.current = selfUserName;
 
@@ -112,7 +117,37 @@ export function useMessageNotices(selfUserName: string): {
     }
 
     void listenChatroom((event) => {
-      if (!alive || event.event !== CHATROOM_EVENT.msg) {
+      if (!alive) {
+        return;
+      }
+      if (event.event === CHATROOM_EVENT.online) {
+        void loadChatroomFilters()
+          .then((filters) => {
+            if (!alive) {
+              return;
+            }
+            careUsersRef.current = filters.careUsers;
+            const cues = careOnlineCues(
+              event.payload.users,
+              lastOnlineRef.current,
+              careUsersRef.current,
+              selfRef.current,
+            );
+            lastOnlineRef.current = event.payload.users.map(
+              (user) => user.userName,
+            );
+            if (cues.length > 0) {
+              deliver(cues, settingsRef.current);
+            }
+          })
+          .catch(() => {
+            lastOnlineRef.current = event.payload.users.map(
+              (user) => user.userName,
+            );
+          });
+        return;
+      }
+      if (event.event !== CHATROOM_EVENT.msg) {
         return;
       }
       const cue = chatroomCue(
@@ -185,6 +220,13 @@ export function useMessageNotices(selfUserName: string): {
     }).catch(() => undefined);
 
     pullNotices();
+    void loadChatroomFilters()
+      .then((filters) => {
+        if (alive) {
+          careUsersRef.current = filters.careUsers;
+        }
+      })
+      .catch(() => undefined);
 
     return () => {
       alive = false;
@@ -206,27 +248,36 @@ function chatroomCue(
   settings: DesktopSettings,
   warned: Set<string>,
 ): Cue | null {
-  if (message.kind !== "msg" || message.revoked) {
+  if (message.revoked) {
     return null;
   }
   if (selfUserName && message.userName === selfUserName) {
     return null;
   }
-  const text = (message.md || message.text || "").trim();
   const name = message.userNickname || message.userName || "有人";
+  if (message.kind === "redpacket") {
+    if (!settings.redpackNotice) {
+      return null;
+    }
+    return cue("红包提醒", `${name} 发红包啦~`, true);
+  }
+  if (message.kind !== "msg") {
+    return null;
+  }
+  const text = (message.md || message.text || "").trim();
   if (settings.notifyTalk) {
     const pattern = compileTalkPattern(settings.notifyTalkPattern);
     if (pattern === "invalid") {
       warnInvalidPattern(settings.notifyTalkPattern, warned);
     } else if (talkPatternHits(pattern, text)) {
-      return cue("关心的消息", `${name} 说：“${clip(text, 80)}”`);
+      return cue("关心的消息", `${name} 说：“${clip(text, 80)}”`, true);
     }
   }
   if (!settings.notifyChatroom) {
     return null;
   }
   const body = text ? `${name}：${clip(text, 80)}` : `${name} 发来一条消息`;
-  return cue("聊天室", body);
+  return cue("聊天室", body, false);
 }
 
 function idleCue(
@@ -238,22 +289,44 @@ function idleCue(
   if (!settings.notifyChat || !sender || sender === selfUserName) {
     return null;
   }
-  return cue("新消息", `${sender} 说：“${clip(preview ?? "", 10)}”`);
+  return cue("新消息", `${sender} 说：“${clip(preview ?? "", 10)}”`, true);
+}
+
+function careOnlineCues(
+  users: OnlineUser[],
+  lastOnline: string[] | null,
+  careUsers: string[],
+  selfUserName: string,
+): Cue[] {
+  if (lastOnline == null || careUsers.length === 0) {
+    return [];
+  }
+  const names = users.map((user) => user.userName);
+  const arrived = names.filter(
+    (name) =>
+      name.length > 0 &&
+      name !== selfUserName &&
+      !lastOnline.includes(name) &&
+      careUsers.includes(name),
+  );
+  return arrived
+    .map((name) => cue("特别关心", `你的特别关心 ${name} 上线啦~`, true))
+    .filter((item): item is Cue => item != null);
 }
 
 function noticeCue(type: NoticeType, item: NoticeItemDto): Cue | null {
   if (type === "at") {
     const title = item.author ? `${item.author} 提及了你` : "提及了我";
-    return cue(title, item.content || item.title);
+    return cue(title, item.content || item.title, true);
   }
   if (type === "reply" || type === "commented") {
     const verb = type === "reply" ? "回复你" : "评论你";
     const who = item.author ? `${item.author}${verb}` : verb;
     const body = item.content ? `${who} ${item.content}` : who;
-    return cue(item.title || "收到回复", body);
+    return cue(item.title || "收到回复", body, true);
   }
   if (type === "sys-announce") {
-    return cue("摸鱼派系统通知", item.title || item.content);
+    return cue("摸鱼派系统通知", item.title || item.content, true);
   }
   return null;
 }
@@ -278,21 +351,25 @@ function deliver(cues: Cue[], settings: DesktopSettings): void {
   if (settings.notifySound) {
     playNoticeSound();
   }
+  void invokeTrayFlash();
   if (!settings.notifySystem || !settings.notifyEnabled) {
     return;
   }
   for (const item of cues) {
+    if (!item.popup) {
+      continue;
+    }
     void invokeNotifyShow(item);
   }
 }
 
-function cue(title: string, body: string): Cue | null {
+function cue(title: string, body: string, popup: boolean): Cue | null {
   const nextTitle = clip(title, 80);
   const nextBody = clip(body, 120);
   if (!nextTitle || !nextBody) {
     return null;
   }
-  return { title: nextTitle, body: nextBody };
+  return { title: nextTitle, body: nextBody, popup };
 }
 
 function clip(text: string, max: number): string {

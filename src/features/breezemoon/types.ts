@@ -2,6 +2,7 @@
  * 清风明月前后端契约（camelCase，对齐 SDK domain / Bridge DTO）。
  *
  * `breezemoon_list` / `breezemoon_send` 可能尚未注册。命令缺失时不得伪装发送成功。
+ * SDK 没有编辑 / 删除接口，界面禁用，不得假装成功。
  * 列表字段对照 `fishpi-rust-sdk` `domain::breezemoon::Breezemoon`。
  */
 

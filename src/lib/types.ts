@@ -104,9 +104,25 @@ export type ChatMessageKind =
 
 /**
  * 聊天室消息（历史与实时同一形状）。
- * `md` 是优先展示的 Markdown；`text` 仅在没有 Markdown 时作为纯文本回退。
+ * `md` 是 Markdown 原文（复制 / 回复 / 复读）；`text` 在 Html 模式下是服务端 HTML。
  * `rawHint` 是特殊消息的纯文本摘要，不是原始 JSON，更不能当 HTML。
  */
+export type RedpacketWhoDto = {
+  userName: string;
+  userId?: string;
+  avatar: string;
+};
+
+export type RedpacketCardDto = {
+  type: string;
+  msg: string;
+  money: number;
+  got: number;
+  count: number;
+  recivers?: string[];
+  who?: RedpacketWhoDto[];
+};
+
 export interface ChatMessageDto {
   id: string;
   kind: ChatMessageKind;
@@ -118,6 +134,7 @@ export interface ChatMessageDto {
   time: string;
   revoked: boolean;
   rawHint?: string;
+  redpacket?: RedpacketCardDto;
 }
 
 export interface OnlineUser {
@@ -152,7 +169,7 @@ export interface RevokeEvent {
   messageId: string;
 }
 
-/** `chatroom://redpacket-status`。P0 UI 可忽略，字段留给 P1 状态合并。 */
+/** `chatroom://redpacket-status`。领取人头像优先用事件里的 URL。 */
 export interface RedpacketStatusEvent {
   sessionGeneration: number;
   connectionGeneration: number;
@@ -161,6 +178,7 @@ export interface RedpacketStatusEvent {
   got: number;
   whoGive: string;
   whoGot?: string[];
+  whoGotAvatar?: string;
 }
 
 /**

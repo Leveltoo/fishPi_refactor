@@ -16,6 +16,7 @@ function ContextMenuTrigger({
   return (
     <ContextMenuPrimitive.Trigger
       data-slot="context-menu-trigger"
+      data-menu="true"
       className={cn("select-none", className)}
       {...props}
     />

@@ -6,6 +6,8 @@ export type DesktopSettings = {
   themeId: ThemeId;
   alwaysOnTop: boolean;
   opacity: number;
+  /** 透明窗体开关。关则窗口不透明，开则用 opacity。 */
+  opacityEnabled: boolean;
   closeToTray: boolean;
   bossKey: string;
   notifyEnabled: boolean;
@@ -19,6 +21,7 @@ export type DesktopSettings = {
   notifySound: boolean;
   notifySystem: boolean;
   autoReward: boolean;
+  redpackNotice: boolean;
 };
 
 export type NotifyShowRequest = {

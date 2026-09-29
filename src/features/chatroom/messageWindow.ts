@@ -1,4 +1,9 @@
-import type { ChatMessageDto, RedpacketStatusEvent } from "../../lib/types";
+import type {
+  ChatMessageDto,
+  RedpacketCardDto,
+  RedpacketStatusEvent,
+  RedpacketWhoDto,
+} from "../../lib/types";
 import { MESSAGE_WINDOW_LIMIT } from "./constants";
 
 export type ChatWindowState = {
@@ -6,8 +11,8 @@ export type ChatWindowState = {
   byId: Map<string, ChatMessageDto>;
   /** 撤回优先：即使消息尚未进入窗口也要记住，后到历史不能复活。 */
   revokedIds: Set<string>;
-  /** 红包领取人按消息累计：事件 whoGot 可能是增量也可能是全量，取并集。 */
-  redpacketWho: Map<string, string[]>;
+  /** 红包领取人按消息累计：历史 who + 实时 status，带头像。 */
+  redpacketWho: Map<string, RedpacketWhoDto[]>;
 };
 
 export function createChatWindow(): ChatWindowState {
@@ -95,6 +100,96 @@ function mergeStored(
     ...incoming,
     // 已撤回标记粘滞，后到历史不得把消息重新显示为未撤回。
     revoked: previous.revoked || revoked,
+    redpacket: mergeRedpacket(previous.redpacket, incoming.redpacket),
+  };
+}
+
+function mergeRedpacket(
+  previous: RedpacketCardDto | undefined,
+  incoming: RedpacketCardDto | undefined,
+): RedpacketCardDto | undefined {
+  if (incoming == null) {
+    return previous;
+  }
+  if (previous == null) {
+    return incoming;
+  }
+  return {
+    type: incoming.type || previous.type,
+    msg: incoming.msg || previous.msg,
+    money: incoming.money || previous.money,
+    got: Math.max(previous.got, incoming.got),
+    count: incoming.count || previous.count,
+    recivers:
+      incoming.recivers && incoming.recivers.length > 0
+        ? incoming.recivers
+        : previous.recivers,
+    who: mergeWho(previous.who ?? [], incoming.who ?? []),
+  };
+}
+
+function mergeWho(
+  previous: RedpacketWhoDto[],
+  incoming: RedpacketWhoDto[],
+): RedpacketWhoDto[] {
+  const result = previous.map((entry) => ({ ...entry }));
+  for (const entry of incoming) {
+    if (!entry.userName) {
+      continue;
+    }
+    const existing = result.find((item) => item.userName === entry.userName);
+    if (existing == null) {
+      result.push({ ...entry });
+      continue;
+    }
+    if (!existing.avatar && entry.avatar) {
+      existing.avatar = entry.avatar;
+    }
+    if (!existing.userId && entry.userId) {
+      existing.userId = entry.userId;
+    }
+  }
+  return result;
+}
+
+function seedWhoFromMessage(state: ChatWindowState, message: ChatMessageDto): void {
+  if (message.kind !== "redpacket") {
+    return;
+  }
+  const fromCard = message.redpacket?.who ?? [];
+  if (fromCard.length === 0 && !state.redpacketWho.has(message.id)) {
+    return;
+  }
+  const stored = state.redpacketWho.get(message.id) ?? [];
+  const merged = mergeWho(stored, fromCard);
+  if (merged.length > 0) {
+    state.redpacketWho.set(message.id, merged);
+  }
+}
+
+function attachStoredWho(state: ChatWindowState, message: ChatMessageDto): ChatMessageDto {
+  if (message.kind !== "redpacket") {
+    return message;
+  }
+  seedWhoFromMessage(state, message);
+  const stored = state.redpacketWho.get(message.id);
+  if (stored == null || stored.length === 0) {
+    return message;
+  }
+  const card: RedpacketCardDto = message.redpacket ?? {
+    type: "",
+    msg: "",
+    money: 0,
+    got: 0,
+    count: 0,
+    recivers: [],
+    who: [],
+  };
+  const who = mergeWho(stored, card.who ?? []);
+  state.redpacketWho.set(message.id, who);
+  return {
+    ...message,
+    redpacket: { ...card, who },
   };
 }
 
@@ -108,7 +203,8 @@ export function applyMessage(
     state.revokedIds.add(incoming.id);
   }
   const previous = state.byId.get(incoming.id);
-  state.byId.set(incoming.id, mergeStored(previous, incoming, revoked));
+  const stored = mergeStored(previous, incoming, revoked);
+  state.byId.set(incoming.id, attachStoredWho(state, stored));
   if (previous == null) {
     insertNew(state, incoming.id, "append");
   }
@@ -148,8 +244,8 @@ function rewriteRedpacketHint(
 }
 
 /**
- * 红包领取状态合并（对齐旧 redPacketStatus 分支）：刷新对应消息 rawHint 摘要。
- * 消息尚未进窗时只记领取人，等下一条状态到达再改写。
+ * 红包领取状态合并（对齐旧 redPacketStatus 分支）：
+ * 累计 who（带头像），刷新卡片 got/count，并改写 rawHint 摘要。
  */
 export function applyRedpacketStatus(
   state: ChatWindowState,
@@ -164,20 +260,66 @@ export function applyRedpacketStatus(
     who = [];
     state.redpacketWho.set(id, who);
   }
-  for (const name of payload.whoGot ?? []) {
-    if (name.length > 0 && !who.includes(name)) {
-      who.push(name);
+  const names = payload.whoGot ?? [];
+  let whoChanged = false;
+  for (let index = 0; index < names.length; index += 1) {
+    const name = names[index];
+    if (name.length === 0) {
+      continue;
+    }
+    const existing = who.find((entry) => entry.userName === name);
+    const avatar =
+      index === names.length - 1 ? (payload.whoGotAvatar ?? "") : "";
+    if (existing == null) {
+      who.push({ userName: name, avatar });
+      whoChanged = true;
+      continue;
+    }
+    if (!existing.avatar && avatar) {
+      existing.avatar = avatar;
+      whoChanged = true;
     }
   }
   const message = state.byId.get(id);
   if (message == null || message.kind !== "redpacket") {
+    return whoChanged;
+  }
+  const card: RedpacketCardDto = message.redpacket ?? {
+    type: "",
+    msg: "",
+    money: 0,
+    got: 0,
+    count: 0,
+    recivers: [],
+    who: [],
+  };
+  const nextWho = mergeWho(card.who ?? [], who);
+  state.redpacketWho.set(id, nextWho);
+  const nextCard: RedpacketCardDto = {
+    ...card,
+    got: Math.max(card.got, payload.got),
+    count: payload.count || card.count,
+    who: nextWho,
+  };
+  const nextHint = rewriteRedpacketHint(
+    message.rawHint,
+    nextCard.got,
+    nextCard.count,
+    nextWho.map((entry) => entry.userName),
+  );
+  const sameCard =
+    nextCard.got === card.got &&
+    nextCard.count === card.count &&
+    nextWho.length === (card.who?.length ?? 0) &&
+    !whoChanged;
+  if (sameCard && nextHint === message.rawHint) {
     return false;
   }
-  const next = rewriteRedpacketHint(message.rawHint, payload.got, payload.count, who);
-  if (next === message.rawHint) {
-    return false;
-  }
-  state.byId.set(id, { ...message, rawHint: next });
+  state.byId.set(id, {
+    ...message,
+    redpacket: nextCard,
+    rawHint: nextHint,
+  });
   return true;
 }
 
@@ -195,7 +337,8 @@ export function applyHistory(
       state.revokedIds.add(message.id);
     }
     const previous = state.byId.get(message.id);
-    state.byId.set(message.id, mergeStored(previous, message, revoked));
+    const stored = mergeStored(previous, message, revoked);
+    state.byId.set(message.id, attachStoredWho(state, stored));
     if (!existed) {
       insertNew(state, message.id, "ordered");
       added += 1;
@@ -220,7 +363,8 @@ export function seedOffline(
       state.revokedIds.add(message.id);
     }
     const previous = state.byId.get(message.id);
-    state.byId.set(message.id, mergeStored(previous, message, revoked));
+    const stored = mergeStored(previous, message, revoked);
+    state.byId.set(message.id, attachStoredWho(state, stored));
     if (!existed) {
       insertNew(state, message.id, "append");
       added += 1;

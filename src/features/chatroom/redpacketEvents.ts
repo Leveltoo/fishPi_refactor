@@ -1,4 +1,10 @@
-import type { ChatMessageDto } from "../../lib/types";
+import type {
+  ChatMessageDto,
+  OnlineUser,
+  RedpacketCardDto,
+  RedpacketWhoDto,
+} from "../../lib/types";
+import { currentOnlineUsers } from "./onlineUsers";
 
 /**
  * 聊天室 ↔ 红包 overlay 的 window CustomEvent 约定。
@@ -13,11 +19,13 @@ export const FISHPI_REDPACKET_EVENT = "fishpi:redpacket";
 /** Composer「发红包」：打开发送 overlay。 */
 export const FISHPI_REDPACKET_SEND_EVENT = "fishpi:redpacket-send";
 
+/** 右键「再发一个」：按原参数直接重发，不打开面板。 */
+export const FISHPI_REDPACKET_RESEND_EVENT = "fishpi:redpacket-resend";
+
 /**
  * `fishpi:redpacket` 的 `detail`。
  *
- * DTO 没有单独的红包 JSON 字段；overlay 用 `messageId` 再查详情。
- * `rawHint` 是 Bridge 给出的安全摘要（类型 / 已领数 / 祝福语截断）。
+ * 卡片字段来自 DTO `redpacket`；overlay 仍用 `messageId` 再查详情。
  */
 export type FishpiRedpacketDetail = {
   messageId: string;
@@ -27,23 +35,48 @@ export type FishpiRedpacketDetail = {
   time: string;
   rawHint?: string;
   text?: string;
+  type?: string;
+  msg?: string;
+  money?: number;
+  got?: number;
+  count?: number;
+  recivers?: string[];
+  gesture?: 0 | 1 | 2;
 };
 
 /**
  * `fishpi:redpacket-send` 的 `detail`。
- * 可空对象；有当前登录用户时带上 `userName`，专属红包等场景可再扩展。
+ * `user` 锁定专属接收人；`userName` 只表示当前登录用户，不要当成专属对象。
  */
 export type FishpiRedpacketSendDetail = {
   userName?: string;
+  user?: string;
+  type?: string;
+  users?: OnlineUser[];
+};
+
+export type FishpiRedpacketResendDetail = {
+  type: string;
+  msg: string;
+  money: number;
+  count: number;
+  recivers: string[];
 };
 
 export function isRedpacketMessage(message: ChatMessageDto): boolean {
   return message.kind === "redpacket";
 }
 
+export function redpacketCardOf(
+  message: ChatMessageDto,
+): RedpacketCardDto | undefined {
+  return message.redpacket;
+}
+
 export function toRedpacketDetail(
   message: ChatMessageDto,
 ): FishpiRedpacketDetail {
+  const card = message.redpacket;
   return {
     messageId: message.id,
     userName: message.userName,
@@ -52,21 +85,71 @@ export function toRedpacketDetail(
     time: message.time,
     ...(message.rawHint ? { rawHint: message.rawHint } : {}),
     ...(message.text ? { text: message.text } : {}),
+    ...(card?.type ? { type: card.type } : {}),
+    ...(card?.msg ? { msg: card.msg } : {}),
+    ...(card != null ? { money: card.money, got: card.got, count: card.count } : {}),
+    ...(card?.recivers && card.recivers.length > 0
+      ? { recivers: card.recivers }
+      : {}),
   };
 }
 
-export function dispatchRedpacketOpen(message: ChatMessageDto): void {
+export function dispatchRedpacketOpen(
+  message: ChatMessageDto,
+  extra: Partial<FishpiRedpacketDetail> = {},
+): void {
   window.dispatchEvent(
     new CustomEvent<FishpiRedpacketDetail>(FISHPI_REDPACKET_EVENT, {
-      detail: toRedpacketDetail(message),
+      detail: { ...toRedpacketDetail(message), ...extra },
     }),
   );
 }
 
 export function dispatchRedpacketSend(detail: FishpiRedpacketSendDetail = {}): void {
+  const users = detail.users ?? currentOnlineUsers();
   window.dispatchEvent(
     new CustomEvent<FishpiRedpacketSendDetail>(FISHPI_REDPACKET_SEND_EVENT, {
+      detail: { ...detail, ...(users.length > 0 ? { users } : {}) },
+    }),
+  );
+}
+
+export function dispatchRedpacketResend(detail: FishpiRedpacketResendDetail): void {
+  window.dispatchEvent(
+    new CustomEvent<FishpiRedpacketResendDetail>(FISHPI_REDPACKET_RESEND_EVENT, {
       detail,
     }),
   );
+}
+
+export function whoFromCardOrStatus(
+  card: RedpacketCardDto | undefined,
+  statusWho: RedpacketWhoDto[] | undefined,
+): RedpacketWhoDto[] {
+  const fromCard = card?.who ?? [];
+  const fromStatus = statusWho ?? [];
+  if (fromStatus.length === 0) {
+    return fromCard;
+  }
+  if (fromCard.length === 0) {
+    return fromStatus;
+  }
+  const merged = fromCard.map((entry) => ({ ...entry }));
+  for (const entry of fromStatus) {
+    if (!entry.userName) {
+      continue;
+    }
+    const existing = merged.find((item) => item.userName === entry.userName);
+    if (existing == null) {
+      merged.push({ ...entry });
+      continue;
+    }
+    if (!existing.avatar && entry.avatar) {
+      existing.avatar = entry.avatar;
+    }
+    if (!existing.userId && entry.userId) {
+      existing.userId = entry.userId;
+    }
+  }
+  return merged;
 }

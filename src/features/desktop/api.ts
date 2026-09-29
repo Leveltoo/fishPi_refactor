@@ -22,6 +22,9 @@ export type DesktopPrefs = {
   extensionRoot: string;
   theme: string;
   musicMode: number;
+  loginUsername: string;
+  windowWidth: number;
+  windowHeight: number;
 };
 
 export type DesktopPrefsPatch = {
@@ -29,6 +32,7 @@ export type DesktopPrefsPatch = {
   extensionRoot?: string;
   theme?: string;
   musicMode?: number;
+  loginUsername?: string;
 };
 
 export type ImportResult = {

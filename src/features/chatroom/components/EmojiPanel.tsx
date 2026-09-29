@@ -16,6 +16,7 @@ import {
 import { DEFAULT_EMOJIS } from "../defaultEmojis";
 import { downloadEmojiJson, parseEmojiImport } from "../emojiImportExport";
 import { toUserErrorMessage } from "../toUserError";
+import { isImageFile, uploadFiles } from "../../../lib/upload";
 
 type EmojiPanelProps = {
   disabled: boolean;
@@ -39,6 +40,7 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const faceInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +114,52 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
       setRecent(next);
     } catch {
       // 插进输入框已经完成；最近使用记失败不影响发送。
+    }
+  }
+
+  async function uploadFaces(files: File[]): Promise<void> {
+    const media = files.filter(isImageFile);
+    if (media.length === 0 || busy) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const uploaded = await uploadFiles(media);
+      if (uploaded.length === 0) {
+        setError("没有可上传的图片");
+        return;
+      }
+      let ok = 0;
+      let fail = 0;
+      for (const file of uploaded) {
+        try {
+          await addEmojiUrl(file.url, groupId ?? undefined);
+          ok += 1;
+        } catch {
+          fail += 1;
+        }
+      }
+      if (groupId != null) {
+        setItems(await loadEmojiGroupItems(groupId));
+      }
+      const summary = `成功上传 ${ok} 张，失败 ${fail} 张`;
+      setNotice(summary);
+      if (fail > 0) {
+        toast.warning(summary);
+      } else {
+        toast.success(summary);
+      }
+    } catch (err) {
+      const message = toUserErrorMessage(err);
+      setError(message);
+      toast.error(message);
+    } finally {
+      setBusy(false);
+      if (faceInputRef.current) {
+        faceInputRef.current.value = "";
+      }
     }
   }
 
@@ -245,7 +293,9 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
 
       {tab === "server" ? (
         <>
-          <p className="chat-emoji-note">服务器分组来自表情接口。添加成功才算已同步。</p>
+          <p className="chat-emoji-note">
+            服务器分组来自表情接口。添加成功才算已同步。云端旧收藏（cloud 存储）当前 SDK 无法读取，只能管理服务器分组里的表情。
+          </p>
           <div className="chat-emoji-tabs">
             {groups.map((group) => (
               <Button
@@ -286,6 +336,27 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
             })}
           </div>
           <div className="chat-emoji-add">
+            <input
+              ref={faceInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="visually-hidden"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={(event) => {
+                void uploadFaces(Array.from(event.target.files ?? []));
+              }}
+            />
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={busy}
+              onClick={() => faceInputRef.current?.click()}
+            >
+              选择图片上传
+            </Button>
             <input
               className="chat-inline-input"
               value={urlDraft}

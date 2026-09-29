@@ -284,6 +284,14 @@
   flex-direction: column;
 }
 
+.chat-stream > .msg-scrollbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  height: 100%;
+}
+
 .chat-stream-scroller {
   flex: 1 1 auto;
   min-height: 0;
@@ -294,37 +302,17 @@
   height: 100%;
 }
 
-/* 旧版全局 5px 暗色条：Radix 用内联 style 把原生条 scrollbar-width:none + display:none，
-   这里用更高特异性放回原生条并着色；auto 覆盖 none，WebKit 自定义条才生效 */
+/* 自定义滚动条（MessageScrollbar）替代原生条，对齐旧版 scrollbar.vue */
 .chat-stream-scroller [data-slot="scroll-area-viewport"] {
-  scrollbar-width: auto;
-  scrollbar-color: auto;
+  scrollbar-width: none;
 }
 
 .chat-stream-scroller [data-slot="scroll-area-viewport"]::-webkit-scrollbar {
-  display: block;
-  width: 5px;
-  height: 5px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
-.chat-stream-scroller [data-slot="scroll-area-viewport"]::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.chat-stream-scroller [data-slot="scroll-area-viewport"]::-webkit-scrollbar-thumb {
-  background: var(--chat-line);
-  border-radius: 3px;
-}
-
-.chat-stream-scroller [data-slot="scroll-area-viewport"]::-webkit-scrollbar-thumb:hover {
-  background: var(--chat-muted);
-}
-
-.chat-stream-scroller [data-slot="scroll-area-viewport"]::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-/* 隐藏 Radix 自绘 hover 细条，避免和原生条并排双条 */
 .chat-stream-scroller [data-slot="scroll-area-scrollbar"] {
   display: none;
 }
@@ -356,6 +344,35 @@
   position: absolute;
   right: 1rem;
   bottom: 0.75rem;
+  display: flex;
+  align-items: stretch;
+  background: var(--chat-accent);
+  color: var(--chat-accent-fg);
+  border-radius: var(--chat-radius);
+  overflow: hidden;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.chat-jump-latest-go,
+.chat-jump-latest-close {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-jump-latest-go {
+  padding: 0.35rem 0.55rem;
+}
+
+.chat-jump-latest-close {
+  border-left: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  padding: 0.35rem 0.5rem;
+  font-size: 1.2em;
+  line-height: 1;
 }
 
 .chat-conn-footnote {
@@ -396,16 +413,57 @@
   min-height: 0;
 }
 
+.chat-side-box {
+  position: relative;
+  display: flex;
+  flex: none;
+  min-height: 0;
+}
+
+.chat-side-toggle {
+  position: absolute;
+  top: 50%;
+  left: -1em;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 5em;
+  margin-top: -2.5em;
+  padding: 0;
+  border: 1px solid var(--chat-line);
+  border-right: 0;
+  border-radius: 999px 0 0 999px;
+  background: var(--sidebar, var(--chat-raised));
+  color: var(--chat-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-side-toggle:hover {
+  color: var(--chat-accent);
+}
+
 .chat-side {
   width: 168px;
   flex: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   border-left: 1px solid var(--chat-line);
   background: var(--sidebar, var(--chat-raised));
   padding: 8px;
   gap: 6px;
+  transition: width 0.35s ease, padding 0.35s ease;
+}
+
+.chat-side-box.is-collapsed .chat-side {
+  width: 0;
+  padding: 0;
+  border-left: 0;
 }
 
 .chat-side-head {
@@ -425,6 +483,11 @@
   margin: 0;
   font-size: 12px;
   color: var(--chat-muted);
+}
+
+.chat-side-search {
+  height: 26px;
+  font-size: 12px;
 }
 
 .chat-side-scroll {
@@ -514,7 +577,7 @@
 }
 
 @media (max-width: 720px) {
-  .chat-side {
+  .chat-side-box {
     display: none;
   }
 }
@@ -672,6 +735,12 @@
   font-size: 0.82rem;
 }
 
+.chat-msg.is-system .chat-html {
+  text-align: center;
+  font-size: 0.8em;
+  opacity: 0.5;
+}
+
 .chat-msg-skeleton {
   width: min(100%, 22rem);
 }
@@ -728,42 +797,151 @@
   word-break: break-word;
 }
 
-.chat-msg-special,
-.chat-msg-redpacket {
+.chat-msg-special {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
   align-items: flex-start;
 }
 
-.chat-msg-redpacket {
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.chat-msg-redpacket:hover {
-  color: var(--chat-accent);
+/* 红包卡：对齐旧 .redpacket-content（橙底未领 / 金底已领），色不跟皮肤走。 */
+.chat-msg.is-redpacket {
+  --chat-rp: #f90;
+  --chat-rp-done: #fecd41;
+  --chat-rp-ink: #fff;
+  --chat-rp-rule: #ed4014;
 }
 
 .chat-msg.is-redpacket .chat-msg-content {
-  border-color: color-mix(in srgb, var(--chat-accent) 45%, var(--chat-line));
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
 }
 
-/* 弹幕：对齐旧版 .barrager —— 隐藏 meta，仅头像 + 胶囊正文；入场前 0 尺寸，is-in 后播一次性动画 */
+.chat-msg.is-redpacket .chat-msg-arrow {
+  border-right-color: var(--chat-rp);
+}
+
+.chat-msg.is-redpacket.is-mine .chat-msg-arrow {
+  border-right-color: transparent;
+  border-left-color: var(--chat-rp);
+}
+
+.chat-msg.is-redpacket:has(.chat-msg-redpacket.is-done) .chat-msg-arrow {
+  border-right-color: var(--chat-rp-done);
+}
+
+.chat-msg.is-redpacket.is-mine:has(.chat-msg-redpacket.is-done) .chat-msg-arrow {
+  border-right-color: transparent;
+  border-left-color: var(--chat-rp-done);
+}
+
+.chat-rp-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 4px;
+  max-width: 54vw;
+}
+
+.chat-msg.is-mine .chat-rp-wrap {
+  flex-direction: row-reverse;
+}
+
+.chat-msg-redpacket {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 11.5rem;
+  margin: 0;
+  padding: 0 5px 0 0;
+  border: 0;
+  border-radius: var(--chat-radius);
+  background: var(--chat-rp);
+  color: var(--chat-rp-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chat-msg-redpacket.is-done {
+  background: var(--chat-rp-done);
+}
+
+.chat-msg-redpacket:hover {
+  filter: brightness(1.06);
+}
+
+.chat-msg-redpacket:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.chat-rp-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-height: 3rem;
+  padding: 0.15rem 0.35rem 0.15rem 0.1rem;
+}
+
+.chat-rp-icon {
+  flex: none;
+  width: 2.8rem;
+  font-size: 2rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.chat-rp-msg {
+  min-width: 0;
+  color: var(--chat-rp-ink);
+  font-size: 0.92rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.chat-rp-type {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 10px;
+  padding: 2px 0 4px;
+  border-top: 1px solid var(--chat-rp-rule);
+  color: var(--chat-rp-ink);
+  font-size: 0.68rem;
+  opacity: 0.95;
+}
+
+.chat-rp-money {
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-rp-status {
+  margin: 0 10px 4px;
+  font-size: 0.68rem;
+  opacity: 0.88;
+  pointer-events: none;
+}
+
+/* 弹幕：对齐旧版 .barrager —— 整行一颗胶囊（头像+正文同底色），隐藏用户名/箭头 */
 .chat-msg.is-barrager {
-  margin: 6px 5px;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: calc(95%);
+  margin: 10px 5px;
+  padding: 0;
+  border-radius: 45px;
+  background-color: rgba(200, 200, 200, 0.2);
+  box-shadow: 0 0 5px 1px rgba(200, 200, 200, 0.2);
+  font-weight: bold;
+  overflow: hidden;
   height: 0;
   opacity: 0;
-  width: 0%;
-  max-width: calc(95%);
-  overflow: hidden;
   transition: all 0.5s;
 }
 
@@ -773,6 +951,11 @@
   width: auto;
   animation: chat-barrager-shake 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)
     both 0.2s;
+}
+
+/* 旧版 barrager.msg-current 不反向：头像仍在左 */
+.chat-msg.is-barrager.is-mine {
+  flex-direction: row;
 }
 
 @keyframes chat-barrager-shake {
@@ -796,28 +979,44 @@
   }
 }
 
+.chat-msg.is-barrager .chat-msg-meta {
+  display: none;
+}
+
+.chat-msg.is-barrager .chat-msg-body {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: auto;
+  max-width: calc(100% - 45px);
+  min-width: 0;
+}
+
 .chat-msg.is-barrager .chat-msg-avatar,
 .chat-msg.is-barrager .chat-msg-identity {
   width: 45px;
   height: 45px;
+  min-width: 45px;
   margin-top: 0;
+  flex: none;
 }
 
 .chat-msg.is-barrager .chat-msg-avatar [data-slot="avatar-fallback"] {
   font-size: 1rem;
 }
 
+/* 旧版：底色在整行胶囊上，正文透明只留彩色字 */
 .chat-msg.is-barrager .chat-msg-content {
-  background: color-mix(in srgb, var(--chat-bubble) 72%, transparent);
-  border-radius: 999px;
-  padding: 0.35rem 1rem;
-  border-color: transparent;
-  box-shadow: 0 0 5px 1px color-mix(in srgb, var(--chat-bubble) 40%, transparent);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0 12px 0 4px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: min(100%, 42rem);
+  max-width: calc(100% - 45px);
   align-self: center;
 }
 
@@ -832,11 +1031,23 @@
   text-overflow: ellipsis;
 }
 
-.chat-msg.is-barrager.is-mine .chat-msg-content {
-  background: color-mix(in srgb, var(--chat-bubble-self) 80%, transparent);
+/* 发弹幕取色器（对齐旧 ColorPicker） */
+.chat-barrage-color {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-/* 发弹幕色板（Dialog 内） */
+.chat-barrage-color input[type="color"] {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--chat-line);
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+
 .chat-barrage-swatch {
   width: 20px;
   height: 20px;
@@ -886,14 +1097,30 @@
   cursor: pointer;
 }
 
-/* 内联表情（旧 vditor emoji 图）略小 */
+/* 内联表情（旧 vditor emoji 图）略小；点击不当成看图 */
 .chat-html img[src*="/vditor/dist/images/emoji/"],
-.chat-html img.emoji {
+.chat-html img.emoji,
+.chat-md img.emoji {
   max-width: 40px;
   height: auto;
   cursor: default;
   vertical-align: middle;
   border-radius: 0;
+}
+
+.chat-html iframe {
+  max-width: 100%;
+  border: 0;
+  display: block;
+}
+
+.chat-html video {
+  max-width: 100%;
+  height: auto;
+}
+
+.chat-html details {
+  margin: 0.3rem 0;
 }
 
 .chat-md pre,
@@ -1013,12 +1240,14 @@
   transform: rotate(180deg);
 }
 
-/* 猜拳红包：气泡内三选一（旧 .gesture-open，hover 金边） */
+/* 猜拳红包：贴在卡片旁三选一（旧 .gesture-open，hover 金边） */
 .chat-gesture {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
 }
 
 .chat-gesture button {

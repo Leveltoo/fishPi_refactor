@@ -1,8 +1,9 @@
-//! 在看人数。
+//! 文章频道：在看人数与新评论。
 //!
-//! 初始值只来自 `article().heat()`。实时加减只来自文章频道里
+//! 初始在看人数只来自 `article().heat()`。实时加减只来自
 //! `type == articleHeat` 且 `operation` 为 `+` / `-` 的推送。
-//! 其它帧忽略，不在本地伪造人数。
+//! 其它帧若带 `oId` 且 `commentOnArticleId` 对得上当前帖，则作为新评论转发。
+//! 对不上的形状忽略，不在本地伪造评论或人数。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
@@ -14,13 +15,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::common::{ensure_same_session, require_client, require_nonempty};
 use crate::dto::{
-    ArticleHeatCloseRequest, ArticleHeatEvent, ArticleHeatResult, ArticleHeatWatchRequest,
-    ArticleHeatWatchResult, ArticleIdRequest,
+    ArticleCommentDto, ArticleCommentEvent, ArticleHeatCloseRequest, ArticleHeatEvent,
+    ArticleHeatResult, ArticleHeatWatchRequest, ArticleHeatWatchResult, ArticleIdRequest,
 };
 use crate::error::AppError;
 use crate::state::AppState;
 
 pub const EVENT_ARTICLE_HEAT: &str = "article://heat";
+pub const EVENT_ARTICLE_COMMENT: &str = "article://comment";
 
 struct HeatWatch {
     generation: u64,
@@ -110,7 +112,7 @@ pub async fn article_heat_watch(
     let app_for_listener = app.clone();
     connection
         .on_message(move |value| {
-            forward_heat(
+            forward_channel(
                 &app_for_listener,
                 session_generation,
                 generation,
@@ -155,7 +157,7 @@ pub async fn article_heat_close(request: ArticleHeatCloseRequest) -> Result<(), 
     Ok(())
 }
 
-fn forward_heat(
+fn forward_channel(
     app: &AppHandle,
     session_generation: u64,
     generation: u64,
@@ -174,31 +176,52 @@ fn forward_heat(
             return;
         }
     }
-    let Some(delta) = heat_delta(value) else {
+    let payload = unwrap_channel_payload(value);
+    if let Some(delta) = delta_of(&payload) {
+        if !generation_is_active(generation) {
+            return;
+        }
+        let _ = app.emit(
+            EVENT_ARTICLE_HEAT,
+            ArticleHeatEvent {
+                session_generation,
+                article_id: article_id.to_string(),
+                delta,
+            },
+        );
+        return;
+    }
+    let Some(comment) = ArticleCommentDto::try_from_channel(&payload, article_id) else {
         return;
     };
     if !generation_is_active(generation) {
         return;
     }
     let _ = app.emit(
-        EVENT_ARTICLE_HEAT,
-        ArticleHeatEvent {
+        EVENT_ARTICLE_COMMENT,
+        ArticleCommentEvent {
             session_generation,
             article_id: article_id.to_string(),
-            delta,
+            comment,
         },
     );
 }
 
-fn heat_delta(value: &Value) -> Option<i32> {
-    delta_of(value).or_else(|| {
-        let data = value.get("data")?;
+fn unwrap_channel_payload(value: &Value) -> Value {
+    if let Some(data) = value.get("data") {
         if let Some(text) = data.as_str() {
-            let parsed = serde_json::from_str::<Value>(text).ok()?;
-            return delta_of(&parsed);
+            if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                return parsed;
+            }
+        } else if data.is_object() || data.is_array() {
+            return data.clone();
         }
-        delta_of(data)
-    })
+    }
+    value.clone()
+}
+
+fn heat_delta(value: &Value) -> Option<i32> {
+    delta_of(value).or_else(|| delta_of(&unwrap_channel_payload(value)))
 }
 
 fn delta_of(value: &Value) -> Option<i32> {
@@ -247,4 +270,37 @@ fn watch_is_current(generation: u64) -> bool {
     guard
         .as_ref()
         .is_some_and(|slot| slot.generation == generation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn heat_frames_do_not_look_like_comments() {
+        assert_eq!(
+            heat_delta(&json!({"type": "articleHeat", "operation": "+"})),
+            Some(1)
+        );
+        assert!(
+            ArticleCommentDto::try_from_channel(
+                &json!({"type": "articleHeat", "operation": "+"}),
+                "a1"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn comment_frame_is_not_heat() {
+        let comment = json!({
+            "oId": "c1",
+            "commentOnArticleId": "a1",
+            "commentAuthorName": "bob",
+            "commentContent": "<p>hi</p>"
+        });
+        assert_eq!(heat_delta(&comment), None);
+        assert!(ArticleCommentDto::try_from_channel(&comment, "a1").is_some());
+    }
 }

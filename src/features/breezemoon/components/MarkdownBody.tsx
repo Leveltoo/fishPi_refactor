@@ -4,6 +4,8 @@ import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
+import { RichHtml } from "../../../lib/RichHtml";
+import { looksLikeHtml } from "../../../lib/safeHtml";
 import {
   markdownUrlTransform,
   openSafeExternalUrl,
@@ -110,9 +112,16 @@ function onMarkdownClick(event: MouseEvent<HTMLDivElement>): void {
 }
 
 /**
- * 成熟 Markdown 渲染：不执行原始 HTML。链接仅 http(s)，点图派发看图事件。
+ * 清风明月正文：HTML 走 DOMPurify；Markdown 不执行原始 HTML。
  */
 export function MarkdownBody({ source }: MarkdownBodyProps) {
+  const text = source.trim();
+  if (!text) {
+    return null;
+  }
+  if (looksLikeHtml(text)) {
+    return <RichHtml source={text} className="bm-md" />;
+  }
   return (
     <div className="bm-md" onClick={onMarkdownClick}>
       <ReactMarkdown
@@ -122,8 +131,15 @@ export function MarkdownBody({ source }: MarkdownBodyProps) {
         remarkPlugins={REMARK_PLUGINS}
         components={MARKDOWN_COMPONENTS}
       >
-        {source}
+        {text}
       </ReactMarkdown>
     </div>
   );
+}
+
+export function BreezemoonBody({ source }: MarkdownBodyProps) {
+  if (!source.trim()) {
+    return <p className="bm-item-plain">（空）</p>;
+  }
+  return <MarkdownBody source={source} />;
 }

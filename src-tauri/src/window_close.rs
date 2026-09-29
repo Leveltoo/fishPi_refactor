@@ -1,6 +1,6 @@
-//! 主窗口关闭请求：关到托盘，不是退出。
+//! 主窗口关闭请求：按 `close_to_tray` 藏到托盘或真正退出。
 //!
-//! 关闭到托盘 ≠ 退出。点窗口关闭只按 `close_to_tray` 决定藏起来还是真正关掉。
+//! 默认关闭即退出，对齐旧版。打开「关闭到托盘」后点关闭只藏起来。
 //! 退出只走托盘菜单「退出」。这里不创建托盘图标，不 `exit`，也不拆 WebSocket。
 
 use tauri::Manager;
@@ -39,7 +39,7 @@ fn on_close_requested(
     let _ = window.hide();
 }
 
-/// 读失败当成 [`AppSettings::default`]（`close_to_tray` 默认 true）。
+/// 读失败当成 [`AppSettings::default`]（`close_to_tray` 默认 false，关闭即退出）。
 fn close_to_tray(app: &tauri::AppHandle) -> bool {
     crate::commands::settings_get::load_app_settings(app)
         .map(|settings| settings.close_to_tray)
