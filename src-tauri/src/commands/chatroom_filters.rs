@@ -19,6 +19,7 @@ const MAX_CARE: usize = 100;
 const MAX_RECENT: usize = 24;
 const MAX_RULE_CHARS: usize = 200;
 const MAX_NAME_CHARS: usize = 64;
+static FILTERS_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 与旧 `setting.vue` 的 `shieldType` 一致：用户、内容正则、红包。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -71,13 +72,21 @@ pub fn chatroom_filters_set(
     app: AppHandle,
     request: ChatroomFilters,
 ) -> Result<ChatroomFilters, AppError> {
+    let _io = FILTERS_IO.lock().unwrap_or_else(|error| error.into_inner());
     let clean = sanitize_filters(request);
     let store = open_store(&app)?;
     let value = serde_json::to_value(&clean).map_err(|_| AppError::business("屏蔽规则无法保存"))?;
+    let previous = store.get(FILTERS_KEY);
     store.set(FILTERS_KEY, value);
-    store
-        .save()
-        .map_err(|_| AppError::business("屏蔽规则保存失败"))?;
+    if store.save().is_err() {
+        match previous {
+            Some(value) => store.set(FILTERS_KEY, value),
+            None => {
+                store.delete(FILTERS_KEY);
+            }
+        }
+        return Err(AppError::business("屏蔽规则保存失败"));
+    }
     Ok(clean)
 }
 
@@ -92,6 +101,7 @@ pub fn chatroom_emoji_recent_remember(
     app: AppHandle,
     request: RecentEmoji,
 ) -> Result<Vec<RecentEmoji>, AppError> {
+    let _io = FILTERS_IO.lock().unwrap_or_else(|error| error.into_inner());
     let Some(item) = sanitize_recent_item(request) else {
         return Err(AppError::business("表情无法记入最近使用"));
     };
@@ -100,7 +110,8 @@ pub fn chatroom_emoji_recent_remember(
     recent.retain(|existing| existing != &item);
     recent.insert(0, item);
     recent.truncate(MAX_RECENT);
-    let value = serde_json::to_value(&recent).map_err(|_| AppError::business("最近表情无法保存"))?;
+    let value =
+        serde_json::to_value(&recent).map_err(|_| AppError::business("最近表情无法保存"))?;
     store.set(RECENT_KEY, value);
     store
         .save()

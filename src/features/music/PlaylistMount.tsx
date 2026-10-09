@@ -10,27 +10,24 @@ import { musicResolve } from "./api";
 import { bindPlaylist, bindPlaylistHas, bindPlaylistRemove } from "./playlist";
 import {
   bindPlayerAudio,
+  enqueuePlayerTrack,
+  getPlayerGeneration,
   getPlayerSnapshot,
   playerClear,
   playerNext,
   playerOnEnded,
   playerPrev,
   playerRemoveCurrent,
+  playerRemoveSong,
   setPlayerError,
   setPlayerIndex,
   setPlayerMode,
   setPlayerPlaying,
-  setPlayerTracks,
   subscribePlayer,
   type Track,
 } from "./playerStore";
+import { MUSIC_MODE_OPTIONS } from "./modes";
 import "../desktop/panel.css";
-
-const MODE_LABEL: Record<number, string> = {
-  0: "点击播放",
-  1: "点击播放并加入播放列表",
-  2: "点击加入播放列表",
-};
 
 function subscribe(next: () => void): () => void {
   return subscribePlayer(next);
@@ -52,12 +49,7 @@ export function PlaylistMount() {
   const player = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const { tracks, index, mode, error } = player;
   const [songId, setSongId] = useState("");
-  const tracksRef = useRef(tracks);
-  const indexRef = useRef(index);
-  const modeRef = useRef(mode);
-  tracksRef.current = tracks;
-  indexRef.current = index;
-  modeRef.current = mode;
+  const pending = useRef(Promise.resolve());
   // 稳定 ref：内联箭头每次渲染都会 detach/attach，触发 bind(null) 循环
   const audioRef = useCallback((element: HTMLAudioElement | null) => {
     bindPlayerAudio(element);
@@ -82,74 +74,58 @@ export function PlaylistMount() {
   }, []);
 
   useEffect(() => {
-    bindPlaylist((id) => {
-      void enqueue(id, modeRef.current);
+    bindPlaylist((id, forceAdd) => {
+      void enqueue(id, forceAdd ? 1 : getPlayerSnapshot().mode);
     });
-    bindPlaylistRemove((id) => {
-      const current = tracksRef.current;
-      const next = current.filter((item) => item.id !== id);
-      if (next.length === current.length) {
-        return;
-      }
-      if (next.length === 0) {
-        playerClear();
-        return;
-      }
-      const nextIndex =
-        indexRef.current >= next.length ? 0 : indexRef.current;
-      setPlayerTracks(next, nextIndex);
-    });
-    bindPlaylistHas((id) => tracksRef.current.some((item) => item.id === id));
+    bindPlaylistRemove(playerRemoveSong);
+    bindPlaylistHas((id) => getPlayerSnapshot().tracks.some((item) => item.id === id));
     return () => {
       bindPlaylist(null);
       bindPlaylistRemove(null);
       bindPlaylistHas(null);
+      playerClear();
     };
   }, []);
 
-  async function enqueue(id: string, nextMode: number): Promise<void> {
-    setPlayerError("");
-    try {
-      const song = await musicResolve(id);
-      const track: Track = {
-        id: song.id,
-        name: song.name,
-        artist: song.artist,
-        url: song.url,
-      };
-      const current = tracksRef.current;
-      if (nextMode === 0) {
-        setPlayerTracks([track], 0);
+  function enqueue(id: string, nextMode: number): Promise<void> {
+    const generation = getPlayerGeneration();
+    const task = pending.current.then(async () => {
+      if (generation !== getPlayerGeneration()) {
         return;
       }
-      const exists = current.some((item) => item.id === track.id);
-      const next = exists ? current : [...current, track];
-      if (nextMode === 2) {
-        const playIndex = Math.max(
-          0,
-          exists
-            ? current.findIndex((item) => item.id === track.id)
-            : next.length - 1,
-        );
-        setPlayerTracks(next, exists ? indexRef.current : playIndex);
-        return;
+      setPlayerError("");
+      try {
+        const song = await musicResolve(id);
+        if (generation === getPlayerGeneration()) {
+          const track: Track = {
+            id: song.id,
+            name: song.name,
+            artist: song.artist,
+            url: song.url,
+          };
+          enqueuePlayerTrack(track, nextMode);
+        }
+      } catch (err: unknown) {
+        if (generation === getPlayerGeneration()) {
+          setPlayerError(commandError(err));
+        }
       }
-      setPlayerTracks(
-        next,
-        indexRef.current >= next.length ? 0 : indexRef.current,
-      );
-    } catch (err: unknown) {
-      setPlayerError(commandError(err));
-    }
+    });
+    pending.current = task;
+    return task;
   }
 
   async function changeMode(next: number): Promise<void> {
+    const previous = getPlayerSnapshot().mode;
     setPlayerMode(next);
     setPlayerError("");
     try {
       const prefs = await desktopPrefsSet({ musicMode: next });
       setPlayerMode(prefs.musicMode);
     } catch (err: unknown) {
+      if (getPlayerSnapshot().mode === next) {
+        setPlayerMode(previous);
+      }
       setPlayerError(commandError(err));
     }
   }
@@ -166,14 +142,15 @@ export function PlaylistMount() {
             value={String(mode)}
             onChange={(event) => void changeMode(Number(event.target.value))}
           >
-            <option value="0">{MODE_LABEL[0]}</option>
-            <option value="2">{MODE_LABEL[2]}</option>
-            <option value="1">{MODE_LABEL[1]}</option>
+            {MUSIC_MODE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
         </label>
         <div className="parity-row">
           <input
             inputMode="numeric"
+            aria-label="歌曲编号"
             value={songId}
             placeholder="歌曲编号"
             onChange={(event) =>
@@ -225,6 +202,7 @@ export function PlaylistMount() {
               controls
               autoPlay
               muted={player.muted}
+              playsInline
               onPlay={() => setPlayerPlaying(true)}
               onPause={() => setPlayerPlaying(false)}
               onEnded={() => playerOnEnded()}

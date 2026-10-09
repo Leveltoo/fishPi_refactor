@@ -5,13 +5,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit, listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
 import { sanitizeHttpUrl } from "../../lib/markdown";
-import { openImWithUser } from "../../lib/nav";
+import { OPEN_IM_EVENT } from "../../lib/nav";
 import { invokeAuthMe } from "../../lib/tauri";
 import { REDPACKET_SEND_EVENT } from "../redpacket/events";
 import {
@@ -44,10 +44,12 @@ export function UserCardPage() {
   const [userName, setUserName] = useState(initialUser);
   const [outcome, setOutcome] = useState<ProfileOutcome | null>(null);
   const [selfName, setSelfName] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
   const rootRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setSelfName(null);
     void invokeAuthMe()
       .then((me) => {
         if (cancelled) {
@@ -67,7 +69,7 @@ export function UserCardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [userName, refresh]);
 
   useEffect(() => {
     if (!userName) {
@@ -84,13 +86,14 @@ export function UserCardPage() {
     return () => {
       cancelled = true;
     };
-  }, [userName]);
+  }, [userName, refresh]);
 
   useEffect(() => {
     const unlisten = listen<{ userName?: string }>(USER_CARD_UPDATE_EVENT, (event) => {
       const next = event.payload?.userName?.trim();
       if (next) {
         setUserName(next);
+        setRefresh((value) => value + 1);
       }
     });
     function onKey(event: KeyboardEvent): void {
@@ -100,7 +103,7 @@ export function UserCardPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => {
-      void unlisten.then((fn) => fn());
+      void unlisten.then((fn) => fn()).catch(() => undefined);
       window.removeEventListener("keydown", onKey);
     };
   }, []);
@@ -123,12 +126,12 @@ export function UserCardPage() {
 
   async function requestLogout(): Promise<void> {
     handleClose();
-    await emit(REQUEST_LOGOUT_EVENT);
+    await emitTo("main", REQUEST_LOGOUT_EVENT);
   }
 
   async function requestExclusiveRedpacket(): Promise<void> {
     handleClose();
-    await emit(REDPACKET_SEND_EVENT, { user: account });
+    await emitTo("main", REDPACKET_SEND_EVENT, { user: account });
   }
 
   const profile = outcome?.status === "ok" ? outcome.profile : null;
@@ -138,7 +141,7 @@ export function UserCardPage() {
   const roleImg = profile?.role ? ROLE_IMG[profile.role] : undefined;
   const metals = (profile?.metals ?? []).filter((m) => m.enabled && m.icon);
   const isSelf = selfName != null && account.toLowerCase() === selfName.toLowerCase();
-  const canChat = account.length > 0 && !isSelf;
+  const canChat = selfName != null && account.length > 0 && !isSelf;
 
   return (
     <main
@@ -267,8 +270,8 @@ export function UserCardPage() {
                       variant="outline"
                       className="ucard-chat"
                       onClick={() => {
-                        openImWithUser(account);
-                        handleClose();
+                        void emitTo("main", OPEN_IM_EVENT, { userName: account })
+                          .then(handleClose);
                       }}
                     >
                       私聊

@@ -1,4 +1,4 @@
-/* 清风明月：碳黑码头 + 灯笼橙，只作用于本 feature。 */
+/* 清风明月沿用宿主皮肤令牌。 */
 
 .bm {
   --bm-paper: var(--color-bg, #161412);
@@ -72,16 +72,7 @@
   font-family: var(--font-display, "STKaiti", "KaiTi", serif);
   font-size: 1.05rem;
   font-weight: 650;
-  letter-spacing: 0.06em;
-}
-
-.bm-sdk-note {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 0.35rem 0.85rem;
-  font-size: 0.75rem;
-  color: var(--bm-muted);
-  border-bottom: 1px solid var(--bm-line);
+  letter-spacing: 0;
 }
 
 .bm-banner {
@@ -209,28 +200,6 @@
   word-break: break-word;
 }
 
-.bm-item-actions {
-  display: flex;
-  gap: 0.25rem;
-  margin-top: 0.3rem;
-}
-
-.bm-item-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  padding: 0.1rem 0.35rem;
-  border: 0;
-  background: transparent;
-  color: var(--bm-muted);
-  font-size: 0.72rem;
-}
-
-.bm-item-action:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .bm-md {
   font-size: 0.92rem;
   line-height: 1.55;
@@ -255,6 +224,11 @@
   max-width: min(100%, 22rem);
   height: auto;
   border-radius: 4px;
+}
+
+.bm-md iframe,
+.bm-md table {
+  max-width: 100%;
 }
 
 .bm-img-btn {
@@ -321,7 +295,7 @@
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.65rem 0.85rem 0.8rem;
-  border-top: 1px solid var(--bm-line);
+  border-bottom: 1px solid var(--bm-line);
   background: var(--color-bg-raised, #1f1c19);
 }
 

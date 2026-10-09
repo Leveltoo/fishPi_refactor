@@ -213,6 +213,23 @@
   font-weight: 650;
 }
 
+.activity-item-open {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.activity-item-open:hover,
+.activity-item-open:focus-visible {
+  color: var(--act-accent);
+  text-decoration: underline;
+}
+
 .activity-item-body {
   margin-top: 0.2rem;
   font-size: 0.78rem;

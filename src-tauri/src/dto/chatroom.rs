@@ -2,7 +2,7 @@
 //!
 //! 事件里的 `sessionGeneration` / `connectionGeneration` 由 Bridge 注入，不来自 SDK。
 //! `ConnectionEvent.status` 是 Bridge **已证实**的状态，不是 SDK `on_open` 直通；
-//! SDK 1.1.0 的 `ChatRoomConnection` 未公开 open/close/error，观测不到就标 [`ConnectionStatus::Unknown`]。
+//! SDK 1.1.1 的 `ChatRoomConnection` 未公开 open/close/error，观测不到就标 [`ConnectionStatus::Unknown`]。
 
 use fishpi_sdk::domain::chatroom::{ChatRoomEvent, ChatRoomMessageMode, OnlineInfo};
 use fishpi_sdk::domain::redpacket::RedPacketStatusMsg;
@@ -247,8 +247,8 @@ impl From<HistoryMode> for ChatRoomMessageMode {
 
 /// `chatroom_history` 查询。
 ///
-/// `page` 与 `aroundId` 互斥：有页码走 `history(page, Markdown)`，
-/// 有锚点走 `msg_around(id, mode, size, Markdown)`。优先 Markdown，不要默认 HTML。
+/// `page` 与 `aroundId` 互斥：有页码走 `history(page, Html)`，
+/// 有锚点走 `msg_around(id, mode, size, Html)`。DTO 同时保留服务端 HTML 与 md 原文。
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryQuery {

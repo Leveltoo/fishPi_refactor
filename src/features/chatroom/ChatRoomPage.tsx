@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Composer } from "./components/Composer";
+import { Pencil } from "lucide-react";
 import { jumpToMessage, MessageList } from "./components/MessageList";
 import { OnlineSidebar } from "./components/OnlineBar";
 import {
-  addEmojiUrl,
+  appendCloudEmoji,
   fetchChatroomRaw,
+  loadCloudEmoji,
   loadChatroomFilters,
   sendChatroomBarrager,
   type ChatroomFilters,
@@ -19,7 +21,9 @@ import { insertMentionToken, openPrivateChat } from "./userMenuActions";
 import { useChatroomSession } from "./useChatroomSession";
 import { CHAT_JUMP_EVENT, DISCUSS_PICK_EVENT, dispatchChatJump } from "./jumpEvents";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
 import { isOutcomeUnknown, toUserErrorMessage } from "./toUserError";
+import { cloudEmojiUrl } from "./cloudEmojiLogic";
 import "./chatroom.css";
 
 const EMPTY_FILTERS: ChatroomFilters = { shield: [], careUsers: [] };
@@ -38,23 +42,42 @@ export function ChatRoomPage() {
   const [topicError, setTopicError] = useState<string | null>(null);
   const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [discussed, setDiscussed] = useState<string | null>(null);
+  const addingCloudEmoji = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    void loadChatroomFilters()
-      .then((loaded) => {
-        if (!cancelled) {
+    let request = 0;
+    let stop: (() => void) | undefined;
+    async function reloadFilters(): Promise<void> {
+      const current = ++request;
+      try {
+        const loaded = await loadChatroomFilters();
+        if (!cancelled && current === request) {
           setFilters(loaded);
           setFiltersReady(true);
         }
-      })
-      .catch(() => {
-        if (!cancelled) {
+      } catch {
+        if (!cancelled && current === request) {
           setFiltersReady(false);
         }
-      });
+      }
+    }
+    void listen("desktop://config-imported", () => {
+      if (!cancelled) {
+        // Unmount the editor immediately so its old debounce cannot run while IPC reloads.
+        setFiltersReady(false);
+        void reloadFilters();
+      }
+    }).then((unlisten) => {
+      if (cancelled) unlisten();
+      else stop = unlisten;
+    }).catch((err: unknown) => {
+      if (!cancelled) toast.error(toUserErrorMessage(err));
+    });
+    void reloadFilters();
     return () => {
       cancelled = true;
+      stop?.();
     };
   }, []);
 
@@ -205,15 +228,16 @@ export function ChatRoomPage() {
         return;
       }
       void (async () => {
-        let body = message.md?.trim() || null;
+        let body = message.md || null;
         if ((body == null || body.length === 0) && /^\d+$/.test(message.id)) {
           try {
             const raw = await fetchChatroomRaw(message.id);
             if (raw.trim().length > 0) {
               body = raw;
             }
-          } catch {
-            // 回落本地正文。
+          } catch (err) {
+            toast.error(toUserErrorMessage(err));
+            return;
           }
         }
         if (body == null) {
@@ -234,13 +258,25 @@ export function ChatRoomPage() {
     setPendingToken(token);
   }, []);
   const onAddEmoji = useCallback((url: string) => {
-    void addEmojiUrl(url)
-      .then(() => {
-        toast.success("已同步到服务器表情");
-      })
-      .catch((err: unknown) => {
-        toast.error(toUserErrorMessage(err));
-      });
+    const safe = cloudEmojiUrl(url);
+    if (safe == null || addingCloudEmoji.current) return;
+    addingCloudEmoji.current = true;
+    void (async () => {
+      try {
+        const current = await loadCloudEmoji();
+        if (current.urls.includes(safe)) {
+          toast.info("表情已在收藏中");
+          return;
+        }
+        await appendCloudEmoji(current, [safe]);
+        toast.success("已加入收藏");
+      } catch (err) {
+        if (isOutcomeUnknown(err)) toast.warning("结果待确认，请打开收藏刷新查看，勿重复提交。");
+        else toast.error(toUserErrorMessage(err));
+      } finally {
+        addingCloudEmoji.current = false;
+      }
+    })();
   }, []);
 
   /** 清屏：清窗 + 重连 + 重载历史（对齐旧版 reload(true)）。 */
@@ -248,11 +284,11 @@ export function ChatRoomPage() {
     void session.rebuild();
   }
 
-  function toggleDiscussed(): void {
+  function pickDiscussed(): void {
     if (topicText.length === 0) {
       return;
     }
-    setDiscussed((prev) => (prev === topicText ? null : topicText));
+    setDiscussed(topicText);
   }
 
   /** 对齐旧版双击话题：立刻发送 `*\`# 话题 #\`*`，并清掉勾选。 */
@@ -260,8 +296,9 @@ export function ChatRoomPage() {
     if (topicText.length === 0 || session.sendDisabled) {
       return;
     }
-    void send(topicQuote(topicText));
-    setDiscussed(null);
+    void send(topicQuote(topicText)).then((accepted) => {
+      if (accepted) setDiscussed(null);
+    });
   }
 
   function openTopicEdit(): void {
@@ -337,6 +374,7 @@ export function ChatRoomPage() {
                   submitTopic();
                 }}
               >
+                <span className="chat-topic-cost">修改话题需要 16 积分</span>
                 <Input
                   className="chat-topic-input"
                   maxLength={TOPIC_MAX_LENGTH}
@@ -367,13 +405,13 @@ export function ChatRoomPage() {
                   title={
                     topicText.length > 0
                       ? discussedActive
-                        ? "单击取消勾选；双击立即发送话题"
+                        ? "单击跟随话题；双击立即发送话题"
                         : "单击勾选话题（发送时附加）；双击立即发送"
                       : "无话题"
                   }
                   aria-pressed={topicText.length > 0 ? discussedActive : undefined}
                   disabled={session.busy}
-                  onClick={toggleDiscussed}
+                  onClick={pickDiscussed}
                   onDoubleClick={sendDiscussedTopic}
                   style={
                     discussedActive
@@ -393,8 +431,10 @@ export function ChatRoomPage() {
                   variant="ghost"
                   disabled={session.busy}
                   onClick={openTopicEdit}
+                  title="编辑话题"
+                  aria-label="编辑话题"
                 >
-                  ✎
+                  <Pencil aria-hidden="true" />
                 </Button>
               </>
             )}
@@ -422,6 +462,7 @@ export function ChatRoomPage() {
         <OnlineSidebar
           onlineCount={session.onlineCount}
           users={session.users}
+          selfUserName={session.selfUserName}
           connectionStatus={session.connectionStatus}
           busy={session.busy}
           onRebuild={() => {

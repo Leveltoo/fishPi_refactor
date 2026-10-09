@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   lookupUserName,
@@ -8,6 +8,7 @@ import {
   type ShieldRule,
 } from "../chatroomApi";
 import { toUserErrorMessage } from "../toUserError";
+import { createFilterSaveGuard } from "../filterSync";
 
 type FilterPanelProps = {
   filters: ChatroomFilters;
@@ -30,30 +31,39 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
   const [careDraft, setCareDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const persistTimer = useRef(0);
+  const saveGuard = useRef(createFilterSaveGuard());
   const ready = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    saveGuard.current.invalidate();
+    setShield(filters.shield);
+    setCareUsers(filters.careUsers);
+    setCareDraft("");
+    setError(null);
+    setBusy(false);
     ready.current = true;
     return () => {
-      window.clearTimeout(persistTimer.current);
+      ready.current = false;
+      saveGuard.current.invalidate();
     };
-  }, []);
+  }, [filters]);
 
-  async function persist(next: ChatroomFilters): Promise<boolean> {
+  async function persist(next: ChatroomFilters, token: number): Promise<boolean> {
+    if (!ready.current || !saveGuard.current.isCurrent(token)) return false;
     setBusy(true);
     setError(null);
     try {
       const saved = await saveChatroomFilters(next);
+      if (!ready.current || !saveGuard.current.isCurrent(token)) return false;
       setShield(saved.shield);
       setCareUsers(saved.careUsers);
       onChange(saved);
       return true;
     } catch (err) {
-      setError(toUserErrorMessage(err));
+      if (ready.current && saveGuard.current.isCurrent(token)) setError(toUserErrorMessage(err));
       return false;
     } finally {
-      setBusy(false);
+      if (ready.current && saveGuard.current.isCurrent(token)) setBusy(false);
     }
   }
 
@@ -61,10 +71,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
     if (!ready.current) {
       return;
     }
-    window.clearTimeout(persistTimer.current);
-    persistTimer.current = window.setTimeout(() => {
-      void persist(next);
-    }, 400);
+    saveGuard.current.schedule((token) => { void persist(next, token); });
   }
 
   function updateShield(next: ShieldRule[]): void {
@@ -77,28 +84,30 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
     if (name.length === 0 || careUsers.includes(name) || busy) {
       return;
     }
+    saveGuard.current.invalidate();
+    const token = saveGuard.current.token();
     setBusy(true);
     setError(null);
     try {
       const found = await lookupUserName(name);
+      if (!ready.current || !saveGuard.current.isCurrent(token)) return;
       if (found !== name) {
         setError("用户名不存在");
         return;
       }
-      const saved = await persist({ shield, careUsers: [...careUsers, name] });
+      const saved = await persist({ shield, careUsers: [...careUsers, name] }, token);
       if (saved) {
         setCareDraft("");
       }
     } catch (err) {
-      setError(toUserErrorMessage(err));
+      if (ready.current && saveGuard.current.isCurrent(token)) setError(toUserErrorMessage(err));
     } finally {
-      setBusy(false);
+      if (ready.current && saveGuard.current.isCurrent(token)) setBusy(false);
     }
   }
 
   return (
     <div className="chat-filters">
-      <p className="chat-emoji-note">屏蔽和特别关心只存在本机，不会写入登录凭据。改完自动保存。也可在设置页编辑。</p>
       {error ? <p className="chat-emoji-note">{error}</p> : null}
       <ul className="chat-filter-list">
         {shield.map((rule, index) => (
@@ -106,6 +115,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
             <select
               className="chat-inline-input"
               value={rule.type}
+              disabled={busy}
               onChange={(event) => {
                 const type = event.target.value as ShieldKind;
                 updateShield(
@@ -127,6 +137,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
               <input
                 className="chat-inline-input"
                 value={rule.value}
+                disabled={busy}
                 placeholder={rule.type === "username" ? "用户名" : "正则"}
                 onChange={(event) => {
                   updateShield(
@@ -143,6 +154,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
               type="button"
               size="xs"
               variant="ghost"
+              disabled={busy}
               onClick={() => {
                 updateShield(shield.filter((_, itemIndex) => itemIndex !== index));
               }}
@@ -157,6 +169,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
           type="button"
           size="xs"
           variant="outline"
+          disabled={busy}
           onClick={() => updateShield([...shield, emptyRule()])}
         >
           加一条屏蔽
@@ -173,11 +186,13 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
             type="button"
             size="xs"
             variant="outline"
+            disabled={busy}
             onClick={() => {
+              saveGuard.current.invalidate();
               void persist({
                 shield,
                 careUsers: careUsers.filter((item) => item !== name),
-              });
+              }, saveGuard.current.token());
             }}
           >
             {name} ×

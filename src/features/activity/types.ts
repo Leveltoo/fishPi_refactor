@@ -65,6 +65,10 @@ export interface NoticeItemDto {
   author: string;
   time: string;
   hasRead: boolean;
+  url?: string;
+  dataId?: string;
+  dataType?: number;
+  deleted?: boolean;
 }
 
 export interface NoticeListResult {

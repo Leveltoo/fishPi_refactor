@@ -23,6 +23,7 @@ import type {
   OpenOutcome,
   OpenSession,
   RedPacketInfo,
+  RedPacketType,
 } from "./types";
 
 type OpenRedPacketDialogProps = {
@@ -48,8 +49,8 @@ export function OpenRedPacketDialog({
 }: OpenRedPacketDialogProps) {
   const data = outcome?.status === "ok" ? outcome.data : null;
   const needsGesture =
-    session.packetType === "rockPaperScissors" && selectedGesture === undefined;
-  const canClaim = Boolean(session.oId) && !loading && !needsGesture;
+    session.packetType === "rockPaperScissors" && !session.detailOnly && selectedGesture === undefined;
+  const canClaim = Boolean(session.oId) && !loading && !needsGesture && !outcome;
   const titleName = data?.info.userName || session.preview.userName || "红包";
 
   return (
@@ -83,11 +84,10 @@ export function OpenRedPacketDialog({
             </div>
           ) : null}
 
-          {!loading && !data && session.packetType === "rockPaperScissors" ? (
+          {!loading && !data && !outcome && session.packetType === "rockPaperScissors" && !session.detailOnly ? (
             <GesturePicker
               value={selectedGesture}
               onChange={onGestureChange}
-              caption="猜拳红包需先出手"
             />
           ) : null}
 
@@ -104,15 +104,12 @@ export function OpenRedPacketDialog({
             </Alert>
           ) : null}
 
-          {!loading && data ? <OpenResult data={data} selfUserName={selfUserName} /> : null}
+          {!loading && data ? <OpenResult data={data} selfUserName={selfUserName} packetType={session.packetType} /> : null}
 
-          {!loading && !data && !outcome && !needsGesture ? (
-            <p className="rp-hint">确认后领取。领取是写操作，失败后请勿连续点击。</p>
-          ) : null}
         </div>
 
         <DialogFooter className="rp-footer">
-          {data ? (
+          {data || outcome ? (
             <Button type="button" variant="outline" onClick={onClose}>
               关闭
             </Button>
@@ -134,13 +131,14 @@ function PacketMeta({
   session: OpenSession;
   data: RedPacketInfo | null;
 }) {
-  const gesture = data?.info.gesture ?? session.gesture;
+  const gesture = data?.info.gesture;
   const count = data?.info.count ?? session.preview.count;
   const got = data?.info.got ?? session.preview.got;
   const isRps =
     session.packetType === "rockPaperScissors" || gesture !== undefined;
 
   if (isRps) {
+    if (gesture === undefined) return null;
     return (
       <p className="rp-meta">
         {senderGestureText(data?.info.userName || session.preview.userName, gesture)}
@@ -164,11 +162,13 @@ function PacketMeta({
 function OpenResult({
   data,
   selfUserName,
+  packetType,
 }: {
   data: RedPacketInfo;
   selfUserName: string;
+  packetType?: RedPacketType;
 }) {
-  const headline = openHeadline(data, selfUserName);
+  const headline = openHeadline(data, selfUserName, packetType);
   const maxMoney = maxGotMoney(data.who);
 
   return (
@@ -179,7 +179,10 @@ function OpenResult({
       ) : (
         <ul className="rp-who">
           {data.who.map((item) => (
-            <li key={`${item.userId}-${item.userName}-${item.time}`}>
+            <li
+              key={`${item.userId}-${item.userName}-${item.time}`}
+              style={{ fontWeight: maxMoney === item.userMoney ? "bold" : "normal" }}
+            >
               <span className="rp-who-user">
                 <SenderFace name={item.userName} src={item.avatar} size="sm" />
                 <span>{item.userName}</span>

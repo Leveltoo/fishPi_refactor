@@ -40,6 +40,7 @@ export type ImportResult = {
   credentialSaved: boolean;
   settingsSaved: boolean;
   prefsSaved: boolean;
+  filtersSaved: boolean;
   message: string;
 };
 
@@ -49,6 +50,7 @@ export type WatchReport = {
 };
 
 export type ReconnectReport = {
+  sessionGeneration: number;
   attempted: boolean;
   relinked: boolean;
   message: string;
@@ -56,6 +58,15 @@ export type ReconnectReport = {
   chat: string;
   notice: string;
 };
+
+export function matchesDesktopSession(
+  generation: unknown,
+  current: { sessionGeneration: number; status: string },
+): boolean {
+  return current.status === "loggedIn" &&
+    typeof generation === "number" && Number.isSafeInteger(generation) &&
+    generation > 0 && generation === current.sessionGeneration;
+}
 
 export function commandError(error: unknown): string {
   return parseInvokeError(error).message;

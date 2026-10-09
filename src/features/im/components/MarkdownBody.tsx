@@ -1,12 +1,10 @@
-import type { MouseEvent } from "react";
+import { useMemo, type MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { ChatHtmlView, looksLikeHtml } from "../../chatroom/components/ChatHtmlView";
+import { looksLikeHtml } from "../../chatroom/components/ChatHtmlView";
 import { expandEmojiShortcodes, isDefaultEmojiSrc, isEmojiImage } from "../../chatroom/emojiShortcode";
-import { chatJumpIdFromHref } from "../../chatroom/components/MarkdownView";
-import { MusicCard } from "../../chatroom/components/MusicCard";
 import {
   dispatchPreviewImage,
   dispatchUserCard,
@@ -17,7 +15,8 @@ import {
   openSafeExternalUrl,
   sanitizeHttpUrl,
 } from "../../../lib/markdown";
-import { musicCardFromContent, stripNeteaseIframes } from "../musicEmbed";
+import { safeMusicHtml } from "../musicEmbed";
+import { privateJumpId } from "../threadState";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 
@@ -52,7 +51,7 @@ const ALLOWED_ELEMENTS = [
 
 const MARKDOWN_COMPONENTS: Components = {
   a({ href, children }) {
-    const safeHref = sanitizeHttpUrl(href);
+    const safeHref = privateJumpId(href) ? href : sanitizeHttpUrl(href);
     if (safeHref == null) {
       return <span>{children}</span>;
     }
@@ -122,7 +121,7 @@ function onMarkdownClick(
   event.preventDefault();
   event.stopPropagation();
   const href = anchor.getAttribute("href");
-  const jumpId = chatJumpIdFromHref(href);
+  const jumpId = privateJumpId(href);
   if (jumpId != null) {
     onJump?.(jumpId);
     return;
@@ -132,28 +131,19 @@ function onMarkdownClick(
     dispatchUserCard(userName);
     return;
   }
-  void openSafeExternalUrl(href);
-}
-
-function looksLikeMarkdown(text: string): boolean {
-  return (
-    /!\[[^\]]*\]\([^)]+\)/.test(text) ||
-    /\[[^\]]+\]\([^)]+\)/.test(text) ||
-    /:[a-zA-Z0-9_+-]+:/.test(text)
-  );
+  void openSafeExternalUrl(href).catch(() => undefined);
 }
 
 /**
- * 私聊正文：HTML 走净化渲染；Markdown 展开短码；网易云 iframe/链接转播放卡。
+ * 私聊正文：HTML 净化，保留网易云歌曲/专辑播放器；Markdown 展开短码。
  * 回复锚点走 onJump，不打开系统浏览器。
  */
 export function MarkdownBody({ source, onJump }: MarkdownBodyProps) {
-  const music = musicCardFromContent(source);
-  const remainder = music ? stripNeteaseIframes(source) : source;
-  const body =
-    remainder.length === 0 ? null : looksLikeHtml(remainder) ? (
-      <ChatHtmlView source={remainder} onJump={onJump} />
-    ) : looksLikeMarkdown(remainder) || remainder.includes(":") ? (
+  const html = useMemo(() => looksLikeHtml(source) ? safeMusicHtml(source) : null, [source]);
+  return html != null ? (
+      <div className="im-md im-html" onClick={(event) => onMarkdownClick(event, onJump)}
+        dangerouslySetInnerHTML={{ __html: html }} />
+    ) : (
       <div
         className="im-md"
         onClick={(event) => {
@@ -163,21 +153,12 @@ export function MarkdownBody({ source, onJump }: MarkdownBodyProps) {
         <ReactMarkdown
           unwrapDisallowed
           allowedElements={ALLOWED_ELEMENTS}
-          urlTransform={markdownUrlTransform}
+          urlTransform={(url) => privateJumpId(url) ? url : markdownUrlTransform(url)}
           remarkPlugins={REMARK_PLUGINS}
           components={MARKDOWN_COMPONENTS}
         >
-          {repairBrokenImageMarkdown(expandEmojiShortcodes(remainder))}
+          {repairBrokenImageMarkdown(expandEmojiShortcodes(source))}
         </ReactMarkdown>
       </div>
-    ) : (
-      <p className="im-msg-plain">{remainder}</p>
     );
-
-  return (
-    <>
-      {music ? <MusicCard card={music} fallback="网易云音乐" /> : null}
-      {body}
-    </>
-  );
 }

@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import { ArrowClockwiseIcon, ImageIcon, PaperPlaneTiltIcon, SmileyIcon, XIcon } from "@phosphor-icons/react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,12 +22,16 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { MentionList } from "@/features/overlay/MentionList";
 import { insertMention, readMention } from "@/features/overlay/mention";
 import { EmojiPanel } from "../../chatroom/components/EmojiPanel";
 import { DEFAULT_EMOJIS } from "../../chatroom/defaultEmojis";
 import { toMusicBox } from "../../chatroom/messageView";
-import { isUploadableMedia, uploadMediaToMarkdown } from "../../../lib/upload";
+import { isImageFile, uploadMediaToMarkdown } from "../../../lib/upload";
+import { htmlImageTokens, insertText } from "../composerText";
+import { toUserErrorMessage } from "../errors";
+import { copyText } from "../../chatroom/userMenuActions";
 import type { ReplyTarget } from "../types";
 
 export type ComposerProps = {
@@ -42,6 +47,9 @@ export type ComposerProps = {
   pendingToken?: string | null;
   onClearPendingToken?: () => void;
   onClear?: () => void;
+  confirmedContent?: string | null;
+  initialDraft?: string;
+  onDraftChange?: (draft: string) => void;
 };
 
 const IMAGE_URL_PATTERN =
@@ -59,18 +67,6 @@ type EmojiSuggestion = {
 
 function isBareImageUrl(text: string): boolean {
   return IMAGE_URL_PATTERN.test(text.trim());
-}
-
-function htmlImageTokens(html: string): string[] {
-  const matches = html.match(/src="([^"]+)"/g) ?? [];
-  const tokens: string[] = [];
-  for (const match of matches) {
-    const url = match.slice(5, -1).trim();
-    if (/^https?:\/\//i.test(url)) {
-      tokens.push(`![图片](${url})`);
-    }
-  }
-  return tokens;
 }
 
 function readStoredHeight(): number {
@@ -119,8 +115,11 @@ export function Composer({
   pendingToken = null,
   onClearPendingToken,
   onClear,
+  confirmedContent,
+  initialDraft = "",
+  onDraftChange,
 }: ComposerProps) {
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
   const [caret, setCaret] = useState(0);
   const [dismissedStart, setDismissedStart] = useState<number | null>(null);
   const [dismissedEmojiStart, setDismissedEmojiStart] = useState<number | null>(null);
@@ -133,6 +132,26 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const heightRef = useRef(msgHeight);
   const dragStartRef = useRef<{ y: number; height: number } | null>(null);
+  const draftRef = useRef(draft);
+  const mountedRef = useRef(true);
+  const submitBusyRef = useRef(false);
+  const uploadBusyRef = useRef(false);
+  const selectionRef = useRef({ start: 0, end: 0 });
+  draftRef.current = draft;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => { onDraftChange?.(draft); }, [draft, onDraftChange]);
+
+  useEffect(() => {
+    if (confirmedContent && toMusicBox(draftRef.current.trim()) === confirmedContent.trim()) {
+      setDraft("");
+      setCaret(0);
+    }
+  }, [confirmedContent]);
 
   const rawMention = disabled ? null : readMention(draft, caret);
   const mention =
@@ -185,22 +204,8 @@ export function Composer({
       return;
     }
     const token = `@${pendingMention} `;
-    setDraft((prev) => {
-      if (prev.length === 0 || prev.endsWith(" ") || prev.endsWith("\n")) {
-        return prev + token;
-      }
-      return `${prev} ${token}`;
-    });
+    insertAtCaret(token);
     onClearPendingMention?.();
-    requestAnimationFrame(() => {
-      const node = textareaRef.current;
-      if (node) {
-        node.focus();
-        const end = node.value.length;
-        node.setSelectionRange(end, end);
-        setCaret(end);
-      }
-    });
   }, [pendingMention, onClearPendingMention]);
 
   useEffect(() => {
@@ -286,15 +291,20 @@ export function Composer({
 
   async function submit(): Promise<void> {
     const base = draft.trim();
-    if (base.length === 0 || disabled || sending) {
+    if (base.length === 0 || disabled || sending || pendingConfirm ||
+        !sendAvailable || uploadBusyRef.current || submitBusyRef.current) {
       return;
     }
-    const accepted = await onSend(toMusicBox(base));
-    if (accepted) {
-      setDraft("");
-      setCaret(0);
-      setDismissedStart(null);
-      onClearQuote?.();
+    submitBusyRef.current = true;
+    try {
+      const accepted = await onSend(toMusicBox(base));
+      if (mountedRef.current && accepted && draftRef.current === draft) {
+        setDraft("");
+        setCaret(0);
+        setDismissedStart(null);
+      }
+    } finally {
+      submitBusyRef.current = false;
     }
   }
 
@@ -305,6 +315,31 @@ export function Composer({
 
   function syncCaret(node: HTMLTextAreaElement): void {
     setCaret(node.selectionStart ?? node.value.length);
+    selectionRef.current = { start: node.selectionStart, end: node.selectionEnd };
+  }
+
+  async function pasteFromMenu(): Promise<void> {
+    if (disabled) return;
+    try {
+      if (navigator.clipboard.read) {
+        const items = await navigator.clipboard.read();
+        const images: File[] = [];
+        for (const item of items) {
+          for (const type of item.types.filter((type) => type.startsWith("image/"))) {
+            images.push(new File([await item.getType(type)], "clipboard.png", { type }));
+          }
+        }
+        if (!mountedRef.current) return;
+        if (images.length) { await appendUploadedMarkdown(images); return; }
+      }
+      const text = await navigator.clipboard.readText();
+      if (!mountedRef.current) return;
+      const { start, end } = selectionRef.current;
+      textareaRef.current?.setSelectionRange(start, end);
+      insertAtCaret(text);
+    } catch {
+      if (mountedRef.current) setPasteHint("无法读取剪贴板");
+    }
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
@@ -421,61 +456,59 @@ export function Composer({
   }
 
   function insertToken(token: string): void {
-    setDraft((prev) => {
-      if (prev.length === 0 || prev.endsWith(" ") || prev.endsWith("\n")) {
-        return prev + token;
-      }
-      return `${prev} ${token}`;
-    });
-    requestAnimationFrame(() => {
-      const node = textareaRef.current;
-      if (node == null) {
-        return;
-      }
-      node.focus();
-      const end = node.value.length;
-      node.setSelectionRange(end, end);
-      setCaret(end);
-    });
+    insertAtCaret(token);
   }
 
   function insertAtCaret(text: string): void {
     const node = textareaRef.current;
-    if (node == null || node.value !== draft) {
-      setDraft((prev) => (prev.length === 0 ? text : `${prev}\n${text}`));
-      return;
-    }
-    const start = node.selectionStart ?? node.value.length;
-    const end = node.selectionEnd ?? start;
-    const next = node.value.slice(0, start) + text + node.value.slice(end);
-    setDraft(next);
+    const value = draftRef.current;
+    const start = node?.selectionStart ?? value.length;
+    const end = node?.selectionEnd ?? start;
+    const next = insertText(value, start, end, text);
+    setDraft(next.text);
+    draftRef.current = next.text;
     requestAnimationFrame(() => {
+      if (!mountedRef.current || !node) return;
       node.focus();
-      const pos = start + text.length;
-      node.setSelectionRange(pos, pos);
-      setCaret(pos);
+      node.setSelectionRange(next.caret, next.caret);
+      setCaret(next.caret);
     });
   }
 
   async function appendUploadedMarkdown(files: File[]): Promise<void> {
-    const media = files.filter(isUploadableMedia);
-    if (media.length === 0 || uploadBusy || disabled) {
+    const media = files.filter(isImageFile);
+    if (media.length === 0 || uploadBusyRef.current || disabled) {
       return;
     }
+    const original = draftRef.current;
+    const start = textareaRef.current?.selectionStart ?? original.length;
+    const end = textareaRef.current?.selectionEnd ?? start;
+    uploadBusyRef.current = true;
     setUploadBusy(true);
     setPasteHint("上传中…");
     try {
       const markdown = await uploadMediaToMarkdown(media);
+      if (!mountedRef.current) return;
       if (markdown.length > 0) {
-        insertAtCaret(markdown);
-        setPasteHint("已上传并插入图片链接，发送后才发出");
+        if (draftRef.current === original) {
+          const next = insertText(original, start, end, markdown);
+          setDraft(next.text);
+          draftRef.current = next.text;
+          setCaret(next.caret);
+          requestAnimationFrame(() => {
+            textareaRef.current?.focus();
+            textareaRef.current?.setSelectionRange(next.caret, next.caret);
+          });
+        } else insertAtCaret(markdown);
+        setPasteHint(null);
       } else {
         setPasteHint("没有可上传的图片");
       }
     } catch (err) {
-      setPasteHint(err instanceof Error ? err.message : "上传失败");
+      if (mountedRef.current) setPasteHint(toUserErrorMessage(err));
     } finally {
-      setUploadBusy(false);
+      uploadBusyRef.current = false;
+      if (mountedRef.current) setUploadBusy(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -489,7 +522,7 @@ export function Composer({
     }
 
     const files = Array.from(clipboard.files ?? []);
-    const hasImageFile = files.some(isUploadableMedia);
+    const hasImageFile = files.some(isImageFile);
     if (hasImageFile) {
       event.preventDefault();
       void appendUploadedMarkdown(files);
@@ -502,8 +535,7 @@ export function Composer({
       const tokens = htmlImageTokens(html);
       if (tokens.length > 0) {
         event.preventDefault();
-        const text = [plain.trim(), ...tokens].filter(Boolean).join("\n");
-        insertAtCaret(text);
+        insertAtCaret(tokens.join("\n"));
         setPasteHint(null);
         return;
       }
@@ -523,16 +555,16 @@ export function Composer({
   }
 
   const placeholder = !sendAvailable
-    ? "发送接口尚未接入，不会伪装发出"
+    ? "暂时无法发送"
     : disabled
       ? "当前无法发送"
-      : "输入消息，Enter 发送，Ctrl+Enter 换行";
+      : "简单聊聊";
 
   return (
     <form className={`im-composer${resizing ? " is-resizing" : ""}`} onSubmit={onSubmit}>
       {pendingConfirm ? (
         <p className="im-pending" role="status">
-          结果待确认。请求已发出，但未能确认服务端是否落成。请等待真实回显，不要重复发送。
+          发送结果待确认
         </p>
       ) : null}
       {quote != null ? (
@@ -548,7 +580,7 @@ export function Composer({
               aria-label="取消引用"
               onClick={onClearQuote}
             >
-              ×
+              <XIcon aria-hidden="true" size={14} />
             </button>
           ) : null}
         </div>
@@ -556,8 +588,8 @@ export function Composer({
       <div className="im-composer-toolbar">
         <Popover>
           <PopoverTrigger asChild>
-            <Button type="button" variant="ghost" size="xs" disabled={disabled}>
-              表情
+            <Button type="button" variant="ghost" size="icon-sm" title="发表情" aria-label="发表情" disabled={disabled}>
+              <SmileyIcon />
             </Button>
           </PopoverTrigger>
           <PopoverContent align="start" className="chat-emoji-popover">
@@ -565,23 +597,25 @@ export function Composer({
           </PopoverContent>
         </Popover>
         {onClear ? (
-          <Button type="button" variant="ghost" size="xs" onClick={onClear}>
-            清屏
+          <Button type="button" variant="ghost" size="icon-sm" title="消息清屏" aria-label="消息清屏" onClick={onClear}>
+            <ArrowClockwiseIcon />
           </Button>
         ) : null}
         <Button
           type="button"
           variant="ghost"
-          size="xs"
+          size="icon-sm"
+          title="上传图片"
+          aria-label="上传图片"
           disabled={disabled || uploadBusy}
           onClick={() => fileInputRef.current?.click()}
         >
-          {uploadBusy ? "上传中" : "图片"}
+          {uploadBusy ? <Spinner /> : <ImageIcon />}
         </Button>
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*"
           multiple
           className="visually-hidden"
           aria-hidden="true"
@@ -600,9 +634,20 @@ export function Composer({
       <div
         className="im-composer-resize"
         role="separator"
+        tabIndex={0}
         aria-orientation="horizontal"
+        aria-valuenow={msgHeight}
+        aria-valuemin={HEIGHT_MIN}
+        aria-valuemax={HEIGHT_MAX}
         aria-label="调整输入框高度"
         title="拖拽调整输入框高度"
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+          event.preventDefault();
+          const next = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, msgHeight + (event.key === "ArrowUp" ? 8 : -8)));
+          setMsgHeight(next);
+          localStorage.setItem("message-height", String(next));
+        }}
         onMouseDown={(event) => {
           event.preventDefault();
           beginResize(event.clientY);
@@ -646,7 +691,9 @@ export function Composer({
               })}
             </ul>
           ) : null}
-          <InputGroupTextarea
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <InputGroupTextarea
             id="im-input"
             ref={textareaRef}
             rows={3}
@@ -668,22 +715,30 @@ export function Composer({
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
+            onContextMenu={(event) => syncCaret(event.currentTarget)}
             aria-label="私聊内容"
             aria-expanded={mention != null || emojiComplete != null}
             aria-autocomplete="list"
           />
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem onSelect={() => {
+                const { start, end } = selectionRef.current;
+                void copyText(draftRef.current.slice(start, end));
+              }}>复制</ContextMenuItem>
+              <ContextMenuItem disabled={disabled} onSelect={() => { void pasteFromMenu(); }}>粘贴</ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         </div>
         <InputGroupAddon align="block-end" className="im-composer-addon">
-          <p className="im-composer-hint">
-            发送成功只表示已接受，不会立刻插入本地气泡。
-          </p>
           <InputGroupButton
             type="submit"
             size="sm"
-            disabled={disabled || sending || draft.trim().length === 0}
+            aria-label="发送"
+            title="发送"
+            disabled={disabled || sending || pendingConfirm || uploadBusy || !sendAvailable || draft.trim().length === 0}
           >
-            {sending ? <Spinner /> : null}
-            {sending ? "发送中" : "发送"}
+            {sending ? <Spinner /> : <PaperPlaneTiltIcon />}
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>

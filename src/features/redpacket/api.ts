@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AuthMe, SendResult } from "../../lib/types";
 
 import { DEFAULT_BLESSING } from "./constants";
 import {
@@ -15,15 +16,17 @@ import type {
   SendOutcome,
   SendRedPacketRequest,
 } from "./types";
+import { validateSendForm } from "./sendForm";
+import { parseGesture } from "./events";
 
 /**
  * 本 feature 内封装的 invoke 名。
- * 开红包走 `redpacket_open`；发红包走已有 `chatroom_send`，载荷与 SDK `redpacket().send()` 相同。
+ * 开包和发送均走红包 command，写操作不重试。
  * command 未注册时返回 unavailable，不假装领取成功。
  */
 export const REDPACKET_COMMAND = {
   open: "redpacket_open",
-  sendViaChatroom: "chatroom_send",
+  send: "redpacket_send",
   me: "auth_me",
 } as const;
 
@@ -37,21 +40,38 @@ const SEND_PENDING = "结果待确认。请稍后在聊天室核对，请勿重�
 export async function openRedPacket(
   request: OpenRedPacketRequest,
 ): Promise<OpenOutcome> {
+  if (!/^\d+$/.test(request.oId) ||
+    (request.gesture !== undefined && parseGesture(request.gesture) === undefined)) {
+    return { status: "error", message: "红包 ID 或猜拳手势无效" };
+  }
+  let submitted = false;
   try {
-    const payload = await invoke<unknown>(REDPACKET_COMMAND.open, { request });
+    const before = await requireSelfSession();
+    submitted = true;
+    const payload = await invoke<unknown>(REDPACKET_COMMAND.open, {
+      request: { ...request, expectedSessionGeneration: before.sessionGeneration },
+    });
     const data = parseOpenPayload(payload);
     if (!data) {
       return {
-        status: "error",
+        status: "outcome_unknown",
         message: "开红包返回无法识别，请稍后在聊天室核对。",
       };
     }
-    return { status: "ok", data };
+    const after = await requireSelfSession();
+    if (before.sessionGeneration !== data.sessionGeneration ||
+      before.sessionGeneration !== after.sessionGeneration) {
+      return { status: "outcome_unknown", message: SEND_PENDING };
+    }
+    return { status: "ok", data, selfUserName: after.user!.userName };
   } catch (error) {
     if (isCommandUnavailable(error)) {
       return { status: "unavailable", message: OPEN_UNAVAILABLE };
     }
     if (isOutcomeUnknown(error)) {
+      return { status: "outcome_unknown", message: SEND_PENDING };
+    }
+    if (submitted && isSessionReadError(error)) {
       return { status: "outcome_unknown", message: SEND_PENDING };
     }
     return { status: "error", message: toUserFacingMessage(error) };
@@ -61,22 +81,41 @@ export async function openRedPacket(
 export async function sendRedPacket(
   request: SendRedPacketRequest,
 ): Promise<SendOutcome> {
-  const content = encodeRedPacketMessage(request);
+  const validated = validateSendForm({
+    type: request.type,
+    money: String(request.money),
+    count: String(request.count),
+    message: request.msg,
+    receivers: request.recivers,
+    receiverDraft: "",
+    gesture: request.gesture ?? 0,
+  });
+  if (!validated.ok || (request.type === "rockPaperScissors" && request.gesture === undefined)) {
+    return { status: "error", message: validated.ok ? "请先选择猜拳手势" :
+      Object.values(validated.errors)[0] ?? "红包参数无效" };
+  }
+  let submitted = false;
   try {
-    const result = await invoke<{
-      accepted?: boolean;
-      outcomeUnknown?: boolean;
-    }>(REDPACKET_COMMAND.sendViaChatroom, { request: { content } });
+    const before = await requireSelfSession();
+    submitted = true;
+    const result = await invoke<SendResult>(REDPACKET_COMMAND.send, {
+      request: { ...validated.request, expectedSessionGeneration: before.sessionGeneration },
+    });
 
     if (result?.outcomeUnknown) {
       return { status: "outcome_unknown", message: SEND_PENDING };
     }
-    if (result?.accepted) {
+    if (result?.accepted === true) {
+      const after = await requireSelfSession();
+      if (before.sessionGeneration !== result.sessionGeneration ||
+        before.sessionGeneration !== after.sessionGeneration) {
+        return { status: "outcome_unknown", message: SEND_PENDING };
+      }
       return { status: "accepted", message: SEND_ACCEPTED };
     }
     return {
-      status: "error",
-      message: "发红包未被接受，请稍后重试，不要连续点击。",
+      status: "outcome_unknown",
+      message: SEND_PENDING,
     };
   } catch (error) {
     if (isCommandUnavailable(error)) {
@@ -85,20 +124,36 @@ export async function sendRedPacket(
     if (isOutcomeUnknown(error)) {
       return { status: "outcome_unknown", message: SEND_PENDING };
     }
+    if (submitted && isSessionReadError(error)) {
+      return { status: "outcome_unknown", message: SEND_PENDING };
+    }
     return { status: "error", message: toUserFacingMessage(error) };
   }
 }
 
-export async function readSelfUserName(): Promise<string> {
+export async function readSelfSession(): Promise<AuthMe | null> {
   try {
-    const me = await invoke<{ user?: { userName?: string } }>(
-      REDPACKET_COMMAND.me,
-    );
-    const name = me?.user?.userName;
-    return typeof name === "string" ? name.trim() : "";
+    return await requireSelfSession();
   } catch {
-    return "";
+    return null;
   }
+}
+
+async function requireSelfSession(): Promise<AuthMe> {
+  let me: AuthMe;
+  try {
+    me = await invoke<AuthMe>(REDPACKET_COMMAND.me);
+  } catch {
+    throw { code: "unauthorized", message: "登录状态无法确认", sessionRead: true };
+  }
+  if (me.status !== "loggedIn" || !me.user?.userName || me.sessionGeneration <= 0) {
+    throw { code: "unauthorized", message: "请先登录", sessionRead: true };
+  }
+  return me;
+}
+
+function isSessionReadError(error: unknown): boolean {
+  return asRecord(error)?.sessionRead === true;
 }
 
 export function encodeRedPacketMessage(request: SendRedPacketRequest): string {
@@ -115,15 +170,28 @@ export function encodeRedPacketMessage(request: SendRedPacketRequest): string {
   return `[redpacket]${JSON.stringify(body)}[/redpacket]`;
 }
 
-function parseOpenPayload(payload: unknown): RedPacketInfo | null {
+export function parseOpenPayload(payload: unknown): RedPacketInfo | null {
   const record = asRecord(payload);
   if (!record) {
     return null;
   }
-  const infoSource = asRecord(record.info) ?? record;
+  const infoSource = asRecord(record.info);
+  if (!infoSource || !isNonnegativeInteger(infoSource.count) ||
+    !isNonnegativeInteger(infoSource.got) ||
+    !isNonnegativeInteger(record.sessionGeneration) || record.sessionGeneration === 0 ||
+    !Array.isArray(record.who) ||
+    record.who.some((item) => {
+      const entry = asRecord(item);
+      return !entry || !readString(entry.userName) ||
+        !Number.isSafeInteger(entry.userMoney) ||
+        Number(entry.userMoney) < -0x8000_0000 || Number(entry.userMoney) > 0x7fff_ffff;
+    })) {
+    return null;
+  }
   const count = readNumber(infoSource.count);
   const got = readNumber(infoSource.got);
   return {
+    sessionGeneration: Number(record.sessionGeneration),
     info: {
       count,
       got,
@@ -144,6 +212,10 @@ function parseOpenPayload(payload: unknown): RedPacketInfo | null {
     ].filter((name, index, list) => list.indexOf(name) === index),
     who: readWhoList(record.who),
   };
+}
+
+function isNonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function readWhoList(value: unknown): RedPacketGot[] {

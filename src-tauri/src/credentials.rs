@@ -63,3 +63,34 @@ fn credential_entry() -> Result<Entry, AppError> {
     Entry::new(SERVICE, ACCOUNT_API_KEY)
         .map_err(|_| AppError::credential_storage("无法访问系统凭据存储"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "uses a dedicated native credential entry on the current desktop"]
+    fn native_store_survives_recreated_entry() {
+        let service = format!("com.leveltoo.fishpi-desktop.test.{}", std::process::id());
+        let first = Entry::new(&service, "synthetic").unwrap();
+        assert!(first
+            .get_credential()
+            .downcast_ref::<keyring::mock::MockCredential>()
+            .is_none());
+        struct Cleanup(Entry);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = self.0.delete_credential();
+            }
+        }
+        let cleanup = Cleanup(first);
+        cleanup.0.set_password("synthetic-test-value").unwrap();
+        let recreated = Entry::new(&service, "synthetic").unwrap();
+        assert_eq!(recreated.get_password().unwrap(), "synthetic-test-value");
+        recreated.delete_credential().unwrap();
+        assert!(matches!(
+            cleanup.0.get_password(),
+            Err(keyring::Error::NoEntry)
+        ));
+    }
+}

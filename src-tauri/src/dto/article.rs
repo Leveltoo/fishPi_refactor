@@ -5,7 +5,9 @@ use fishpi_sdk::domain::article::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::text::{html_to_text, keep_renderable, markdown_or_none, nonempty_text, split_rich_body};
+use crate::text::{
+    html_to_text, keep_renderable, markdown_or_none, nonempty_text, split_rich_body,
+};
 
 /// `article_list` 查询。`type` 为 recent/hot/good/reply/long/perfect。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -66,6 +68,8 @@ pub struct ArticleSummaryDto {
     pub comment_count: u64,
     pub good_count: u64,
     pub view_count: u64,
+    #[serde(default)]
+    pub view_count_display: String,
     pub perfect: bool,
 }
 
@@ -89,6 +93,7 @@ impl From<ArticleDetail> for ArticleSummaryDto {
             comment_count: item.comment_count,
             good_count: item.good_count,
             view_count: item.view_count,
+            view_count_display: item.view_count_format,
             perfect: item.perfect,
         }
     }
@@ -103,7 +108,7 @@ pub struct ArticleDetailQuery {
     pub page: Option<u32>,
 }
 
-/// 详情。`md` 优先 Markdown 原文；没有则只给剥过的 `text`。
+/// 详情。Markdown 原文优先，否则保留 HTML，由 WebView 净化渲染。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleDetailResult {
@@ -120,6 +125,9 @@ pub struct ArticleDetailDto {
     pub author_avatar_url: String,
     pub avatar_url: String,
     pub time: String,
+    pub created_time: String,
+    pub updated_time: String,
+    pub updated: bool,
     pub tags: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub md: Option<String>,
@@ -193,6 +201,9 @@ impl ArticleDetailDto {
             author_avatar_url: detail.thumbnail_url48.clone(),
             avatar_url: detail.thumbnail_url48,
             time,
+            created_time: detail.create_time_str.clone(),
+            updated_time: detail.update_time_str.clone(),
+            updated: !detail.update_time.is_empty() && detail.update_time != detail.create_time,
             tags: detail.tags,
             md: md.clone(),
             markdown: md,
@@ -348,11 +359,12 @@ impl ArticleCommentDto {
             }
         }
         let article_id = json_string(rec, &["commentOnArticleId", "articleId"]).unwrap_or_default();
-        if !article_id.is_empty() && article_id != expected_article_id {
+        if article_id != expected_article_id {
             return None;
         }
         let id = json_string(rec, &["oId", "id", "commentId"])?;
-        let user_name = json_string(rec, &["commentAuthorName", "userName", "author"]).unwrap_or_default();
+        let user_name =
+            json_string(rec, &["commentAuthorName", "userName", "author"]).unwrap_or_default();
         let avatar = json_string(
             rec,
             &[
@@ -549,6 +561,7 @@ pub struct ArticleHeatCloseRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ArticleHeatEvent {
     pub session_generation: u64,
+    pub watch_generation: u64,
     pub article_id: String,
     pub delta: i32,
 }
@@ -558,6 +571,7 @@ pub struct ArticleHeatEvent {
 #[serde(rename_all = "camelCase")]
 pub struct ArticleCommentEvent {
     pub session_generation: u64,
+    pub watch_generation: u64,
     pub article_id: String,
     pub comment: ArticleCommentDto,
 }
@@ -658,6 +672,7 @@ mod tests {
             comment_count: 2,
             good_count: 1,
             view_count: 10,
+            view_count_display: "10".into(),
             perfect: false,
         };
         let value = serde_json::to_value(&dto).expect("serialize");
@@ -709,5 +724,29 @@ mod tests {
             "a1"
         )
         .is_none());
+        assert!(ArticleCommentDto::try_from_channel(
+            &serde_json::json!({"oId": "not-a-comment", "content": "ignored"}),
+            "a1"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn sdk_detail_keeps_dates_and_never_serializes_unpaid_reward() {
+        let mut detail = ArticleDetail::default();
+        detail.id = "a1".into();
+        detail.content = "<p>body</p>".into();
+        detail.reward_content = "<p>secret</p>".into();
+        detail.create_time = "1".into();
+        detail.update_time = "2".into();
+        detail.create_time_str = "created".into();
+        detail.update_time_str = "updated".into();
+        let dto = ArticleDetailDto::from_sdk(detail);
+        assert!(dto.updated);
+        assert_eq!(dto.created_time, "created");
+        assert_eq!(dto.html.as_deref(), Some("<p>body</p>"));
+        let json = serde_json::to_value(dto).expect("serialize");
+        assert!(json.get("rewardContent").is_none());
+        assert!(!json.to_string().contains("secret"));
     }
 }

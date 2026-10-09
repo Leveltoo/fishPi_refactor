@@ -59,6 +59,8 @@ pub struct UserProfileDto {
     pub follower: i32,
     pub card_bg: String,
     pub metals: Vec<MetalDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mbti: Option<String>,
 }
 
 /// 名片佩戴勋章（仅公开展示字段）。
@@ -95,6 +97,7 @@ impl From<&UserInfo> for UserProfileDto {
                     enabled: m.enabled,
                 })
                 .collect(),
+            mbti: None,
         }
     }
 }

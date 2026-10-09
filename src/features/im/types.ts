@@ -62,6 +62,7 @@ export interface PrivateMessageDto {
   md?: string;
   text?: string;
   userName: string;
+  receiverUserName?: string;
   userNickname?: string;
   userAvatarUrl: string;
   time: string;
@@ -79,6 +80,7 @@ export interface ChatHistoryQuery {
   userName: string;
   page?: number;
   size?: number;
+  sessionGeneration?: number;
 }
 
 export interface ChatHistoryResult {
@@ -90,20 +92,26 @@ export interface ChatHistoryResult {
 export interface ChatSendRequest {
   userName: string;
   content: string;
+  sessionGeneration?: number;
+  connectionGeneration?: number;
 }
 
 /** `chat_revoke` 入参。消息 ID 用字符串。 */
 export interface ChatRevokeRequest {
   id: string;
+  sessionGeneration?: number;
 }
 
 export interface ChatUserRequest {
   userName: string;
+  sessionGeneration?: number;
 }
 
 /** `userName` 缺省表示全局通知频道（SDK `chat().connect(None)`）。 */
 export interface ChatConnectRequest {
   userName?: string;
+  sessionGeneration?: number;
+  connectionGeneration?: number;
 }
 
 export interface ChatConnectResult {
@@ -134,6 +142,7 @@ export interface ChatMessageEvent {
 
 export interface ChatNoticeEvent {
   sessionGeneration: number;
+  connectionGeneration?: number;
   command: string;
   count?: number;
   senderUserName?: string;
@@ -143,6 +152,7 @@ export interface ChatNoticeEvent {
 
 export interface ChatRevokeEvent {
   sessionGeneration: number;
+  connectionGeneration?: number;
   messageId: string;
   userName?: string;
 }

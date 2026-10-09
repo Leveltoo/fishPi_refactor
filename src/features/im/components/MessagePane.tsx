@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { ArrowClockwiseIcon } from "@phosphor-icons/react";
+import { userCardProps } from "../../usercard/hover";
 
 import { Button } from "@/components/ui/button";
 
@@ -18,6 +20,7 @@ type MessagePaneProps = {
   hasMore: boolean;
   sending: boolean;
   pendingConfirm: boolean;
+  confirmedContent?: string | null;
   sendAvailable: boolean;
   quote?: ReplyTarget | null;
   onQuote?: (message: PrivateMessageDto) => void;
@@ -42,6 +45,7 @@ export function MessagePane({
   hasMore,
   sending,
   pendingConfirm,
+  confirmedContent,
   sendAvailable,
   quote,
   onQuote,
@@ -55,11 +59,13 @@ export function MessagePane({
   onRevoke,
 }: MessagePaneProps) {
   const [pendingToken, setPendingToken] = useState<string | null>(null);
+  const draftsRef = useRef(new Map<string, string>());
+  const clearToken = useCallback(() => setPendingToken(null), []);
 
   if (!peerUserName) {
     return (
       <section className="im-pane im-pane-idle" aria-label="私聊内容">
-        <p className="im-pane-idle-copy">选择左侧会话，或开始新的私聊</p>
+        <p className="im-pane-idle-copy">私聊</p>
       </section>
     );
   }
@@ -70,7 +76,9 @@ export function MessagePane({
   return (
     <section className="im-pane" aria-label={`与 ${title} 的私聊`}>
       <header className="im-pane-head">
-        <PeerAvatar name={peerUserName} src={peerAvatarUrl} />
+        <span {...userCardProps(peerUserName)}>
+          <PeerAvatar name={peerUserName} src={peerAvatarUrl} />
+        </span>
         <div className="im-pane-who">
           <h2 className="im-pane-name">{title}</h2>
           <p className="im-pane-sub">
@@ -81,16 +89,18 @@ export function MessagePane({
           <Button
             type="button"
             variant="ghost"
-            size="sm"
+            size="icon-sm"
             className="im-clear-thread"
             title="清屏并重新加载消息"
+            aria-label="消息清屏"
             onClick={onClear}
           >
-            清屏
+            <ArrowClockwiseIcon />
           </Button>
         ) : null}
       </header>
       <MessageThread
+        key={`thread:${peerUserName}`}
         peerUserName={peerUserName}
         messages={messages}
         selfUserName={selfUserName}
@@ -104,16 +114,20 @@ export function MessagePane({
         onInsertToken={setPendingToken}
       />
       <Composer
+        key={`composer:${peerUserName}`}
         disabled={sending || loading}
         sending={sending}
         pendingConfirm={pendingConfirm}
+        confirmedContent={confirmedContent}
+        initialDraft={draftsRef.current.get(peerUserName) ?? ""}
+        onDraftChange={(draft) => { draftsRef.current.set(peerUserName, draft); }}
         sendAvailable={sendAvailable}
         quote={quote ?? null}
         onClearQuote={onClearQuote ?? (() => undefined)}
         pendingMention={pendingMention ?? null}
         onClearPendingMention={onClearPendingMention}
         pendingToken={pendingToken}
-        onClearPendingToken={() => setPendingToken(null)}
+        onClearPendingToken={clearToken}
         onClear={onClear}
         onSend={onSend}
       />

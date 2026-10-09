@@ -5,7 +5,7 @@
  * 依赖 src/lib/tauri.ts 的 invokeAuthLogin（前端类型化 API agent）。
  */
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Eye, EyeOff, Lock, Shield, User } from "lucide-react";
+import { Eye, EyeOff, Import, Lock, Shield, User } from "lucide-react";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
-import { desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
+import { commandError, configImport, desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
 import { invokeAuthLogin } from "../../lib/tauri";
 import type { AuthSession } from "../../lib/types";
 import { FishMark } from "../shell/FishMark";
@@ -30,12 +30,14 @@ export type LoginPageProps = {
   notice?: string;
   submittingFromGate?: boolean;
   onLoggedIn: (session: AuthSession) => void;
+  onRestoreSession: () => void;
 };
 
 export function LoginPage({
   notice,
   submittingFromGate = false,
   onLoggedIn,
+  onRestoreSession,
 }: LoginPageProps) {
   const formId = useId();
   const usernameId = `${formId}-username`;
@@ -52,6 +54,8 @@ export function LoginPage({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [registerHint, setRegisterHint] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importNotice, setImportNotice] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -67,7 +71,7 @@ export function LoginPage({
     };
   }, []);
 
-  const busy = submitting || submittingFromGate;
+  const busy = submitting || importing || submittingFromGate;
   const invalid = Boolean(error);
   const describedBy =
     [notice ? noticeId : null, error ? errorId : null].filter(Boolean).join(" ") ||
@@ -114,6 +118,24 @@ export function LoginPage({
       setRegisterHint(false);
     } catch {
       setRegisterHint(true);
+    }
+  }
+
+  async function handleImport() {
+    if (busy) return;
+    setImporting(true);
+    setError(null);
+    setImportNotice("");
+    try {
+      const result = await configImport();
+      const prefs = await desktopPrefsGet();
+      if (prefs.loginUsername) setUsername(prefs.loginUsername);
+      setImportNotice(result.message);
+      if (result.credentialSaved) onRestoreSession();
+    } catch (err) {
+      setError(commandError(err));
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -259,6 +281,21 @@ export function LoginPage({
             注册
           </Button>
         </div>
+
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={busy}
+          onClick={() => void handleImport()}
+        >
+          {importing ? <Spinner /> : <Import aria-hidden="true" />}
+          导入旧配置
+        </Button>
+        {importNotice ? (
+          <Alert className="login-alert login-alert--notice">
+            <AlertDescription>{importNotice}</AlertDescription>
+          </Alert>
+        ) : null}
 
         {registerHint ? (
           <Alert

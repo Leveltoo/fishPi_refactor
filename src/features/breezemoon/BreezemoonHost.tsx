@@ -13,17 +13,16 @@ type BreezemoonHostProps = {
 };
 
 /**
- * 清风明月宿主：时间线 + 底部输入。无必填 props。
+ * 清风明月宿主：顶部输入 + 时间线。无必填 props。
  * 发送成功只表示已接受，不本地 echo；命令缺失时不会伪装成功。
- * SDK 没有编辑 / 删除，按钮禁用且不会假装成功。
  */
 export function BreezemoonHost({ userName }: BreezemoonHostProps) {
   const moon = useBreezemoon({ userName });
   const bridgeMissing = !moon.loading && !moon.capabilities.list;
-  const sendDisabled = !moon.capabilities.send || moon.sending;
+  const sendDisabled = !moon.capabilities.send || moon.sending || moon.pendingConfirm;
 
   return (
-    <div className="bm dark" id="breezemoons">
+    <div className="bm" id="breezemoons">
       <header className="bm-head">
         <h1 className="bm-title">清风明月</h1>
         <Button
@@ -38,16 +37,12 @@ export function BreezemoonHost({ userName }: BreezemoonHostProps) {
           刷新
         </Button>
       </header>
-      <p className="bm-sdk-note">
-        编辑 / 删除不可用：当前 SDK 只有列表和发送，不会假装成功。
-      </p>
-
       {bridgeMissing ? (
         <Alert className="bm-banner">
           <WarningIcon />
           <AlertTitle>清风明月 Bridge 尚未接入</AlertTitle>
           <AlertDescription>
-            src-tauri 当前没有 breezemoon_list / breezemoon_send。界面可预览，发送不会伪装成功。
+            清风明月列表暂不可用。
           </AlertDescription>
         </Alert>
       ) : moon.error ? (
@@ -58,21 +53,20 @@ export function BreezemoonHost({ userName }: BreezemoonHostProps) {
         </Alert>
       ) : null}
 
-      <Timeline
-        items={moon.items}
-        loading={moon.loading}
-        loadingMore={moon.loadingMore}
-        hasMore={moon.hasMore}
-        selfUserName={moon.selfUserName}
-        onLoadMore={moon.loadMore}
-      />
-
       <Composer
         disabled={sendDisabled}
         sending={moon.sending}
         pendingConfirm={moon.pendingConfirm}
         sendAvailable={moon.capabilities.send}
         onSend={moon.send}
+      />
+      <Timeline
+        items={moon.items}
+        loading={moon.loading}
+        loadingMore={moon.loadingMore}
+        hasMore={moon.hasMore}
+        scrollReset={moon.scrollReset}
+        onLoadMore={moon.loadMore}
       />
     </div>
   );

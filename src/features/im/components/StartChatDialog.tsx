@@ -14,6 +14,7 @@ import {
 import { sanitizeHttpUrl } from "../../../lib/markdown";
 import { SEARCH_DEBOUNCE_MS } from "../constants";
 import { filterConversations } from "../conversation";
+import type { KeyboardEvent } from "react";
 import type { Conversation, UserSearchHit } from "../types";
 
 type StartChatDialogProps = {
@@ -87,11 +88,7 @@ export function StartChatDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="开始新私聊"
-      description={
-        searchAvailable
-          ? "搜索用户并开始私聊"
-          : "搜人暂不可用，仅可从已有会话过滤"
-      }
+      description="想和谁聊聊？"
       className="dark im-start-dialog"
     >
       <Command shouldFilter={false} className="im-start">
@@ -99,6 +96,13 @@ export function StartChatDialog({
           value={query}
           onValueChange={setQuery}
           placeholder="想和谁聊聊？"
+          onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing || !query.trim()) return;
+            if (hits.some((hit) => hit.userName.toLowerCase() === query.trim().toLowerCase())) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onPick({ userName: query.trim(), userAvatarUrl: "" });
+          }}
         />
         <CommandList>
           <CommandEmpty>
@@ -111,7 +115,7 @@ export function StartChatDialog({
           {hits.length > 0 ? (
             <CommandGroup
               heading={
-                remote.length > 0 ? "用户" : "已有会话（本地过滤）"
+                remote.length > 0 ? "用户" : "已有会话"
               }
             >
               {hits.map((user) => (

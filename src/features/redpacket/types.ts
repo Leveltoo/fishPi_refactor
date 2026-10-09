@@ -23,6 +23,7 @@ export type RedPacketGot = {
 };
 
 export type RedPacketInfo = {
+  sessionGeneration: number;
   info: {
     count: number;
     got: number;
@@ -58,6 +59,7 @@ export type OpenSession = {
   oId: string;
   gesture?: GestureIndex;
   packetType?: RedPacketType;
+  detailOnly?: boolean;
   preview: OpenPreview;
 };
 
@@ -79,7 +81,7 @@ export type SendSession = {
 };
 
 export type OpenOutcome =
-  | { status: "ok"; data: RedPacketInfo }
+  | { status: "ok"; data: RedPacketInfo; selfUserName: string }
   | { status: "unavailable"; message: string }
   | { status: "outcome_unknown"; message: string }
   | { status: "error"; message: string };

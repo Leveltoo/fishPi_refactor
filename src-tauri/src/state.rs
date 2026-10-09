@@ -9,7 +9,7 @@ use std::sync::{Mutex, MutexGuard};
 use fishpi_sdk::client::{ChatConnection, ChatRoomConnection, NoticeConnection};
 use fishpi_sdk::FishPi;
 
-use crate::dto::UserSummary;
+use crate::dto::{DiscussEvent, OnlineEvent, UserSummary};
 use crate::error::AppError;
 
 /// 进程内会话与连接状态。由 Tauri `manage` 注入 command，前端不能直接读取。
@@ -21,7 +21,10 @@ struct Inner {
     client: Option<FishPi>,
     session_generation: u64,
     chatroom: Option<ChatRoomConnection>,
+    reconnecting_chatroom: bool,
     connection_generation: u64,
+    chatroom_online: Option<OnlineEvent>,
+    chatroom_discuss: Option<DiscussEvent>,
     user: Option<UserSummary>,
     credential_saved: bool,
     /// 按对端用户名（小写）各持一条私聊连接。
@@ -45,6 +48,15 @@ struct ChatLink {
 struct NoticeLink {
     connection: NoticeConnection,
     generation: u64,
+}
+
+pub(crate) struct ReconnectingConnections {
+    pub session_generation: u64,
+    pub connection_generation: u64,
+    pub chatroom: Option<ChatRoomConnection>,
+    pub chats: Vec<(String, u64, ChatConnection)>,
+    pub global_chat: Option<(u64, ChatConnection)>,
+    pub notice: Option<(u64, NoticeConnection)>,
 }
 
 /// 克隆出的已鉴权客户端。拿到后必须立刻结束对 `AppState` 的借用再发请求。
@@ -126,7 +138,10 @@ impl AppState {
                 client: None,
                 session_generation: 0,
                 chatroom: None,
+                reconnecting_chatroom: false,
                 connection_generation: 0,
+                chatroom_online: None,
+                chatroom_discuss: None,
                 user: None,
                 credential_saved: false,
                 chats: HashMap::new(),
@@ -180,7 +195,49 @@ impl AppState {
 
     /// 是否已保存聊天室连接句柄。用于幂等 connect，检查本身不发起网络。
     pub fn has_chatroom_connection(&self) -> bool {
-        self.lock().chatroom.is_some()
+        let inner = self.lock();
+        inner.chatroom.is_some() || inner.reconnecting_chatroom
+    }
+
+    pub fn chatroom_is_reconnecting(&self) -> bool {
+        self.lock().reconnecting_chatroom
+    }
+
+    pub(crate) fn remember_chatroom_online(&self, event: &OnlineEvent) -> bool {
+        let mut inner = self.lock();
+        if inner.session_generation != event.session_generation
+            || inner.connection_generation != event.connection_generation
+        {
+            return false;
+        }
+        if let Some(topic) = &event.discussing {
+            inner.chatroom_discuss = Some(DiscussEvent::new(
+                event.session_generation,
+                event.connection_generation,
+                topic.clone(),
+            ));
+        }
+        inner.chatroom_online = Some(event.clone());
+        true
+    }
+
+    pub(crate) fn remember_chatroom_discuss(&self, event: &DiscussEvent) -> bool {
+        let mut inner = self.lock();
+        if inner.session_generation != event.session_generation
+            || inner.connection_generation != event.connection_generation
+        {
+            return false;
+        }
+        inner.chatroom_discuss = Some(event.clone());
+        true
+    }
+
+    pub(crate) fn chatroom_presence_snapshot(&self) -> (Option<OnlineEvent>, Option<DiscussEvent>) {
+        let inner = self.lock();
+        (
+            inner.chatroom_online.clone(),
+            inner.chatroom_discuss.clone(),
+        )
     }
 
     /// 指定用户是否已有私聊长连接。`user` 按大小写不敏感匹配。含尚未入库的 pending。
@@ -197,6 +254,30 @@ impl AppState {
     pub fn has_global_chat(&self) -> bool {
         let inner = self.lock();
         inner.global_chat.is_some() || inner.pending_global_chat.is_some()
+    }
+
+    pub fn live_user_chat_generation(
+        &self,
+        user: &str,
+        expected_session: u64,
+    ) -> Result<Option<u64>, AppError> {
+        let key = normalize_user(user);
+        let inner = self.lock();
+        if inner.session_generation != expected_session {
+            return Err(AppError::session_superseded());
+        }
+        Ok(inner.chats.get(&key).map(|link| link.generation))
+    }
+
+    pub fn live_global_chat_generation(
+        &self,
+        expected_session: u64,
+    ) -> Result<Option<u64>, AppError> {
+        let inner = self.lock();
+        if inner.session_generation != expected_session {
+            return Err(AppError::session_superseded());
+        }
+        Ok(inner.global_chat.as_ref().map(|link| link.generation))
     }
 
     /// 是否已有通知长连接。含 pending。
@@ -311,12 +392,11 @@ impl AppState {
     ///
     /// 若要先挂 `on_all` 再入库，请改用 [`Self::reserve_connection_generation`] +
     /// [`Self::install_chatroom_connection`]：先 bump 代次，监听才能对上，首包才不会被丢掉。
-    pub fn set_chatroom_connection(
-        &self,
-        connection: ChatRoomConnection,
-    ) -> ChatroomReplacement {
+    pub fn set_chatroom_connection(&self, connection: ChatRoomConnection) -> ChatroomReplacement {
         let mut inner = self.lock();
         inner.connection_generation = inner.connection_generation.saturating_add(1);
+        inner.chatroom_online = None;
+        inner.chatroom_discuss = None;
         let previous_chatroom = inner.chatroom.replace(connection);
         ChatroomReplacement {
             connection_generation: inner.connection_generation,
@@ -328,10 +408,23 @@ impl AppState {
     ///
     /// 转发回调用代次过滤。若等 `set_chatroom_connection` 才 bump，attach 到入库之间
     /// 的事件会因「事件代次 = current+1、状态代次仍是 current」被丢掉，首包窗口更大。
-    pub fn reserve_connection_generation(&self) -> u64 {
+    pub fn reserve_connection_generation(
+        &self,
+        expected_session: u64,
+        expected_connection: u64,
+    ) -> Result<u64, AppError> {
         let mut inner = self.lock();
+        if inner.session_generation != expected_session
+            || inner.connection_generation != expected_connection
+            || inner.chatroom.is_some()
+            || inner.reconnecting_chatroom
+        {
+            return Err(AppError::session_superseded());
+        }
         inner.connection_generation = inner.connection_generation.saturating_add(1);
-        inner.connection_generation
+        inner.chatroom_online = None;
+        inner.chatroom_discuss = None;
+        Ok(inner.connection_generation)
     }
 
     /// 把已注册监听的句柄放入 **reserve 得到的代次**，不再二次递增。
@@ -354,10 +447,80 @@ impl AppState {
     }
 
     /// 取出聊天室连接并作废连接代次。断开在锁外进行；无连接时仍递增代次以保证幂等失效。
-    pub fn take_chatroom_connection(&self) -> Option<ChatRoomConnection> {
+    pub fn take_chatroom_connection(
+        &self,
+        expected_session: Option<u64>,
+        expected_connection: Option<u64>,
+    ) -> Option<ChatRoomConnection> {
         let mut inner = self.lock();
+        if expected_session.is_some_and(|value| value != inner.session_generation)
+            || expected_connection.is_some_and(|value| value != inner.connection_generation)
+        {
+            return None;
+        }
         inner.connection_generation = inner.connection_generation.saturating_add(1);
+        inner.reconnecting_chatroom = false;
+        inner.chatroom_online = None;
+        inner.chatroom_discuss = None;
         inner.chatroom.take()
+    }
+
+    /// 保留回调代次，把可变句柄移到锁外重连；pending 阻止同时建立第二条连接。
+    pub(crate) fn take_for_reconnect(&self) -> ReconnectingConnections {
+        let mut inner = self.lock();
+        let chatroom = inner.chatroom.take();
+        if chatroom.is_some() {
+            inner.reconnecting_chatroom = true;
+        }
+        let chats: Vec<_> = inner
+            .chats
+            .drain()
+            .map(|(user, link)| (user, link.generation, link.connection))
+            .collect();
+        for (user, generation, _) in &chats {
+            inner.pending_chats.insert(user.clone(), *generation);
+        }
+        let global_chat = inner
+            .global_chat
+            .take()
+            .map(|link| (link.generation, link.connection));
+        if let Some((generation, _)) = global_chat.as_ref() {
+            inner.pending_global_chat = Some(*generation);
+        }
+        let notice = inner
+            .notice
+            .take()
+            .map(|link| (link.generation, link.connection));
+        if let Some((generation, _)) = notice.as_ref() {
+            inner.pending_notice = Some(*generation);
+        }
+        ReconnectingConnections {
+            session_generation: inner.session_generation,
+            connection_generation: inner.connection_generation,
+            chatroom,
+            chats,
+            global_chat,
+            notice,
+        }
+    }
+
+    pub(crate) fn restore_reconnected_chatroom(
+        &self,
+        session_generation: u64,
+        connection_generation: u64,
+        connection: ChatRoomConnection,
+    ) -> Result<(), ChatRoomConnection> {
+        let mut inner = self.lock();
+        if inner.session_generation != session_generation
+            || inner.connection_generation != connection_generation
+            || !inner.reconnecting_chatroom
+            || inner.chatroom.is_some()
+        {
+            return Err(connection);
+        }
+        inner.reconnecting_chatroom = false;
+        inner.chatroom = Some(connection);
+        Ok(())
     }
 
     /// 为即将建立的指定用户私聊占用代次，并记入 pending。
@@ -506,8 +669,7 @@ impl AppState {
     ) -> Result<u64, NoticeConnection> {
         let mut inner = self.lock();
         let pending_ok = inner.pending_notice == Some(expected_generation);
-        if inner.session_generation != expected_session || inner.notice.is_some() || !pending_ok
-        {
+        if inner.session_generation != expected_session || inner.notice.is_some() || !pending_ok {
             if inner.pending_notice == Some(expected_generation) {
                 inner.pending_notice = None;
             }
@@ -522,16 +684,45 @@ impl AppState {
     }
 
     /// 取出指定用户私聊连接。无连接时返回 `None`（幂等）。
-    pub fn take_user_chat(&self, user: &str) -> Option<ChatConnection> {
+    pub fn take_user_chat_checked(
+        &self,
+        user: &str,
+        expected_session: Option<u64>,
+        expected_connection: Option<u64>,
+    ) -> Option<ChatConnection> {
         let key = normalize_user(user);
         let mut inner = self.lock();
+        let generation = inner
+            .chats
+            .get(&key)
+            .map(|link| link.generation)
+            .or_else(|| inner.pending_chats.get(&key).copied());
+        if expected_session.is_some_and(|value| value != inner.session_generation)
+            || expected_connection.is_some_and(|value| Some(value) != generation)
+        {
+            return None;
+        }
         inner.pending_chats.remove(&key);
         inner.chats.remove(&key).map(|link| link.connection)
     }
 
     /// 取出全局 chat 连接。
-    pub fn take_global_chat(&self) -> Option<ChatConnection> {
+    pub fn take_global_chat_checked(
+        &self,
+        expected_session: Option<u64>,
+        expected_connection: Option<u64>,
+    ) -> Option<ChatConnection> {
         let mut inner = self.lock();
+        let generation = inner
+            .global_chat
+            .as_ref()
+            .map(|link| link.generation)
+            .or(inner.pending_global_chat);
+        if expected_session.is_some_and(|value| value != inner.session_generation)
+            || expected_connection.is_some_and(|value| Some(value) != generation)
+        {
+            return None;
+        }
         inner.pending_global_chat = None;
         inner.global_chat.take().map(|link| link.connection)
     }
@@ -547,13 +738,22 @@ impl AppState {
     ///
     /// `ChatConnection::send` 是同步入队，持锁期间不 `.await`。
     /// 外层 `Err` 是「没连接」；内层是 SDK 入队结果，由 command 映射 `accepted` / `outcomeUnknown`。
-    pub fn send_user_chat(
+    pub fn send_user_chat_checked(
         &self,
         user: &str,
         content: &str,
+        expected_session: u64,
+        expected_connection: Option<u64>,
     ) -> Result<Result<(), fishpi_sdk::utils::error::Error>, AppError> {
         let key = normalize_user(user);
         let inner = self.lock();
+        if inner.session_generation != expected_session
+            || expected_connection.is_some_and(|value| {
+                inner.chats.get(&key).map(|link| link.generation) != Some(value)
+            })
+        {
+            return Err(AppError::session_superseded());
+        }
         let Some(link) = inner.chats.get(&key) else {
             return Err(AppError::business(
                 "尚未连接该用户的私聊，请先打开会话后再发送",
@@ -585,6 +785,9 @@ fn normalize_user(user: &str) -> String {
 }
 
 fn take_live_connections(inner: &mut Inner) -> LiveConnections {
+    inner.reconnecting_chatroom = false;
+    inner.chatroom_online = None;
+    inner.chatroom_discuss = None;
     inner.pending_chats.clear();
     inner.pending_global_chat = None;
     inner.pending_notice = None;
@@ -617,5 +820,144 @@ fn replace_session_locked(
     SessionReplacement {
         session_generation: inner.session_generation,
         previous,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_channels_are_idempotent_and_logout_invalidates_them() {
+        let state = AppState::new();
+        let first = state.reserve_user_chat(" Alice ", 0).unwrap().unwrap();
+        assert_eq!(state.reserve_user_chat("alice", 0).unwrap(), None);
+        assert_eq!(state.user_chat_generation("ALICE"), Some(first));
+        let global = state.reserve_global_chat(0).unwrap().unwrap();
+        let notice = state.reserve_notice_connection(0).unwrap().unwrap();
+        let pending = state.take_for_reconnect();
+        assert_eq!(pending.session_generation, 0);
+        assert_eq!(state.global_chat_generation(), Some(global));
+        assert_eq!(state.notice_generation(), Some(notice));
+        state.invalidate_session();
+        assert!(!state.has_user_chat("alice"));
+        assert!(!state.has_global_chat());
+        assert!(!state.has_notice_connection());
+        assert!(!state.chatroom_is_reconnecting());
+        assert!(state.reserve_user_chat("alice", 0).is_err());
+    }
+
+    #[test]
+    fn cancellation_cannot_remove_a_newer_pending_connection() {
+        let state = AppState::new();
+        let old = state.reserve_user_chat("alice", 0).unwrap().unwrap();
+        state.take_user_chat_checked("alice", Some(0), Some(old));
+        let new = state.reserve_user_chat("alice", 0).unwrap().unwrap();
+        assert_ne!(old, new);
+        state.cancel_pending_user_chat("alice", old);
+        assert_eq!(state.user_chat_generation("alice"), Some(new));
+    }
+
+    #[test]
+    fn pending_connections_are_not_live() {
+        let state = AppState::new();
+        state.reserve_user_chat("alice", 0).unwrap();
+        state.reserve_global_chat(0).unwrap();
+        assert!(state.has_user_chat("alice"));
+        assert!(state.has_global_chat());
+        assert_eq!(state.live_user_chat_generation("alice", 0).unwrap(), None);
+        assert_eq!(state.live_global_chat_generation(0).unwrap(), None);
+        state.invalidate_session();
+        assert!(state.live_user_chat_generation("alice", 0).is_err());
+        assert!(state.live_global_chat_generation(0).is_err());
+    }
+
+    #[test]
+    fn stale_disconnect_preserves_new_pending_connections() {
+        let state = AppState::new();
+        let old_user = state.reserve_user_chat("alice", 0).unwrap().unwrap();
+        let old_global = state.reserve_global_chat(0).unwrap().unwrap();
+        state.invalidate_session();
+        let new_user = state.reserve_user_chat("alice", 1).unwrap().unwrap();
+        let new_global = state.reserve_global_chat(1).unwrap().unwrap();
+        assert!(state
+            .take_user_chat_checked("alice", Some(0), None)
+            .is_none());
+        assert!(state.take_global_chat_checked(Some(0), None).is_none());
+        assert!(state
+            .take_user_chat_checked("alice", Some(1), Some(old_user))
+            .is_none());
+        assert!(state
+            .take_global_chat_checked(Some(1), Some(old_global))
+            .is_none());
+        assert_eq!(state.user_chat_generation("alice"), Some(new_user));
+        assert_eq!(state.global_chat_generation(), Some(new_global));
+        state.take_user_chat_checked("ALICE", Some(1), Some(new_user));
+        state.take_global_chat_checked(Some(1), Some(new_global));
+        assert!(!state.has_user_chat("alice"));
+        assert!(!state.has_global_chat());
+    }
+
+    #[test]
+    fn send_validates_session_and_installed_generation_under_one_lock() {
+        let state = AppState::new();
+        let pending = state.reserve_user_chat("alice", 0).unwrap().unwrap();
+        let changed = state
+            .send_user_chat_checked("alice", "test", 1, None)
+            .unwrap_err();
+        assert_eq!(changed.message(), AppError::session_superseded().message());
+        let not_live = state
+            .send_user_chat_checked("alice", "test", 0, Some(pending))
+            .unwrap_err();
+        assert_eq!(not_live.message(), AppError::session_superseded().message());
+        assert!(state
+            .send_user_chat_checked("alice", "test", 0, None)
+            .is_err());
+    }
+
+    #[test]
+    fn presence_keeps_empty_topics_and_official_counts_only_in_current_generation() {
+        let state = AppState::new();
+        let online = OnlineEvent {
+            session_generation: 0,
+            connection_generation: 0,
+            users: Vec::new(),
+            discussing: Some("topic".into()),
+            online_count: Some(120),
+        };
+        assert!(state.remember_chatroom_online(&online));
+        let empty_topic = DiscussEvent::new(0, 0, "");
+        assert!(state.remember_chatroom_discuss(&empty_topic));
+        let (cached_online, cached_topic) = state.chatroom_presence_snapshot();
+        assert_eq!(cached_online.unwrap().online_count, Some(120));
+        assert_eq!(cached_topic.unwrap().discussing, "");
+        let _ = state.take_for_reconnect();
+        assert!(state.chatroom_presence_snapshot().0.is_some());
+        state.reserve_connection_generation(0, 0).unwrap();
+        assert_eq!(state.chatroom_presence_snapshot(), (None, None));
+        assert!(!state.remember_chatroom_online(&online));
+        assert!(!state.remember_chatroom_discuss(&empty_topic));
+        let new_online = OnlineEvent {
+            connection_generation: 1,
+            ..online
+        };
+        assert!(state.remember_chatroom_online(&new_online));
+        state.invalidate_session();
+        assert_eq!(state.chatroom_presence_snapshot(), (None, None));
+        assert!(!state.remember_chatroom_online(&new_online));
+    }
+
+    #[test]
+    fn stale_chatroom_reserve_or_disconnect_cannot_invalidate_current_generation() {
+        let state = AppState::new();
+        state.invalidate_session();
+        let current = state.reserve_connection_generation(1, 1).unwrap();
+        assert!(state.reserve_connection_generation(0, current).is_err());
+        assert!(state.reserve_connection_generation(1, current - 1).is_err());
+        state.take_chatroom_connection(Some(0), None);
+        state.take_chatroom_connection(Some(1), Some(current - 1));
+        assert_eq!(state.connection_generation(), current);
+        state.take_chatroom_connection(Some(1), Some(current));
+        assert_eq!(state.connection_generation(), current + 1);
     }
 }

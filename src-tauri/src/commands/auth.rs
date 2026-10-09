@@ -7,6 +7,7 @@
 use fishpi_sdk::model::misc::LoginData;
 use fishpi_sdk::utils::error::Error as SdkError;
 use fishpi_sdk::FishPi;
+use std::sync::Mutex;
 use tauri::{AppHandle, State};
 
 use crate::credentials;
@@ -18,8 +19,8 @@ use crate::state::{AppState, LiveConnections};
 
 const CANNOT_KEEP_LOGIN: &str =
     "系统凭据存储不可用，不能保持登录。本次会话有效，关闭应用后需要重新登录。";
-const LOGOUT_PERSIST_FAILED: &str =
-    "内存会话已退出，但系统凭据删除失败，不能认定已持久退出。";
+const LOGOUT_PERSIST_FAILED: &str = "内存会话已退出，但系统凭据删除失败，不能认定已持久退出。";
+static AUTH_COMMIT: Mutex<()> = Mutex::new(());
 
 /// 用户名 / 密码 / MFA → 校验身份，发布会话并尝试写入系统凭据。
 ///
@@ -103,7 +104,11 @@ pub async fn auth_restore(
 /// 只影响下次启动是否恢复，必须在返回值里说明，不能宣称已持久退出。
 #[tauri::command]
 pub async fn auth_logout(state: State<'_, AppState>) -> Result<AuthLogout, AppError> {
+    let _commit = AUTH_COMMIT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let invalidation = state.invalidate_session();
+    super::article_heat::disconnect_article_channel();
     disconnect_live(invalidation.previous);
 
     let (credential_cleared, persist_warning) = match credentials::delete() {
@@ -154,16 +159,19 @@ fn commit_session(
     persist: PersistMode,
 ) -> Result<AuthSession, AppError> {
     let client = build_session_client(api_key, client_tag)?;
+    // keyring 操作与会话提交一起串行，退出不能夹在提交和保存 token 之间。
+    let _commit = AUTH_COMMIT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
 
     match persist {
         PersistMode::SaveAfterCommit => {
             let replacement =
                 state.replace_session_if(expected_generation, client, user.clone(), false)?;
+            super::article_heat::disconnect_article_channel();
             disconnect_live(replacement.previous);
             let (credential_saved, persist_warning) = persist_api_key(api_key);
-            if credential_saved
-                && state.session_generation() == replacement.session_generation
-            {
+            if credential_saved && state.session_generation() == replacement.session_generation {
                 state.set_credential_saved(true);
             }
             Ok(AuthSession {
@@ -176,6 +184,7 @@ fn commit_session(
         PersistMode::AlreadyStored => {
             let replacement =
                 state.replace_session_if(expected_generation, client, user.clone(), true)?;
+            super::article_heat::disconnect_article_channel();
             disconnect_live(replacement.previous);
             Ok(AuthSession {
                 session_generation: replacement.session_generation,
@@ -190,8 +199,38 @@ fn commit_session(
 fn persist_api_key(api_key: &str) -> (bool, Option<String>) {
     match credentials::save(api_key) {
         Ok(()) => (true, None),
-        Err(_) => (false, Some(CANNOT_KEEP_LOGIN.to_string())),
+        Err(_) => {
+            let warning = if credentials::delete().is_ok() {
+                CANNOT_KEEP_LOGIN.to_string()
+            } else {
+                format!("{CANNOT_KEEP_LOGIN} 旧凭据也未能清除，下次启动可能恢复先前账号。")
+            };
+            (false, Some(warning))
+        }
     }
+}
+
+pub(super) fn save_imported_credential(
+    state: &AppState,
+    expected_generation: u64,
+    api_key: &str,
+) -> Result<(), AppError> {
+    let _commit = AUTH_COMMIT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    ensure_import_allowed(state, expected_generation)?;
+    credentials::save(api_key)
+}
+
+fn ensure_import_allowed(state: &AppState, expected_generation: u64) -> Result<(), AppError> {
+    let snapshot = state.session_snapshot();
+    if snapshot.session_generation != expected_generation {
+        return Err(AppError::session_superseded());
+    }
+    if snapshot.has_client {
+        return Err(AppError::business("已登录，不覆盖当前账号的登录凭据"));
+    }
+    Ok(())
 }
 
 fn handle_restore_probe_error(
@@ -199,12 +238,16 @@ fn handle_restore_probe_error(
     expected_generation: u64,
     err: SdkError,
 ) -> Result<RestoreOutcome, AppError> {
+    let _commit = AUTH_COMMIT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     if state.session_generation() != expected_generation {
         return Err(AppError::session_superseded());
     }
     match classify_restore_probe(err) {
         RestoreProbe::Unauthorized => {
             let invalidation = state.invalidate_session();
+            super::article_heat::disconnect_article_channel();
             disconnect_live(invalidation.previous);
             let _ = credentials::delete();
             Ok(RestoreOutcome::Unauthorized)
@@ -286,4 +329,27 @@ fn client_tag(app: &AppHandle) -> String {
         "PC"
     };
     format!("{platform}/{}", app.package_info().version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imports_cannot_replace_current_or_changed_session_credentials() {
+        let state = AppState::new();
+        assert!(ensure_import_allowed(&state, 0).is_ok());
+        let user = UserSummary {
+            user_name: "alice".into(),
+            user_nickname: "alice".into(),
+            user_avatar_url: String::new(),
+            user_no: String::new(),
+            role: String::new(),
+        };
+        state.replace_session(FishPi::builder().build().unwrap(), user, false);
+        assert!(ensure_import_allowed(&state, state.session_generation()).is_err());
+        state.invalidate_session();
+        assert!(ensure_import_allowed(&state, 0).is_err());
+        assert!(ensure_import_allowed(&state, state.session_generation()).is_ok());
+    }
 }

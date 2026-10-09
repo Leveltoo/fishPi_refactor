@@ -1,12 +1,12 @@
 //! 私聊 DTO：会话列表、历史、实时事件。消息 ID 用字符串；不含 token。
 //!
-//! 有 `markdown` 时填 `md`；否则 `text` 保留原文（HTML/md），由前端净化渲染。
+//! `md` 保留原始 markdown；`text` 同时保留服务端 HTML，由前端净化渲染。
 //! 会话列表 `preview` 仍剥成纯文本。
 
 use fishpi_sdk::domain::chat::{ChatData, ChatNotice};
 use serde::{Deserialize, Serialize};
 
-use crate::text::{keep_renderable, markdown_or_none, nonempty_text};
+use crate::text::{keep_renderable, nonempty_text};
 
 /// 会话列表项。peer 由前端按当前用户与 sender/receiver 推得。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,7 +28,7 @@ pub struct ChatConversationDto {
 impl ChatConversationDto {
     pub fn from_data(data: ChatData, unread: u32) -> Self {
         let preview = nonempty_text(&data.preview)
-            .or_else(|| markdown_or_none(&data.markdown))
+            .or_else(|| nonempty_text(&data.markdown))
             .or_else(|| nonempty_text(&data.content));
         Self {
             id: nonempty_owned(&data.id),
@@ -69,6 +69,8 @@ pub struct PrivateMessageDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     pub user_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub receiver_user_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_nickname: Option<String>,
     pub user_avatar_url: String,
@@ -78,17 +80,15 @@ pub struct PrivateMessageDto {
 
 impl From<&ChatData> for PrivateMessageDto {
     fn from(data: &ChatData) -> Self {
-        let md = markdown_or_none(&data.markdown);
-        let text = if md.is_some() {
-            None
-        } else {
-            keep_renderable(&data.content).or_else(|| keep_renderable(&data.preview))
-        };
+        // markdown 用于引用/回显确认，服务端 HTML 用于与旧版一致的展示。
+        let md = keep_renderable(&data.markdown);
+        let text = keep_renderable(&data.content).or_else(|| keep_renderable(&data.preview));
         Self {
             id: data.id.clone(),
             md,
             text,
             user_name: data.sender_user_name.clone(),
+            receiver_user_name: data.receiver_user_name.clone(),
             user_nickname: None,
             user_avatar_url: data.sender_avatar.clone(),
             time: data.time.clone(),
@@ -112,6 +112,8 @@ pub struct ChatHistoryQuery {
     pub page: Option<u32>,
     #[serde(default)]
     pub size: Option<u32>,
+    #[serde(default)]
+    pub session_generation: Option<u64>,
 }
 
 /// 历史结果。
@@ -130,6 +132,10 @@ pub struct ChatHistoryResult {
 pub struct ChatSendRequest {
     pub user_name: String,
     pub content: String,
+    #[serde(default)]
+    pub session_generation: Option<u64>,
+    #[serde(default)]
+    pub connection_generation: Option<u64>,
 }
 
 /// `chat_revoke` 入参。消息 ID 用字符串。
@@ -138,6 +144,8 @@ pub struct ChatSendRequest {
 pub struct ChatRevokeRequest {
     #[serde(alias = "id")]
     pub message_id: String,
+    #[serde(default)]
+    pub session_generation: Option<u64>,
 }
 
 /// 只带对端用户名的请求（已读 / 断开指定连接）。
@@ -153,6 +161,10 @@ pub struct ChatUserRequest {
 pub struct ChatConnectRequest {
     #[serde(default)]
     pub user_name: Option<String>,
+    #[serde(default)]
+    pub session_generation: Option<u64>,
+    #[serde(default)]
+    pub connection_generation: Option<u64>,
 }
 
 impl ChatConnectRequest {
@@ -247,11 +259,7 @@ impl ChatNoticeEvent {
         }
     }
 
-    pub fn refresh(
-        session_generation: u64,
-        connection_generation: u64,
-        command: String,
-    ) -> Self {
+    pub fn refresh(session_generation: u64, connection_generation: u64, command: String) -> Self {
         Self {
             session_generation,
             connection_generation: Some(connection_generation),
@@ -326,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn private_message_prefers_markdown_not_html() {
+    fn private_message_keeps_html_and_raw_markdown() {
         let data = ChatData {
             id: "99".into(),
             to_id: String::new(),
@@ -343,7 +351,8 @@ mod tests {
         };
         let dto = PrivateMessageDto::from(data);
         assert_eq!(dto.md.as_deref(), Some("**hi**"));
-        assert!(dto.text.is_none());
+        assert_eq!(dto.text.as_deref(), Some("<p>hi</p>"));
+        assert_eq!(dto.receiver_user_name, "bob");
         let value = serde_json::to_value(&dto).expect("serialize");
         assert_eq!(value["userName"], "alice");
         assert_eq!(value["userAvatarUrl"], "a.png");
@@ -379,5 +388,20 @@ mod tests {
         let req: ChatConnectRequest =
             serde_json::from_value(json!({ "userName": "  " })).expect("deserialize");
         assert!(req.peer_user().is_none());
+    }
+
+    #[test]
+    fn request_generations_are_optional_and_camel_case() {
+        let req: ChatConnectRequest = serde_json::from_value(json!({
+            "userName": "bob", "sessionGeneration": 4, "connectionGeneration": 7
+        }))
+        .unwrap();
+        assert_eq!(req.session_generation, Some(4));
+        assert_eq!(req.connection_generation, Some(7));
+        let send: ChatSendRequest = serde_json::from_value(json!({
+            "userName": "bob", "content": "hi"
+        }))
+        .unwrap();
+        assert!(send.session_generation.is_none());
     }
 }

@@ -57,11 +57,13 @@ export function ConversationList({
                     className={active ? "im-conv is-active" : "im-conv"}
                     aria-current={active ? "true" : undefined}
                     title={item.peerUserName}
+                    aria-label={`${item.peerUserName}${item.unread ? `，${item.unread}条未读私信` : ""}`}
                     onClick={() => onSelect(item.peerUserName)}
                   >
                     <span
                       className="im-conv-avatar"
                       {...userCardProps(item.peerUserName)}
+                      data-user-card-delay="3000"
                     >
                       <PeerAvatar
                         name={item.peerUserName}

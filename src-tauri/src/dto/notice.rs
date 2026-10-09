@@ -19,11 +19,7 @@ pub struct NoticeBroadcastEvent {
 }
 
 impl NoticeBroadcastEvent {
-    pub fn from_msg(
-        session_generation: u64,
-        connection_generation: u64,
-        msg: NoticeMsg,
-    ) -> Self {
+    pub fn from_msg(session_generation: u64, connection_generation: u64, msg: NoticeMsg) -> Self {
         Self {
             session_generation,
             connection_generation: Some(connection_generation),
@@ -104,11 +100,41 @@ pub struct NoticeItemDto {
     pub user_avatar_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub article_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<u32>,
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl From<NoticeItem> for NoticeItemDto {
     fn from(notice: NoticeItem) -> Self {
-        match notice {
+        let (url, data_id, data_type, deleted) = match &notice {
+            NoticeItem::Comment(n) => (community_url(&n.sharp_url), None, None, false),
+            NoticeItem::Reply(n) => (community_url(&n.sharp_url), None, Some(n.data_type), false),
+            NoticeItem::At(n) => (
+                community_url(&n.url),
+                nonempty_owned(&n.data_id),
+                Some(n.data_type),
+                n.deleted,
+            ),
+            NoticeItem::Follow(n) => (community_url(&n.url), None, Some(n.data_type), false),
+            NoticeItem::System(n) => (
+                if n.data_id.chars().all(|ch| ch.is_ascii_digit()) && !n.data_id.is_empty() {
+                    Some(format!("https://fishpi.cn/article/{}", n.data_id))
+                } else {
+                    None
+                },
+                nonempty_owned(&n.data_id),
+                Some(n.data_type),
+                false,
+            ),
+            NoticeItem::Point(_) => (None, None, None, false),
+        };
+        let mut dto = match notice {
             NoticeItem::Point(n) => item(
                 n.id,
                 "point",
@@ -177,7 +203,12 @@ impl From<NoticeItem> for NoticeItemDto {
                 None,
                 None,
             ),
-        }
+        };
+        dto.url = url;
+        dto.data_id = data_id;
+        dto.data_type = data_type;
+        dto.deleted = deleted;
+        dto
     }
 }
 
@@ -211,7 +242,26 @@ fn item(
         user_name,
         user_avatar_url,
         article_id,
+        url: None,
+        data_id: None,
+        data_type: None,
+        deleted: false,
     }
+}
+
+fn community_url(value: &str) -> Option<String> {
+    let base = reqwest::Url::parse("https://fishpi.cn").ok()?;
+    let url = base.join(value.trim()).ok()?;
+    if value.trim().is_empty()
+        || url.scheme() != "https"
+        || url.host_str() != Some("fishpi.cn")
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    Some(url.to_string())
 }
 
 fn nonempty_owned(value: &str) -> Option<String> {
@@ -247,5 +297,24 @@ mod tests {
         assert_eq!(value["notifyStatus"], true);
         assert_eq!(value["sysAnnounce"], 0);
         assert_eq!(value["newFollower"], 0);
+    }
+
+    #[test]
+    fn notice_targets_only_allow_community_https() {
+        assert_eq!(
+            community_url("/article/123#456").as_deref(),
+            Some("https://fishpi.cn/article/123#456")
+        );
+        for url in [
+            "",
+            "javascript:alert(1)",
+            "//evil.example/x",
+            "https://fishpi.cn.evil.example/x",
+            "https://user:pass@fishpi.cn/x",
+            "http://fishpi.cn/x",
+            "https://fishpi.cn:444/x",
+        ] {
+            assert!(community_url(url).is_none(), "{url}");
+        }
     }
 }

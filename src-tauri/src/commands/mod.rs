@@ -10,7 +10,11 @@
 //! 共用会话校验与写操作映射在 `common`。
 
 pub mod article_detail;
+pub mod article_heat;
 pub mod article_list;
+pub mod article_reward;
+pub mod article_thank;
+pub mod article_vote;
 pub mod auth;
 pub mod breezemoon_list;
 pub mod breezemoon_send;
@@ -21,6 +25,7 @@ pub mod comment_post;
 pub mod comment_thank;
 pub mod comment_vote;
 pub mod notice;
+pub mod notify_show;
 pub mod redpacket;
 pub mod settings_get;
 pub mod settings_set;
@@ -30,16 +35,15 @@ pub mod user_reward;
 pub mod user_search;
 pub mod window_always_on_top;
 pub mod window_opacity;
-pub mod notify_show;
-pub mod article_thank;
-pub mod article_vote;
-pub mod article_reward;
-pub mod article_heat;
 
 mod common;
 
 pub use article_detail::*;
+pub use article_heat::*;
 pub use article_list::*;
+pub use article_reward::*;
+pub use article_thank::*;
+pub use article_vote::*;
 pub use auth::*;
 pub use breezemoon_list::*;
 pub use breezemoon_send::*;
@@ -50,6 +54,7 @@ pub use comment_post::*;
 pub use comment_thank::*;
 pub use comment_vote::*;
 pub use notice::*;
+pub use notify_show::*;
 pub use redpacket::*;
 pub use settings_get::*;
 pub use settings_set::*;
@@ -59,11 +64,6 @@ pub use user_reward::*;
 pub use user_search::*;
 pub use window_always_on_top::*;
 pub use window_opacity::*;
-pub use notify_show::*;
-pub use article_thank::*;
-pub use article_vote::*;
-pub use article_reward::*;
-pub use article_heat::*;
 
 pub mod config_import;
 pub mod extension_host;
@@ -84,5 +84,7 @@ pub use reconnect::*;
 pub use updater::*;
 pub mod chatroom_filters;
 pub mod emoji_api;
+pub mod emoji_cloud;
 pub use chatroom_filters::*;
 pub use emoji_api::*;
+pub use emoji_cloud::*;

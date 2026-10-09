@@ -1,49 +1,63 @@
-import type { MusicCard } from "../chatroom/messageView";
+import DOMPurify from "dompurify";
 
-type NeteaseHit = { kind: "song" | "album"; id: string };
-
-function decodeQuery(raw: string): string {
-  return raw.replace(/&amp;/g, "&");
-}
-
-function parseNetease(source: string): NeteaseHit | null {
-  const player = source.match(/music\.163\.com\/outchain\/player\?([^"'<\s]*)/i);
-  if (player) {
-    const qs = decodeQuery(player[1]);
-    const type = /(?:^|&)type=(\d)/.exec(qs)?.[1];
-    const id = /(?:^|&)id=(\d{1,20})/.exec(qs)?.[1];
-    if (id) {
-      return { kind: type === "1" ? "album" : "song", id };
-    }
-  }
-  const song = source.match(/music\.163\.com\/(?:#\/)?song\?id=(\d{1,20})/i);
-  if (song) {
-    return { kind: "song", id: song[1] };
-  }
-  const album = source.match(/music\.163\.com\/(?:#\/)?album\?id=(\d{1,20})/i);
-  if (album) {
-    return { kind: "album", id: album[1] };
-  }
-  return null;
-}
-
-/** 从正文抽出网易云歌曲卡。专辑 iframe 无法在 CSP 下播放，不伪造可播地址。 */
-export function musicCardFromContent(source: string): MusicCard | null {
-  const hit = parseNetease(source);
-  if (hit == null || hit.kind !== "song") {
+export function neteasePlayerUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw.replace(/&amp;/g, "&"), "https://music.163.com");
+    const id = url.searchParams.get("id") ?? "";
+    const type = url.searchParams.get("type");
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password ||
+        url.hostname !== "music.163.com" || url.port ||
+        url.pathname !== "/outchain/player" || !/^\d{1,20}$/.test(id) ||
+        (type !== "1" && type !== "2")) return null;
+    return `https://music.163.com/outchain/player?type=${type}&id=${id}&auto=0&height=${type === "1" ? "430" : "66"}`;
+  } catch {
     return null;
   }
-  return {
-    title: "网易云音乐",
-    source: `https://music.163.com/song?id=${hit.id}`,
-    coverUrl: "",
-    from: "网易云",
-    audioUrl: `http://music.163.com/song/media/outer/url?id=${hit.id}`,
-  };
 }
 
-export function stripNeteaseIframes(source: string): string {
-  return source
-    .replace(/<iframe\b[^>]*music\.163\.com[^>]*>\s*<\/iframe>/gi, "")
-    .trim();
+export function safeMusicHtml(source: string): string {
+  const parsed = new DOMParser().parseFromString(source, "text/html");
+  for (const element of Array.from(parsed.querySelectorAll<HTMLElement>("[style]"))) {
+    const original = element.style;
+    const styles: string[] = [];
+    for (const property of ["color", "background-color", "font-weight", "font-style", "text-decoration", "text-align", "white-space"]) {
+      const value = original.getPropertyValue(property);
+      if (value && !/url|expression|var\(|\\/i.test(value)) styles.push(`${property}:${value}`);
+    }
+    if (styles.length) element.setAttribute("style", styles.join(";"));
+    else element.removeAttribute("style");
+  }
+  for (const iframe of Array.from(parsed.querySelectorAll("iframe"))) {
+    const src = neteasePlayerUrl(iframe.getAttribute("src") ?? "");
+    if (!src) { iframe.remove(); continue; }
+    iframe.setAttribute("src", src);
+    iframe.setAttribute("height", new URL(src).searchParams.get("type") === "1" ? "210" : "86");
+    iframe.setAttribute("width", "100%");
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    iframe.setAttribute("title", "网易云音乐");
+    iframe.setAttribute("loading", "lazy");
+    iframe.removeAttribute("style");
+  }
+  return DOMPurify.sanitize(parsed.body.innerHTML, {
+    ALLOWED_TAGS: [
+      "p", "br", "strong", "b", "em", "i", "u", "s", "del", "a", "code", "pre",
+      "blockquote", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "img",
+      "span", "div", "table", "thead", "tbody", "tr", "th", "td", "hr", "font",
+      "iframe", "video", "source", "details", "summary",
+    ],
+    ALLOWED_ATTR: [
+      "href", "src", "alt", "title", "class", "width", "height", "style", "color",
+      "align", "target", "rel", "colspan", "rowspan", "start", "type", "frameborder",
+      "sandbox", "loading", "controls", "poster", "preload", "playsinline", "open",
+    ],
+    ADD_URI_SAFE_ATTR: [
+      "width", "height", "color", "align", "target", "rel", "colspan", "rowspan",
+      "start", "type", "frameborder", "sandbox", "loading", "controls", "preload",
+      "playsinline", "open",
+    ],
+    ALLOW_DATA_ATTR: false,
+    ALLOWED_URI_REGEXP: /^(?:https?:|\/\/|#)/i,
+    FORBID_TAGS: ["script", "object", "embed", "link", "meta", "form"],
+    FORBID_ATTR: ["srcdoc"],
+  });
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -72,7 +73,7 @@ export function ArticleHost() {
           <WarningIcon />
           <AlertTitle>帖子 Bridge 尚未接入</AlertTitle>
           <AlertDescription>
-            src-tauri 当前没有 article_list / article_detail / comment_post。界面可预览，评论不会伪装发出。
+            帖子列表暂不可用。
           </AlertDescription>
         </Alert>
       ) : null}
@@ -93,6 +94,7 @@ export function ArticleHost() {
 
       {showingDetail ? (
         <ArticleDetailPane
+          key={articles.activeId}
           detail={articles.detail}
           loading={articles.loadingDetail}
           loadingMore={articles.loadingMoreComments}
@@ -139,7 +141,8 @@ export function ArticleHost() {
             void articles.rewardArticle();
           }}
         />
-      ) : (
+      ) : null}
+      <div className="article-list-preserved" style={showingDetail ? { display: "none" } : undefined}>
         <ArticleListPane
           listType={articles.listType}
           items={articles.items}
@@ -152,7 +155,7 @@ export function ArticleHost() {
           onLoadMore={articles.loadMore}
           onRetry={articles.retryList}
         />
-      )}
+      </div>
     </div>
   );
 }
@@ -282,9 +285,7 @@ function ArticleRow({ item, onOpen }: ArticleRowProps) {
           />
           <span>{item.time}</span>
           <span>{item.commentCount} 评</span>
-          {item.viewCount > 0 ? (
-            <span className="article-views">{item.viewCount} 阅</span>
-          ) : null}
+          <span className="article-views">{item.viewCountDisplay || item.viewCount} 阅</span>
         </div>
       </div>
       {thumb ? (
@@ -376,7 +377,7 @@ function ArticleDetailPane({
   const [jumpMiss, setJumpMiss] = useState<string | null>(null);
 
   function jumpToComments(): void {
-    document.getElementById("article-comments")?.scrollIntoView({
+    document.getElementById("article-composer")?.scrollIntoView({
       behavior: "smooth",
       block: "start",
     });
@@ -420,6 +421,10 @@ function ArticleDetailPane({
         >
           <ArrowLeftIcon />
           返回
+        </Button>
+        <Button type="button" variant="ghost" size="icon-sm" title="刷新详情"
+          aria-label="刷新详情" disabled={loading || loadingMore} onClick={onRetry}>
+          <RefreshCw />
         </Button>
       </header>
 
@@ -479,6 +484,7 @@ function ArticleDetailPane({
                 voteAvailable={voteAvailable}
                 thanking={thanking}
                 voting={voting}
+                isOwn={selfUserName != null && selfUserName === detail.authorUserName}
                 onThank={onThank}
                 onVote={onVote}
               />
@@ -488,6 +494,12 @@ function ArticleDetailPane({
               html={detail.html}
               empty="这篇帖子没有正文。"
             />
+            {detail.updatedTime || detail.createdTime ? (
+              <p className="article-time">
+                {detail.updated ? "更新于 " : "发表于 "}
+                <time>{detail.updated ? detail.updatedTime : detail.createdTime}</time>
+              </p>
+            ) : null}
             {detail.rewardPoint > 0 ? (
               <ArticleReward
                 detail={detail}
@@ -497,15 +509,22 @@ function ArticleDetailPane({
               />
             ) : null}
 
+            <CommentComposer
+              disabled={!detail.commentable || sending || pendingConfirm}
+              sending={sending}
+              pendingConfirm={pendingConfirm}
+              commentAvailable={commentAvailable}
+              commentable={detail.commentable}
+              reply={reply}
+              onClearReply={() => setReply(null)}
+              onSend={onSend}
+            />
             <h3 className="article-comments-title" id="article-comments">
               评论
               {detail.commentCount > 0 ? (
                 <span> {detail.commentCount}</span>
               ) : null}
             </h3>
-            <p className="article-comments-hint">
-              从最后一页打开，最新评论在底部；可向上加载更早评论（对齐旧版从末页往前翻）。
-            </p>
             {commentLiveNote ? (
               <p className="article-heat-note">{commentLiveNote}</p>
             ) : null}
@@ -532,7 +551,7 @@ function ArticleDetailPane({
               <p className="article-empty-copy">还没有评论。</p>
             ) : (
               <ul className="article-comments">
-                {detail.comments.map((comment) => (
+                {[...detail.comments].reverse().map((comment) => (
                   <li key={comment.id} id={`comment-item-${comment.id}`}>
                     <CommentItem
                       comment={comment}
@@ -577,16 +596,6 @@ function ArticleDetailPane({
               </div>
             ) : null}
 
-            <CommentComposer
-              disabled={!detail.commentable || sending}
-              sending={sending}
-              pendingConfirm={pendingConfirm}
-              commentAvailable={commentAvailable}
-              commentable={detail.commentable}
-              reply={reply}
-              onClearReply={() => setReply(null)}
-              onSend={onSend}
-            />
           </div>
         )}
       </ScrollArea>
@@ -603,6 +612,7 @@ function ArticleActions({
   voteAvailable,
   thanking,
   voting,
+  isOwn,
   onThank,
   onVote,
 }: {
@@ -614,18 +624,21 @@ function ArticleActions({
   voteAvailable: boolean;
   thanking: boolean;
   voting: ArticleVoteDirection | null;
+  isOwn: boolean;
   onThank: () => void;
   onVote: (direction: ArticleVoteDirection) => void;
 }) {
   const thankTitle = !thankAvailable
     ? "感谢命令尚未接入"
+    : isOwn
+      ? "不能感谢自己的帖子"
     : detail.thanked
       ? "已感谢"
       : "确认赠送 20 积分给该帖作者以表感谢";
   const voteTitle = voteAvailable ? undefined : "点赞点踩命令尚未接入";
 
   function thank() {
-    if (!thankAvailable || detail.thanked || thanking) {
+    if (!thankAvailable || detail.thanked || thanking || isOwn) {
       return;
     }
     if (!window.confirm("确认赠送 20 积分给该帖作者以表感谢？")) {
@@ -649,11 +662,11 @@ function ArticleActions({
         type="button"
         variant={detail.thanked ? "secondary" : "outline"}
         size="sm"
-        disabled={!thankAvailable || detail.thanked || thanking}
+        disabled={!thankAvailable || detail.thanked || thanking || isOwn}
         title={thankTitle}
         onClick={thank}
       >
-        {thanking ? <Spinner /> : null}
+        {thanking ? <Spinner /> : <HeartIcon />}
         {detail.thanked ? "已感谢" : "感谢"} {detail.thankCount}
       </Button>
       <Button
@@ -661,24 +674,26 @@ function ArticleActions({
         variant={detail.vote === "up" ? "secondary" : "outline"}
         size="sm"
         aria-pressed={detail.vote === "up"}
+        aria-label={`点赞 ${detail.goodCount}`}
         disabled={!voteAvailable || voting != null}
-        title={voteTitle}
+        title={voteTitle ?? "点赞"}
         onClick={() => onVote("up")}
       >
-        {voting === "up" ? <Spinner /> : null}
-        赞 {detail.goodCount}
+        {voting === "up" ? <Spinner /> : <ThumbsUpIcon />}
+        {detail.goodCount}
       </Button>
       <Button
         type="button"
         variant={detail.vote === "down" ? "secondary" : "outline"}
         size="sm"
         aria-pressed={detail.vote === "down"}
+        aria-label={`点踩 ${detail.badCount}`}
         disabled={!voteAvailable || voting != null}
-        title={voteTitle}
+        title={voteTitle ?? "点踩"}
         onClick={() => onVote("down")}
       >
-        {voting === "down" ? <Spinner /> : null}
-        踩 {detail.badCount}
+        {voting === "down" ? <Spinner /> : <ThumbsDownIcon />}
+        {detail.badCount}
       </Button>
     </div>
   );
@@ -890,6 +905,7 @@ function CommentItem({
                 : "article-comment-action"
             }
             title={thankTitle}
+            aria-label={`感谢 ${comment.thankCount}`}
             disabled={!thankAvailable || comment.thanked || isOwn || busy}
             onClick={thank}
           >
@@ -903,7 +919,8 @@ function CommentItem({
                 ? "article-comment-action is-on"
                 : "article-comment-action"
             }
-            title={voteTitle}
+            title={voteTitle ?? "点赞"}
+            aria-label={`点赞 ${comment.goodCount}`}
             aria-pressed={comment.vote === "up"}
             disabled={!voteAvailable || busy}
             onClick={() => onVote(comment.id, "up")}
@@ -918,7 +935,8 @@ function CommentItem({
                 ? "article-comment-action is-on"
                 : "article-comment-action"
             }
-            title={voteTitle}
+            title={voteTitle ?? "点踩"}
+            aria-label={`点踩 ${comment.badCount}`}
             aria-pressed={comment.vote === "down"}
             disabled={!voteAvailable || busy}
             onClick={() => onVote(comment.id, "down")}

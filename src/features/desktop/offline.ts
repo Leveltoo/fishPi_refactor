@@ -37,16 +37,25 @@ export function loadOffline(): Promise<OfflineSnapshot> {
   return invoke<OfflineSnapshot>("offline_load");
 }
 
+export function revokeOffline(input: {
+  messageId: string;
+  sessionGeneration: number;
+}): Promise<OfflineSnapshot> {
+  return invoke<OfflineSnapshot>("offline_revoke", { request: input });
+}
+
 export function mergeOffline(input: {
   scope: "chatroom" | "chat";
   peer?: string;
   messages: unknown[];
+  sessionGeneration?: number;
 }): Promise<OfflineSnapshot> {
   return invoke<OfflineSnapshot>("offline_merge", {
     request: {
       scope: input.scope,
       peer: input.peer,
       messages: input.messages.map(scrub),
+      sessionGeneration: input.sessionGeneration,
     },
   });
 }
@@ -56,6 +65,7 @@ export function failOfflineSend(input: {
   peer?: string;
   clientId: string;
   preview?: string;
+  sessionGeneration?: number;
 }): Promise<OfflineSnapshot> {
   return invoke<OfflineSnapshot>("offline_fail_send", {
     request: {
@@ -63,6 +73,7 @@ export function failOfflineSend(input: {
       peer: input.peer,
       clientId: input.clientId,
       preview: input.preview,
+      sessionGeneration: input.sessionGeneration,
     },
   });
 }

@@ -9,6 +9,9 @@ import { COMMAND_LABEL, NOTICE_TYPES } from "./constants";
 import type { NoticeCountDto, NoticeType } from "./types";
 import { NOTICE_COMMAND, USER_COMMAND } from "./types";
 import { useActivity, type ActivityCapabilities } from "./useActivity";
+import { noticeTarget } from "./noticeTarget";
+import { openNoticeTarget } from "../shell/navigation";
+import { toast } from "sonner";
 import "./activity.css";
 
 /**
@@ -195,7 +198,17 @@ export function ActivityHost() {
                 key={item.id}
                 className={item.hasRead ? "activity-item is-read" : "activity-item"}
               >
-                <p className="activity-item-title">{item.title}</p>
+                <p className="activity-item-title">
+                  {noticeTarget(item) ? (
+                    <button className="activity-item-open" type="button" onClick={() => {
+                      const target = noticeTarget(item);
+                      if (target) {
+                        void openNoticeTarget(target).catch((error: unknown) =>
+                          toast.error(error instanceof Error ? error.message : "打开通知失败"));
+                      }
+                    }}>{item.title}</button>
+                  ) : item.title}
+                </p>
                 {item.content && item.content !== item.title ? (
                   <p className="activity-item-body">{item.content}</p>
                 ) : null}

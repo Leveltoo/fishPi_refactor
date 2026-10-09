@@ -14,7 +14,7 @@ use crate::state::AppState;
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_SIZE: u32 = 20;
 
-/// 帖子列表。`type` 为 recent / hot / good / reply / long，缺省 recent。
+/// 帖子列表。`type` 为 recent / hot / good / reply / long，缺省 reply（旧版）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn article_list(
     state: State<'_, AppState>,
@@ -38,10 +38,10 @@ pub async fn article_list(
 
 fn parse_list_type(raw: Option<&str>) -> Result<ArticleListType, AppError> {
     match raw.map(str::trim).unwrap_or("") {
-        "" | "recent" => Ok(ArticleListType::Recent),
+        "" | "reply" => Ok(ArticleListType::Reply),
+        "recent" => Ok(ArticleListType::Recent),
         "hot" => Ok(ArticleListType::Hot),
         "good" => Ok(ArticleListType::Good),
-        "reply" => Ok(ArticleListType::Reply),
         "long" => Ok(ArticleListType::Long),
         "perfect" => Err(AppError::business("优选帖子列表需要指定标签")),
         _ => Err(AppError::business("不支持的帖子列表类型")),

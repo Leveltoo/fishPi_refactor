@@ -27,7 +27,7 @@ window.dispatchEvent(new CustomEvent("fishpi:redpacket", {
 
 不要传数字 ID（雪花会丢精度），不要用 `id: "send"`。
 
-可选字段（有则展示基本信息，没有也能点「领取」）：
+可选字段用于展示预览；普通红包打开即请求领取，猜拳缺手势时等待选择：
 
 | 字段 | 用途 |
 |---|---|
@@ -60,10 +60,26 @@ window.dispatchEvent(new CustomEvent("fishpi:redpacket-send", {
 
 | 字段 | 用途 |
 |---|---|
-| `user` / `userName` | 锁定专属对象，类型不可改 |
-| `users` / `onlineUsers` / `onlineList` | 专属红包头像多选；没有则改用手填用户名 |
+| `user` | 锁定专属对象，类型不可改 |
+| `userName` | 当前登录用户，绝不当作专属对象 |
+| `users` / `onlineUsers` / `onlineList` | 专属红包头像多选，与旧版一致 |
 | `type` | 预选类型 |
 | `recivers` / `receivers` | 预选接收人（服务端字段是 `recivers` 这个历史拼写） |
+
+### 再发一个 `fishpi:redpacket-resend`
+
+宿主监听并直接发送 `{ type, msg, money, count, recivers }`。
+猜拳金额在聊天室侧按 `ceil(money / 0.95)` 还原，宿主随机选择新手势。
+
+### 服务端详情 `fishpi:redpacket-result`
+
+宿主成功后发布 `{ messageId, sessionGeneration, info, receivers, who }`。
+卡片只用经会话核对的服务端 `who` 判断已领取，不根据点击或关闭标记成功。
+
+## 接线
+
+中心注册 `redpacket_open`、`redpacket_send`，并在 AppShell 挂载一次 `RedPacketHost`。
+完整 checklist、验证结果和边界见 `docs/migration/redpacket.md`。
 
 ## 不做
 

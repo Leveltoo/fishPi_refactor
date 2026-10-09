@@ -1,9 +1,10 @@
 //! 摸鱼派桌面端 Bridge。
 //!
-//! React 只通过 invoke / listen 访问本层；社区 HTTP / WS 仅由 Rust 调 `fishpi-sdk`。
+//! React 只通过 invoke / listen 访问本层；社区 HTTP / WS 留在 Rust，优先调 `fishpi-sdk`。
 //! `AppState` 只在读或切换共享状态时持锁，持锁时绝不 `.await` 网络。
 //! token 不进入 DTO、事件或前端，也不进入 Store。
 
+mod boss_key;
 mod commands;
 pub mod credentials;
 pub mod dto;
@@ -14,29 +15,24 @@ mod text;
 mod tray;
 mod window_close;
 mod window_persist;
-mod boss_key;
 
 use commands::{
-    article_detail, article_list, auth_login, auth_logout, auth_me, auth_restore, breezemoon_list,
-    breezemoon_send, chat_connect, chat_disconnect, chat_history, chat_list, chat_mark_read,
-    chat_revoke, chat_send, chat_unread, chatroom_connect, chatroom_disconnect, chatroom_history,
+    article_detail, article_heat, article_heat_close, article_heat_watch, article_list,
+    article_reward, article_thank, article_vote, auth_login, auth_logout, auth_me, auth_restore,
+    breezemoon_list, breezemoon_send, chat_connect, chat_disconnect, chat_history, chat_list,
+    chat_mark_read, chat_revoke, chat_send, chat_unread, chatroom_barrage_cost, chatroom_barrager,
+    chatroom_connect, chatroom_disconnect, chatroom_emoji_recent_get,
+    chatroom_emoji_recent_remember, chatroom_filters_get, chatroom_filters_set, chatroom_history,
     chatroom_raw, chatroom_revoke, chatroom_send, comment_delete, comment_post, comment_thank,
-    comment_vote,
-    notice_connect, notice_count, notice_list,
-    notice_make_read, notice_read_all, notify_show, redpacket_open, settings_get, settings_set,
-    user_checkin, user_is_checkin, user_is_collected_liveness, user_liveness, user_profile,
-    user_reward_liveness, user_search, window_set_always_on_top, window_set_opacity,
-    article_thank, article_vote, article_reward, article_heat, article_heat_watch,
-    article_heat_close,
-    chatroom_barrager, chatroom_barrage_cost, chatroom_filters_get, chatroom_filters_set, chatroom_emoji_recent_get,
-    chatroom_emoji_recent_remember, emoji_groups, emoji_group_items, emoji_add_url, emoji_remove,
-    fetch_image, file_upload,
-    update_check, update_apply, update_open_release,
-    config_import, desktop_prefs_get, desktop_prefs_set,
-    reconnect_watch, reconnect_now,
-    extension_scan, extension_load_theme, extension_call,
-    offline_load, offline_merge, offline_fail_send,
-    music_resolve,
+    comment_vote, config_import, desktop_prefs_get, desktop_prefs_set, emoji_add_url,
+    emoji_cloud_append, emoji_cloud_get, emoji_cloud_remove, emoji_group_items, emoji_groups,
+    emoji_remove, extension_call, extension_load_theme, extension_scan, fetch_image, file_upload,
+    music_resolve, notice_connect, notice_count, notice_list, notice_make_read, notice_read_all,
+    notify_show, offline_fail_send, offline_load, offline_merge, offline_revoke, reconnect_now,
+    reconnect_watch, redpacket_open, redpacket_send, settings_get, settings_set, update_apply,
+    update_check, update_open_release, user_checkin, user_is_checkin, user_is_collected_liveness,
+    user_liveness, user_profile, user_reward_liveness, user_search, window_set_always_on_top,
+    window_set_opacity,
 };
 use dto::{AlwaysOnTopRequest, AppSettings, OpacityRequest};
 use state::AppState;
@@ -66,6 +62,7 @@ pub fn run() {
             chatroom_revoke,
             file_upload,
             redpacket_open,
+            redpacket_send,
             chat_list,
             chat_unread,
             chat_history,
@@ -115,6 +112,9 @@ pub fn run() {
             emoji_group_items,
             emoji_add_url,
             emoji_remove,
+            emoji_cloud_get,
+            emoji_cloud_append,
+            emoji_cloud_remove,
             fetch_image,
             update_check,
             update_apply,
@@ -130,6 +130,7 @@ pub fn run() {
             offline_load,
             offline_merge,
             offline_fail_send,
+            offline_revoke,
             music_resolve,
             tray::tray_flash,
         ])

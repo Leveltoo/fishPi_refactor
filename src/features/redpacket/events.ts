@@ -5,13 +5,18 @@ import type {
   OpenSession,
   RedPacketType,
   SendSession,
+  SendRedPacketRequest,
+  RedPacketInfo,
 } from "./types";
+import { validateSendForm } from "./sendForm";
 
 /** 聊天室点击红包消息时派发。 */
 export const REDPACKET_OPEN_EVENT = "fishpi:redpacket";
 
 /** 聊天室点「发红包」时派发。 */
 export const REDPACKET_SEND_EVENT = "fishpi:redpacket-send";
+export const REDPACKET_RESEND_EVENT = "fishpi:redpacket-resend";
+export const REDPACKET_RESULT_EVENT = "fishpi:redpacket-result";
 
 const ID_KEYS = ["oId", "oid", "id", "messageId", "o_id"] as const;
 
@@ -31,8 +36,34 @@ export function parseOpenEvent(event: Event): OpenSession | null {
     oId,
     gesture: pickGesture(record),
     packetType: pickPacketType(record),
+    detailOnly: record.detailOnly === true,
     preview: pickPreview(record),
   };
+}
+
+export function parseResendEvent(event: Event): SendRedPacketRequest | null {
+  const record = asRecord(readDetail(event));
+  if (!record || !isRedPacketType(String(record.type))) {
+    return null;
+  }
+  const type = record.type as RedPacketType;
+  const result = validateSendForm({
+    type,
+    money: String(record.money ?? ""),
+    count: String(record.count ?? ""),
+    message: typeof record.msg === "string" ? record.msg : "",
+    receivers: readNameList(record.recivers ?? record.receivers),
+    receiverDraft: "",
+    // 旧版重发猜拳时重新随机出手，不复用发送者手势。
+    gesture: type === "rockPaperScissors" ? Math.floor(Math.random() * 3) as GestureIndex : 0,
+  });
+  return result.ok ? result.request : null;
+}
+
+export function publishOpenResult(messageId: string, data: RedPacketInfo): void {
+  window.dispatchEvent(new CustomEvent(REDPACKET_RESULT_EVENT, {
+    detail: { messageId, ...data },
+  }));
 }
 
 export function parseSendPayload(detail: unknown): SendSession {
@@ -42,18 +73,16 @@ export function parseSendPayload(detail: unknown): SendSession {
   const namedUser = fromUser ?? fromUserName;
   const packetType = pickPacketType(record);
   // overlay 的 `user` 锁定专属；聊天室只带当前 `userName`，不要当成专属对象。
-  // `type: "specify"` 时 `userName` 仍 alias 成 `user`。
-  const specifyLocked = Boolean(fromUser) || packetType === "specify";
+  const specifyLocked = Boolean(fromUser);
   const lockedUser = specifyLocked ? namedUser : undefined;
   const lockedType = lockedUser ? "specify" : packetType;
 
   return {
     lockedUser,
     lockedType,
-    selfUserName: specifyLocked ? undefined : fromUserName,
+    selfUserName: fromUserName,
     onlineUsers: readOnlineUsers(record.users ?? record.onlineUsers ?? record.onlineList),
-    initialReceivers: uniqueNames([
-      ...(lockedUser ? [lockedUser] : []),
+    initialReceivers: lockedUser ? [lockedUser] : uniqueNames([
       ...readNameList(record.recivers),
       ...readNameList(record.receivers),
     ]),
@@ -89,11 +118,8 @@ function pickMessageId(record: Record<string, unknown>): string | undefined {
 }
 
 function readIdValue(value: unknown): string | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
   const text = readNonEmptyString(value);
-  if (!text || text === "send") {
+  if (!text || !/^\d+$/.test(text)) {
     return undefined;
   }
   return text;
@@ -149,7 +175,7 @@ function pickPreview(record: Record<string, unknown>): OpenPreview {
 }
 
 export function parseGesture(value: unknown): GestureIndex | undefined {
-  if (typeof value === "number" && value >= 0 && value <= 2) {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2) {
     return value as GestureIndex;
   }
   if (typeof value !== "string") {
@@ -185,11 +211,12 @@ function readOnlineUsers(value: unknown): SendSession["onlineUsers"] {
   for (const item of value) {
     const record = asRecord(item);
     const userName = record
-      ? readNonEmptyString(record.userName) ?? readNonEmptyString(record.userNickname)
+      ? readNonEmptyString(record.userName)
       : readNonEmptyString(item);
     if (!userName) {
       continue;
     }
+    if (users.some((user) => user.userName === userName)) continue;
     users.push({
       userName,
       userAvatarUrl: record
@@ -212,6 +239,14 @@ function readNameList(value: unknown): string[] {
   if (!text) {
     return [];
   }
+  if (text.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      return Array.isArray(parsed) ? readNameList(parsed) : [];
+    } catch {
+      return [];
+    }
+  }
   return text
     .split(/[,，\s]+/)
     .map((item) => item.trim())
@@ -222,11 +257,10 @@ function uniqueNames(names: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const name of names) {
-    const key = name.toLowerCase();
-    if (seen.has(key)) {
+    if (seen.has(name)) {
       continue;
     }
-    seen.add(key);
+    seen.add(name);
     result.push(name);
   }
   return result;

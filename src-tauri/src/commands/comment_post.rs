@@ -43,3 +43,25 @@ fn to_sdk_post(article_id: String, content: String, request: &CommentPostRequest
         .with_visible(request.visible)
         .with_reply_id(reply_id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_reply_and_visibility_flags() {
+        let request: CommentPostRequest = serde_json::from_value(serde_json::json!({
+            "articleId": "a1", "commentContent": "**hello**",
+            "commentOriginalCommentId": " c1 ", "commentAnonymous": true,
+            "commentVisible": true
+        }))
+        .expect("request");
+        let data = to_sdk_post("a1".into(), request.comment_content.clone(), &request);
+        let json = serde_json::to_value(data).expect("serialize");
+        assert_eq!(json["commentOriginalCommentId"], "c1");
+        assert_eq!(json["commentAnonymous"], true);
+        assert_eq!(json["commentVisible"], true);
+        assert_eq!(json["commentContent"], "**hello**");
+        assert!(json.get("apiKey").is_none());
+    }
+}

@@ -32,6 +32,7 @@ import type {
 } from "./types";
 
 const missingCommands = new Set<string>();
+let settingsWrites: Promise<unknown> = Promise.resolve();
 
 export async function invokeSettingsGet(): Promise<
   BridgeOutcome<DesktopSettings>
@@ -49,9 +50,20 @@ export async function invokeSettingsGet(): Promise<
 export function invokeSettingsSet(
   settings: DesktopSettings,
 ): Promise<BridgeOutcome> {
-  return invokeVoid(SETTINGS_COMMAND.set, {
-    request: normalizeSettings(settings),
+  const request = normalizeSettings(settings);
+  const write = settingsWrites.then(async () => {
+    const result = await invokeVoid(SETTINGS_COMMAND.set, { request });
+    if (result.status !== "ok" && currentDesktopSettings()?.settings === settings) {
+      const saved = await invokeSettingsGet();
+      // A failed write must not roll back a newer optimistic edit.
+      if (saved.status === "ok" && currentDesktopSettings()?.settings === settings) {
+        publishDesktopSettings({ ready: true, settings: saved.data });
+      }
+    }
+    return result;
   });
+  settingsWrites = write.catch(() => undefined);
+  return write;
 }
 
 export function invokeAlwaysOnTop(on: boolean): Promise<BridgeOutcome> {
@@ -94,7 +106,7 @@ export function normalizeSettings(
   const source = input ?? {};
   return {
     themeId: resolveThemeId(source.themeId),
-    alwaysOnTop: Boolean(source.alwaysOnTop),
+    alwaysOnTop: readBoolean(source.alwaysOnTop, DEFAULT_SETTINGS.alwaysOnTop),
     opacity: clampOpacity(source.opacity ?? DEFAULT_SETTINGS.opacity),
     opacityEnabled: readBoolean(
       source.opacityEnabled,
@@ -105,7 +117,7 @@ export function normalizeSettings(
         ? source.closeToTray
         : DEFAULT_SETTINGS.closeToTray,
     bossKey: normalizeBossKey(source.bossKey),
-    notifyEnabled: Boolean(source.notifyEnabled),
+    notifyEnabled: readBoolean(source.notifyEnabled, DEFAULT_SETTINGS.notifyEnabled),
     notifyChatroom: readBoolean(source.notifyChatroom),
     notifyChat: readBoolean(source.notifyChat),
     notifyAt: readBoolean(source.notifyAt),

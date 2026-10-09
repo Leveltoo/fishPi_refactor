@@ -21,17 +21,14 @@ import {
 } from "@/components/ui/popover";
 import { MentionList } from "@/features/overlay/MentionList";
 import { insertMention, readMention } from "@/features/overlay/mention";
-import { isUploadableMedia, uploadMediaToMarkdown } from "../../../lib/upload";
+import { isImageFile, uploadMediaToMarkdown } from "../../../lib/upload";
 import { fetchChatroomBarrageCost, fetchChatroomRaw, sendChatroomBarrager, type BarrageCost } from "../chatroomApi";
 import { DEFAULT_EMOJIS } from "../defaultEmojis";
 import { dispatchRedpacketSend } from "../redpacketEvents";
-import { safeCssColor, toMusicBox, topicQuote } from "../messageView";
+import { safeCssColor } from "../messageView";
 import { isOutcomeUnknown, toUserErrorMessage } from "../toUserError";
 import { EmojiPanel } from "./EmojiPanel";
-import {
-  formatReplyTemplate,
-  type ReplyTarget,
-} from "../replyQuote";
+import type { ReplyTarget } from "../replyQuote";
 import {
   htmlImageSources,
   isFileSrc,
@@ -39,6 +36,7 @@ import {
   uploadLocalSources,
 } from "../pasteImages";
 import type { ClipboardEvent } from "react";
+import { composeChatroomMessage, insertTextAtSelection, withReplyPrefix } from "../composerLogic";
 
 type ComposerProps = {
   disabled: boolean;
@@ -106,7 +104,7 @@ function readStoredHeight(): number {
 
 /**
  * 输入区：顶部图标工具条 → 拖拽调高 hr → textarea + 右侧等高发送钮 + .msg-more 话题 Tag。
- * 回复只在 chip 展示，发送时再拼接引用（原文优先 chatroom_raw）。
+ * 回复添加「并说：」前缀，发送时再拼接引用（优先 md，否则 chatroom_raw）。
  * 输入 `@query` 弹出 overlay `MentionList`（任意位置且 @ 后有字符才触发）。
  * Enter 发送，Ctrl/Shift+Enter 换行；高度持久化 localStorage `message-height`（48–400）。
  */
@@ -136,6 +134,7 @@ export function Composer({
   const [barrageBusy, setBarrageBusy] = useState(false);
   const [barrageCost, setBarrageCost] = useState<BarrageCost | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [msgHeight, setMsgHeight] = useState<number>(() => readStoredHeight());
   const [resizing, setResizing] = useState(false);
@@ -148,6 +147,8 @@ export function Composer({
   const dragStartRef = useRef<{ y: number; height: number } | null>(null);
   /** 对齐旧 lastCursor：工具条/表情面板抢焦点后仍插回原光标。 */
   const lastCursorRef = useRef(0);
+  const submitBusyRef = useRef(false);
+  const uploadBusyRef = useRef(false);
   const rawMention = disabled ? null : readMention(draft, caret);
   const mention =
     rawMention && rawMention.start !== dismissedStart ? rawMention : null;
@@ -220,12 +221,14 @@ export function Composer({
   useEffect(() => {
     if (replyTo == null) {
       appliedReplyIdRef.current = null;
+      setDraft((current) => withReplyPrefix(current, false));
       return;
     }
     if (appliedReplyIdRef.current === replyTo.id) {
       return;
     }
     appliedReplyIdRef.current = replyTo.id;
+    setDraft((current) => withReplyPrefix(current, true));
     requestAnimationFrame(() => {
       const node =
         textareaRef.current ??
@@ -332,37 +335,34 @@ export function Composer({
   }
 
   async function submit(): Promise<void> {
-    const base = draft.trim();
-    if (base.length === 0 || disabled || sending) {
+    if (draft.trim().length === 0 || disabled || sending || pendingConfirm || submitBusyRef.current || uploadBusyRef.current) {
       return;
     }
-    let content = toMusicBox(base);
-    if (replyTo != null) {
-      let raw = replyTo.body === "（空消息）" ? "" : replyTo.body;
-      if (/^\d+$/.test(replyTo.id)) {
-        try {
-          const fetched = await fetchChatroomRaw(replyTo.id);
-          if (fetched.trim().length > 0) {
-            raw = fetched;
-          }
-        } catch {
-          // 回落本地 md/text。
+    submitBusyRef.current = true;
+    setPreparing(true);
+    try {
+      let raw: string | undefined;
+      if (replyTo != null) {
+        raw = replyTo.raw ?? replyTo.body;
+        if (replyTo.raw == null && /^\d+$/.test(replyTo.id)) {
+          raw = await fetchChatroomRaw(replyTo.id);
         }
       }
-      content = `${formatReplyTemplate(replyTo, selfUserName, raw)}${content}`;
-    }
-    if (discussed != null && discussed.length > 0) {
-      content += `\r\n${topicQuote(discussed)}`;
-      onClearDiscussed?.();
-    }
-    const accepted = await onSend(content);
-    if (accepted) {
-      setDraft("");
-      setCaret(0);
-      lastCursorRef.current = 0;
-      setDismissedStart(null);
-      onClearReply();
-      onClearDiscussed?.();
+      const content = composeChatroomMessage(draft, { replyTo, selfUserName, raw, discussed });
+      const accepted = await onSend(content);
+      if (accepted) {
+        setDraft("");
+        setCaret(0);
+        lastCursorRef.current = 0;
+        setDismissedStart(null);
+        onClearReply();
+        onClearDiscussed?.();
+      }
+    } catch (err) {
+      toast.error(toUserErrorMessage(err));
+    } finally {
+      submitBusyRef.current = false;
+      setPreparing(false);
     }
   }
 
@@ -422,7 +422,17 @@ export function Composer({
     if (event.nativeEvent.isComposing) {
       return;
     }
-    // Ctrl/Shift+Enter 换行：不拦默认行为；裸 Enter 才发送（对齐旧 onEnter/onCtrlEnter）
+    if (event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      const next = insertTextAtSelection(
+        draft, event.currentTarget.selectionStart, event.currentTarget.selectionEnd, "\n",
+      );
+      setDraft(next.text);
+      setCaret(next.caret);
+      lastCursorRef.current = next.caret;
+      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(next.caret, next.caret));
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.shiftKey) {
       return;
     }
@@ -536,10 +546,11 @@ export function Composer({
   }
 
   async function appendUploadedMarkdown(files: File[]): Promise<void> {
-    const media = files.filter(isUploadableMedia);
-    if (media.length === 0 || uploadBusy) {
+    const media = files.filter(isImageFile);
+    if (media.length === 0 || uploadBusyRef.current) {
       return;
     }
+    uploadBusyRef.current = true;
     setUploadBusy(true);
     setUploadError(null);
     try {
@@ -566,6 +577,7 @@ export function Composer({
     } catch (err) {
       setUploadError(toUserErrorMessage(err));
     } finally {
+      uploadBusyRef.current = false;
       setUploadBusy(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -575,7 +587,7 @@ export function Composer({
 
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
     const clipboard = event.clipboardData;
-    if (clipboard == null || disabled) {
+    if (clipboard == null || disabled || uploadBusyRef.current) {
       return;
     }
 
@@ -591,11 +603,11 @@ export function Composer({
       }
     }
     const files = itemFiles.length > 0 ? itemFiles : Array.from(clipboard.files ?? []);
-    const hasImageFile = files.some(isUploadableMedia);
+    const hasImageFile = files.some(isImageFile);
     const html = clipboard.getData("text/html");
     const srcs = html.length > 0 ? htmlImageSources(html) : [];
-    const remote = remoteImageMarkdown(srcs);
-    const localSrcs = srcs.filter(isFileSrc);
+    const remote = hasImageFile ? "" : remoteImageMarkdown(srcs);
+    const localSrcs = hasImageFile ? [] : srcs.filter(isFileSrc);
 
     if (!hasImageFile && remote.length === 0 && localSrcs.length === 0) {
       return;
@@ -606,10 +618,13 @@ export function Composer({
       insertAtLastCursor(remote);
     }
     const toUpload = [
-      ...files.filter(isUploadableMedia),
+      ...files.filter(isImageFile),
     ];
     void (async () => {
       if (localSrcs.length > 0) {
+        uploadBusyRef.current = true;
+        setUploadBusy(true);
+        setUploadError(null);
         try {
           const markdown = await uploadLocalSources(localSrcs);
           if (markdown.length > 0) {
@@ -621,6 +636,9 @@ export function Composer({
           }
         } catch (err) {
           setUploadError(toUserErrorMessage(err));
+        } finally {
+          uploadBusyRef.current = false;
+          setUploadBusy(false);
         }
       }
       if (toUpload.length > 0) {
@@ -649,6 +667,7 @@ export function Composer({
             variant="ghost"
             size="xs"
             onClick={clearReply}
+            disabled={preparing}
           >
             取消
           </Button>
@@ -662,7 +681,7 @@ export function Composer({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*"
           multiple
           className="visually-hidden"
           aria-hidden="true"
@@ -679,6 +698,7 @@ export function Composer({
           title="消息清屏"
           aria-label="消息清屏"
           onClick={() => onClear?.()}
+          disabled={preparing || sending || uploadBusy}
         >
           <RefreshCw aria-hidden="true" />
         </Button>
@@ -689,7 +709,7 @@ export function Composer({
           className="chat-composer-tool"
           title={uploadBusy ? "上传中..." : "上传图片"}
           aria-label="上传图片"
-          disabled={disabled || uploadBusy}
+          disabled={disabled || uploadBusy || preparing}
           onClick={() => fileInputRef.current?.click()}
         >
           {uploadBusy ? <Spinner /> : <ImageIcon aria-hidden="true" />}
@@ -703,14 +723,14 @@ export function Composer({
               className={emojiOpen ? "chat-composer-tool is-active" : "chat-composer-tool"}
               title="发表情"
               aria-label="发表情"
-              disabled={disabled}
+              disabled={disabled || preparing}
             >
               <Smile aria-hidden="true" />
             </Button>
           </PopoverTrigger>
           <PopoverContent align="start" className="chat-emoji-popover">
             <EmojiPanel
-              disabled={disabled}
+              disabled={disabled || preparing}
               onInsert={(token) => {
                 insertToken(token);
                 setEmojiOpen(false);
@@ -903,7 +923,7 @@ export function Composer({
             className="chat-composer-input"
             spellCheck={false}
             value={draft}
-            disabled={disabled}
+            disabled={disabled || preparing}
             placeholder={disabled ? "当前无法发送" : "简单聊聊"}
             aria-expanded={mention != null || emojiComplete != null}
             aria-autocomplete="list"
@@ -933,9 +953,9 @@ export function Composer({
           className="chat-send"
           title="发送"
           aria-label="发送"
-          disabled={disabled || sending || draft.trim().length === 0}
+          disabled={disabled || sending || preparing || pendingConfirm || uploadBusy || draft.trim().length === 0}
         >
-          {sending ? <Spinner /> : <Send aria-hidden="true" />}
+          {sending || preparing ? <Spinner /> : <Send aria-hidden="true" />}
         </Button>
         {discussed != null && discussed.length > 0 ? (
           <div className="chat-composer-more">
@@ -945,6 +965,7 @@ export function Composer({
               title="移除话题带出"
               aria-label={`移除话题带出 ${discussed}`}
               onClick={() => onClearDiscussed?.()}
+              disabled={preparing}
             >
               #{discussed}#
               <span aria-hidden="true">×</span>

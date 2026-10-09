@@ -2,19 +2,13 @@ import { Minus, Pin, X } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_SETTINGS } from "@/features/settings/constants";
 import {
-  invokeAlwaysOnTop,
-  invokeSettingsSet,
-  normalizeSettings,
-} from "@/features/settings/api";
-import {
-  currentDesktopSettings,
-  publishDesktopSettings,
   subscribeDesktopSettings,
 } from "@/features/settings/settingsStore";
 import {
   closeMainWindow,
   hideMainToTray,
   toggleWindowOpacity,
+  toggleWindowPin,
 } from "./windowActions";
 
 type WinBtnProps = {
@@ -84,21 +78,7 @@ export function WindowControls({ compact = false }: { compact?: boolean }) {
   }, [opacityEnabled, settingsOpacity]);
 
   const onTogglePin = useCallback(() => {
-    void (async () => {
-      const next = !alwaysOnTop;
-      try {
-        const result = await invokeAlwaysOnTop(next);
-        setAlwaysOnTop(next);
-        if (result.status === "ok") {
-          const base = currentDesktopSettings()?.settings ?? DEFAULT_SETTINGS;
-          const settings = normalizeSettings({ ...base, alwaysOnTop: next });
-          publishDesktopSettings({ ready: true, settings });
-          void invokeSettingsSet(settings);
-        }
-      } catch {
-        setAlwaysOnTop(next);
-      }
-    })();
+    void toggleWindowPin(alwaysOnTop).then(setAlwaysOnTop);
   }, [alwaysOnTop]);
 
   const onClose = useCallback(() => {

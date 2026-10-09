@@ -124,6 +124,9 @@ fn toggle_main(app: &AppHandle) {
     let visible = window.is_visible().unwrap_or(false);
     let minimized = window.is_minimized().unwrap_or(true);
     if visible && !minimized {
+        if let Some(card) = app.get_webview_window("user-card") {
+            let _ = card.hide();
+        }
         let _ = window.hide();
         return;
     }

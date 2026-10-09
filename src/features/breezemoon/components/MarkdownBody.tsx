@@ -4,7 +4,7 @@ import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 
-import { RichHtml } from "../../../lib/RichHtml";
+import { ContentHtml } from "../../article/ContentHtml";
 import { looksLikeHtml } from "../../../lib/safeHtml";
 import {
   markdownUrlTransform,
@@ -120,11 +120,12 @@ export function MarkdownBody({ source }: MarkdownBodyProps) {
     return null;
   }
   if (looksLikeHtml(text)) {
-    return <RichHtml source={text} className="bm-md" />;
+    return <ContentHtml source={text} className="bm-md" />;
   }
   return (
     <div className="bm-md" onClick={onMarkdownClick}>
       <ReactMarkdown
+        skipHtml
         unwrapDisallowed
         allowedElements={ALLOWED_ELEMENTS}
         urlTransform={markdownUrlTransform}

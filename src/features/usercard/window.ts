@@ -153,7 +153,27 @@ export async function showUserCardWindow(
       focus: false,
       transparent: true,
     });
-    await win.once("tauri://created", () => undefined);
+    await new Promise<void>((resolve, reject) => {
+      const stops: Array<() => void> = [];
+      let settled = false;
+      function finish(error?: unknown): void {
+        if (settled) return;
+        settled = true;
+        stops.forEach((stop) => stop());
+        if (error === undefined) resolve();
+        else reject(error);
+      }
+      const timer = window.setTimeout(() => finish(new Error("User card creation timed out")), 10000);
+      function register(event: string, handler: (event: { payload: unknown }) => void): void {
+        void win.once(event, handler).then((stop) => {
+          if (settled) stop();
+          else stops.push(stop);
+        }).catch(finish);
+      }
+      stops.push(() => window.clearTimeout(timer));
+      register("tauri://created", () => finish());
+      register("tauri://error", (event) => finish(event.payload));
+    });
   })().finally(() => {
     createLock = null;
   });

@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { PencilSimpleIcon, TrashIcon } from "@phosphor-icons/react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -18,7 +17,7 @@ type TimelineProps = {
   loading: boolean;
   loadingMore: boolean;
   hasMore: boolean;
-  selfUserName?: string | null;
+  scrollReset: number;
   onLoadMore: () => void;
 };
 
@@ -34,19 +33,10 @@ function viewportOf(root: HTMLElement | null): HTMLElement | null {
   return root.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
 }
 
-function Item({
-  item,
-  selfUserName,
-}: {
-  item: BreezemoonDto;
-  selfUserName?: string | null;
-}) {
+function Item({ item }: { item: BreezemoonDto }) {
   const avatarSrc = sanitizeHttpUrl(item.authorAvatarUrl);
   const name = item.authorName.trim() || "未知用户";
   const time = item.timeAgo.trim() || item.created.trim();
-  const own =
-    (selfUserName?.trim() ?? "").length > 0 &&
-    item.authorName.trim() === selfUserName?.trim();
 
   function openCard(): void {
     dispatchUserCard({
@@ -81,28 +71,6 @@ function Item({
         <div className="bm-item-content">
           <BreezemoonBody source={item.content} />
         </div>
-        {own ? (
-          <div className="bm-item-actions">
-            <button
-              type="button"
-              className="bm-item-action"
-              disabled
-              title="SDK 没有编辑接口，不会假装成功"
-            >
-              <PencilSimpleIcon />
-              编辑
-            </button>
-            <button
-              type="button"
-              className="bm-item-action"
-              disabled
-              title="SDK 没有删除接口，不会假装成功"
-            >
-              <TrashIcon />
-              删除
-            </button>
-          </div>
-        ) : null}
       </div>
     </article>
   );
@@ -125,11 +93,15 @@ export function Timeline({
   loading,
   loadingMore,
   hasMore,
-  selfUserName,
+  scrollReset,
   onLoadMore,
 }: TimelineProps) {
   const areaRef = useRef<HTMLDivElement | null>(null);
   const onScrollRef = useRef<() => void>(() => undefined);
+
+  useEffect(() => {
+    viewportOf(areaRef.current)?.scrollTo({ top: 0 });
+  }, [scrollReset]);
 
   function onScroll(): void {
     const root = viewportOf(areaRef.current);
@@ -182,7 +154,7 @@ export function Timeline({
             ) : null}
 
             {items.map((item) => (
-              <Item key={item.id} item={item} selfUserName={selfUserName} />
+              <Item key={item.id} item={item} />
             ))}
 
             {hasMore && items.length > 0 ? (

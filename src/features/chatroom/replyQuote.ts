@@ -5,6 +5,7 @@ export type ReplyTarget = {
   userName: string;
   displayName: string;
   body: string;
+  raw?: string;
 };
 
 export function displayNameOf(message: ChatMessageDto): string {
@@ -36,6 +37,7 @@ export function toReplyTarget(message: ChatMessageDto): ReplyTarget {
     userName: message.userName,
     displayName: displayNameOf(message),
     body: messagePlainBody(message),
+    ...(message.md ? { raw: message.md } : {}),
   };
 }
 

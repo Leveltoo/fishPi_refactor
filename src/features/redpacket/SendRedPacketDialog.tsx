@@ -1,4 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import type { OnlineEvent } from "../../lib/types";
+import { readSelfSession } from "./api";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -40,6 +43,7 @@ import type { RedPacketType, SendSession } from "./types";
 type SendRedPacketDialogProps = {
   session: SendSession;
   submitting: boolean;
+  uncertain: boolean;
   notice: string | null;
   onSubmit: (form: SendFormValues) => void;
   onClose: () => void;
@@ -48,11 +52,14 @@ type SendRedPacketDialogProps = {
 export function SendRedPacketDialog({
   session,
   submitting,
+  uncertain,
   notice,
   onSubmit,
   onClose,
 }: SendRedPacketDialogProps) {
-  const typeLocked = Boolean(session.lockedUser || session.lockedType === "specify");
+  const typeLocked = Boolean(session.lockedUser);
+  const disabled = submitting || uncertain;
+  const [onlineUsers, setOnlineUsers] = useState(session.onlineUsers);
   const [form, setForm] = useState<SendFormValues>(() =>
     createSendFormValues(
       session.lockedType ?? "random",
@@ -67,9 +74,26 @@ export function SendRedPacketDialog({
   const showGestures = type === "rockPaperScissors";
 
   const selectedSet = useMemo(
-    () => new Set(form.receivers.map((name) => name.toLowerCase())),
+    () => new Set(form.receivers),
     [form.receivers],
   );
+
+  useEffect(() => {
+    let stopped = false;
+    const subscription = (async () => {
+      const me = await readSelfSession();
+      if (stopped || !me) return null;
+      return listen<OnlineEvent>("chatroom://online", ({ payload }) => {
+        if (!stopped && payload.sessionGeneration === me.sessionGeneration) {
+          setOnlineUsers(payload.users);
+        }
+      });
+    })().catch(() => null);
+    return () => {
+      stopped = true;
+      void subscription.then((unlisten) => unlisten?.());
+    };
+  }, []);
 
   function update<K extends keyof SendFormValues>(key: K, value: SendFormValues[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -82,7 +106,6 @@ export function SendRedPacketDialog({
     setForm((current) => ({
       ...current,
       type: next,
-      receivers: next === "specify" ? current.receivers : [],
     }));
     setErrors({});
   }
@@ -90,13 +113,13 @@ export function SendRedPacketDialog({
   function toggleReceiver(userName: string) {
     setForm((current) => {
       const exists = current.receivers.some(
-        (name) => name.toLowerCase() === userName.toLowerCase(),
+        (name) => name === userName,
       );
       return {
         ...current,
         receivers: exists
           ? current.receivers.filter(
-              (name) => name.toLowerCase() !== userName.toLowerCase(),
+              (name) => name !== userName,
             )
           : [...current.receivers, userName],
       };
@@ -120,7 +143,7 @@ export function SendRedPacketDialog({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !submitting) {
+        if (!open) {
           onClose();
         }
       }}
@@ -132,13 +155,13 @@ export function SendRedPacketDialog({
           <DialogDescription className="rp-blessing">
             {session.lockedUser
               ? `给 ${session.lockedUser} 的专属红包`
-              : "选择类型后包出去，请求被接受不等于聊天室已回显。"}
+              : ""}
           </DialogDescription>
         </DialogHeader>
 
         <FieldGroup className="rp-form">
           <Field>
-            <FieldLabel>类型</FieldLabel>
+            <FieldLabel htmlFor="rp-type">类型</FieldLabel>
             <Select
               value={type}
               onValueChange={(value) => {
@@ -146,9 +169,9 @@ export function SendRedPacketDialog({
                   changeType(value);
                 }
               }}
-              disabled={typeLocked || submitting}
+              disabled={typeLocked || disabled}
             >
-              <SelectTrigger className="rp-select">
+              <SelectTrigger id="rp-type" className="rp-select">
                 <SelectValue placeholder="选择红包类型" />
               </SelectTrigger>
               <SelectContent>
@@ -165,8 +188,7 @@ export function SendRedPacketDialog({
             <GesturePicker
               value={form.gesture}
               onChange={(gesture) => update("gesture", gesture)}
-              caption="猜拳出手"
-              disabled={submitting}
+              disabled={disabled}
             />
           ) : null}
 
@@ -175,17 +197,19 @@ export function SendRedPacketDialog({
               <FieldLabel>发给谁</FieldLabel>
               {session.lockedUser ? (
                 <p className="rp-locked">给 {session.lockedUser} ❤</p>
-              ) : session.onlineUsers.length > 0 ? (
+              ) : onlineUsers.length > 0 ? (
                 <div className="rp-users">
-                  {session.onlineUsers.map((user) => {
-                    const checked = selectedSet.has(user.userName.toLowerCase());
+                  {onlineUsers.map((user) => {
+                    const checked = selectedSet.has(user.userName);
                     return (
                       <button
                         key={user.userName}
                         type="button"
                         className={checked ? "rp-user is-check" : "rp-user"}
                         title={user.userName}
-                        disabled={submitting}
+                        aria-label={user.userName}
+                        aria-pressed={checked}
+                        disabled={disabled}
                         onClick={() => toggleReceiver(user.userName)}
                       >
                         <SenderFace name={user.userName} src={user.userAvatarUrl} size="sm" />
@@ -193,36 +217,22 @@ export function SendRedPacketDialog({
                     );
                   })}
                 </div>
-              ) : (
-                <Input
-                  value={form.receiverDraft}
-                  placeholder="用户名，逗号分隔"
-                  disabled={submitting}
-                  aria-invalid={Boolean(errors.receivers)}
-                  onChange={(event) => update("receiverDraft", event.target.value)}
-                />
-              )}
-              {session.onlineUsers.length > 0 && !session.lockedUser ? (
-                <Input
-                  className="rp-extra-receivers"
-                  value={form.receiverDraft}
-                  placeholder="也可以再填用户名"
-                  disabled={submitting}
-                  onChange={(event) => update("receiverDraft", event.target.value)}
-                />
-              ) : null}
+              ) : <p className="rp-empty">暂无在线用户</p>}
               <FieldError>{errors.receivers}</FieldError>
             </Field>
           ) : null}
 
           <Field data-invalid={Boolean(errors.money) || undefined}>
-            <FieldLabel>积分</FieldLabel>
+            <FieldLabel htmlFor="rp-money">积分</FieldLabel>
             <Input
               type="number"
+              id="rp-money"
               min={1}
+              max={0xffff_ffff}
+              step={1}
               inputMode="numeric"
               value={form.money}
-              disabled={submitting}
+              disabled={disabled}
               aria-invalid={Boolean(errors.money)}
               onChange={(event) => update("money", event.target.value)}
             />
@@ -231,14 +241,16 @@ export function SendRedPacketDialog({
 
           {showCount ? (
             <Field data-invalid={Boolean(errors.count) || undefined}>
-              <FieldLabel>个数</FieldLabel>
+              <FieldLabel htmlFor="rp-count">个数</FieldLabel>
               <Input
                 type="number"
+                id="rp-count"
                 min={1}
                 max={1000}
+                step={1}
                 inputMode="numeric"
                 value={form.count}
-                disabled={submitting}
+                disabled={disabled}
                 aria-invalid={Boolean(errors.count)}
                 onChange={(event) => update("count", event.target.value)}
               />
@@ -247,11 +259,12 @@ export function SendRedPacketDialog({
           ) : null}
 
           <Field>
-            <FieldLabel>留言</FieldLabel>
+            <FieldLabel htmlFor="rp-message">留言</FieldLabel>
             <Textarea
               rows={3}
+              id="rp-message"
               value={form.message}
-              disabled={submitting}
+              disabled={disabled}
               placeholder={DEFAULT_BLESSING[type]}
               onChange={(event) => update("message", event.target.value)}
             />
@@ -265,7 +278,7 @@ export function SendRedPacketDialog({
         ) : null}
 
         <DialogFooter className="rp-footer">
-          <Button type="button" disabled={submitting} onClick={handleSubmit}>
+          <Button type="button" disabled={disabled} onClick={handleSubmit}>
             {submitting ? (
               <>
                 <Spinner />

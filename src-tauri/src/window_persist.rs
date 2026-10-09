@@ -38,25 +38,26 @@ fn listen_resize(app: &tauri::App) {
     };
     let app_handle = app.handle().clone();
     let tracked = window.clone();
-    window.on_window_event(move |event| {
-        match event {
-            tauri::WindowEvent::Resized(size) => {
-                if size.width == 0 || size.height == 0 {
-                    return;
-                }
-                let scale = tracked.scale_factor().unwrap_or(1.0);
-                if scale <= 0.0 {
-                    return;
-                }
-                let width = ((f64::from(size.width) / scale).round() as u32).max(350);
-                let height = ((f64::from(size.height) / scale).round() as u32).max(200);
-                persist_later(app_handle.clone(), width, height);
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Resized(size) => {
+            if size.width == 0 || size.height == 0 {
+                return;
             }
-            tauri::WindowEvent::Focused(true) => {
-                crate::tray::reset_flash(&app_handle);
+            let scale = tracked.scale_factor().unwrap_or(1.0);
+            if scale <= 0.0 {
+                return;
             }
-            _ => {}
+            let width = ((f64::from(size.width) / scale).round() as u32).max(350);
+            let height = ((f64::from(size.height) / scale).round() as u32).max(200);
+            persist_later(app_handle.clone(), width, height);
         }
+        tauri::WindowEvent::Focused(true) => {
+            crate::tray::reset_flash(&app_handle);
+            if let Some(card) = app_handle.get_webview_window("user-card") {
+                let _ = card.hide();
+            }
+        }
+        _ => {}
     });
 }
 

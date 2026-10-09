@@ -39,6 +39,7 @@ const SIDEBAR_KEY = "showSidebar";
 type OnlineSidebarProps = {
   onlineCount: number | null;
   users: OnlineUser[];
+  selfUserName?: string | null;
   connectionStatus: string;
   busy: boolean;
   onRebuild: () => void;
@@ -76,6 +77,7 @@ function writeShowSidebar(show: boolean): void {
 export function OnlineSidebar({
   onlineCount,
   users,
+  selfUserName = null,
   connectionStatus,
   busy,
   onRebuild,
@@ -231,6 +233,7 @@ export function OnlineSidebar({
                       </ContextMenuTrigger>
                       <UserContextMenu
                         userName={user.userName}
+                        selfUserName={selfUserName}
                         onMention={onMention}
                       />
                     </ContextMenu>

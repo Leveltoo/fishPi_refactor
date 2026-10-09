@@ -29,13 +29,12 @@ import {
   asRich,
   safeCssColor,
   usernameShielded,
-  viaLabel,
   type AlsoSaid,
 } from "../messageView";
 import type { ShieldRule } from "../chatroomApi";
 import {
   playlistHasSong,
-  playNeteaseSong,
+  enqueueNeteaseSong,
   removeNeteaseSong,
 } from "@/features/music";
 import {
@@ -52,6 +51,12 @@ import { ChatHtmlView, looksLikeHtml, messageHtmlSource } from "./ChatHtmlView";
 import { MusicCard } from "./MusicCard";
 import { WeatherCard } from "./WeatherCard";
 import { isEmojiImage } from "../emojiShortcode";
+import { ChevronDown } from "lucide-react";
+import { fetchChatroomRaw } from "../chatroomApi";
+import { toUserErrorMessage } from "../toUserError";
+import { viaDetails } from "../via";
+import { openSafeExternalUrl } from "../../../lib/markdown";
+import { revokeRepeatChain } from "../revokeChain";
 
 type MessageItemProps = {
   message: ChatMessageDto;
@@ -63,7 +68,7 @@ type MessageItemProps = {
   selfUserName: string | null;
   selfRole: string | null;
   onReply: (message: ChatMessageDto) => void;
-  onRevoke: (messageId: string) => Promise<void>;
+  onRevoke: (messageId: string) => Promise<boolean>;
   onPlusOne: (message: ChatMessageDto) => void;
   onMention: (userName: string) => void;
   onInsertToken?: (token: string) => void;
@@ -204,6 +209,9 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
     a.kind === b.kind &&
     asRich(a).color === asRich(b).color &&
     asRich(a).viaClient === asRich(b).viaClient &&
+    asRich(a).viaVersion === asRich(b).viaVersion &&
+    asRich(a).music === asRich(b).music &&
+    asRich(a).weather === asRich(b).weather &&
     a.redpacket?.got === b.redpacket?.got &&
     a.redpacket?.count === b.redpacket?.count &&
     a.redpacket?.money === b.redpacket?.money &&
@@ -325,6 +333,7 @@ export const MessageItem = memo(function MessageItem({
   const barragerColor =
     message.kind === "barrager" ? safeCssColor(rich.color) : null;
   const viaClient = rich.viaClient?.trim() ?? "";
+  const via = viaDetails(viaClient, rich.viaVersion);
   const visibleAlso = alsoSaid.filter(
     (user) => !usernameShielded(user.userName, shield),
   );
@@ -356,31 +365,29 @@ export const MessageItem = memo(function MessageItem({
     }
     setRevoking(true);
     try {
-      for (const entry of alsoSaid) {
-        if (/^\d+$/.test(entry.id)) {
-          await onRevoke(entry.id);
-        }
-      }
-      await onRevoke(message.id);
+      await revokeRepeatChain(message.id, alsoSaid.map((entry) => entry.id), onRevoke);
     } finally {
       setRevoking(false);
     }
   }
 
   async function handleCopyMessage(): Promise<void> {
+    if (message.md) {
+      await copyText(message.md);
+      toast.success("已复制消息");
+      return;
+    }
     if (/^\d+$/.test(message.id)) {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const raw = await invoke<string>("chatroom_raw", {
-          request: { messageId: message.id },
-        });
+        const raw = await fetchChatroomRaw(message.id);
         if (raw.trim().length > 0) {
           await copyText(raw);
           toast.success("已复制消息");
           return;
         }
-      } catch {
-        // 回落到本地 md / text。
+      } catch (err) {
+        toast.error(toUserErrorMessage(err));
+        return;
       }
     }
     await copyText(copySource === "（空消息）" ? "" : copySource);
@@ -408,6 +415,8 @@ export const MessageItem = memo(function MessageItem({
    * 对齐旧版「封面右键 → 加入/移出播放列表」，但不依赖 cover 的特殊 class。
    */
   function musicSongIdForMenu(): string | null {
+    const player = msgTarget?.closest(".chat-netease-player")?.getAttribute("data-song-id");
+    if (player) return player;
     const inMusic =
       message.kind === "music" || msgTarget?.closest(".chat-music") != null;
     if (!inMusic) {
@@ -496,7 +505,8 @@ export const MessageItem = memo(function MessageItem({
   );
 
   return (
-    <article className={className} data-msg-id={message.id}>
+    <article className={className} data-msg-id={message.id}
+      title={message.kind === "barrager" ? `${name}: ${message.text ?? ""}` : message.time}>
       {userMenuBody}
       <div className="chat-msg-body">
         {!system && message.kind !== "barrager" && (
@@ -504,12 +514,17 @@ export const MessageItem = memo(function MessageItem({
             {nameMenuBody}
             {cared ? <span className="chat-care-mark">关心</span> : null}
             {viaClient.length > 0 ? (
-              <span
+              <a
                 className="chat-via"
-                title={`${viaClient}${rich.viaVersion ? `@${rich.viaVersion}` : ""}`}
+                title={via.title}
+                href={via.url}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openSafeExternalUrl(via.url);
+                }}
               >
-                {viaLabel(viaClient)}
-              </span>
+                {via.label}
+              </a>
             ) : null}
             <time className="chat-msg-time">{message.time}</time>
           </header>
@@ -599,15 +614,7 @@ export const MessageItem = memo(function MessageItem({
                     title={expanded ? "合并" : "展开"}
                     onClick={() => setExpanded((value) => !value)}
                   >
-                    <svg
-                      viewBox="0 0 16 16"
-                      width="12"
-                      height="12"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path d="M4 6l4 4 4-4" />
-                    </svg>
+                    <ChevronDown size={12} aria-hidden="true" />
                     <span>{expanded ? "合并" : "展开"}</span>
                   </button>
                 ) : null}
@@ -636,8 +643,8 @@ export const MessageItem = memo(function MessageItem({
                       }
                       return;
                     }
-                    if (playNeteaseSong(musicSongId)) {
-                      toast.success("已交给播放列表");
+                    if (enqueueNeteaseSong(musicSongId)) {
+                      toast.success("已加入播放列表");
                     } else {
                       toast.warning("播放列表未就绪，请先打开侧栏「播放列表」");
                     }
@@ -677,7 +684,7 @@ export const MessageItem = memo(function MessageItem({
                 复制地址
               </ContextMenuItem>
 
-              {!system && !mine && message.userName.length > 0 && !redpacket ? (
+              {!system && message.userName.length > 0 && !redpacket ? (
                 <ContextMenuItem
                   onSelect={() => {
                     dispatchRedpacketSend({ user: message.userName });
@@ -754,6 +761,10 @@ export const MessageItem = memo(function MessageItem({
               ) : null}
             </ContextMenuContent>
           </ContextMenu>
+          {showPlusOne ? (
+            <button type="button" className="chat-plus-one" title="复读一下"
+              onClick={() => onPlusOne(message)}>+1</button>
+          ) : null}
         </div>
         {redpacket && !message.revoked ? (
           <RedpacketWhoRow
@@ -763,15 +774,6 @@ export const MessageItem = memo(function MessageItem({
             userAvatarMap={userAvatarMap}
             onMention={onMention}
           />
-        ) : null}
-        {showPlusOne ? (
-          <button
-            type="button"
-            className="chat-plus-one"
-            onClick={() => onPlusOne(message)}
-          >
-            +1
-          </button>
         ) : null}
         {visibleAlso.length > 0 ? (
           <div className="chat-also">
@@ -792,6 +794,7 @@ export const MessageItem = memo(function MessageItem({
                 return (
                   <span
                     key={user.id}
+                    data-msg-id={user.id}
                     className={
                       careNames.has(user.userName)
                         ? "chat-also-user is-cared"
@@ -813,6 +816,7 @@ export const MessageItem = memo(function MessageItem({
                           : "chat-also-user"
                       }
                       title={title}
+                      data-msg-id={user.id}
                       {...userCardProps(user.userName)}
                     >
                       {inner}

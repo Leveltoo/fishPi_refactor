@@ -332,7 +332,7 @@ function mapNoticeList(payload: unknown, type: NoticeType): NoticeListResult {
   };
 }
 
-function mapNoticeItem(
+export function mapNoticeItem(
   raw: unknown,
   type: NoticeType,
   index: number,
@@ -379,23 +379,30 @@ function mapNoticeItem(
       "",
     hasRead:
       asBoolean(record.hasRead) ?? asBoolean(record.read) ?? false,
+    url: asString(record.url) ?? asString(record.commentSharpURL),
+    dataId: asString(record.dataId),
+    dataType: asNumber(record.dataType),
+    deleted: asBoolean(record.deleted) ?? false,
   };
 }
 
-function mapLiveness(payload: unknown): number {
+export function mapLiveness(payload: unknown): number {
   if (typeof payload === "number" && Number.isFinite(payload)) {
     return clampPercent(payload);
   }
   const record = asRecord(payload);
   if (!record) {
-    return 0;
+    throw new Error("活跃度响应没有有效数值");
   }
   const value =
     asNumber(record.liveness) ??
     asNumber(record.value) ??
     asNumber(record.percent) ??
     asNumber(record.data);
-  return clampPercent(value ?? 0);
+  if (value === undefined) {
+    throw new Error("活跃度响应没有有效数值");
+  }
+  return clampPercent(value);
 }
 
 function mapFlag(payload: unknown, keys: string[]): boolean {

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   Dialog,
@@ -27,6 +29,7 @@ import {
 } from "./events";
 import { useUserCardHover } from "../usercard/hover";
 import { showUserCardWindow } from "../usercard/window";
+import { fitImageLayout, zoomImageLayout, type ImageLayout } from "./imageLayout";
 import "./overlay.css";
 
 /**
@@ -36,7 +39,6 @@ import "./overlay.css";
  */
 export function OverlayHost() {
   const [image, setImage] = useState<PreviewImageDetail | null>(null);
-  const gen = useRef(0);
 
   useUserCardHover();
 
@@ -46,7 +48,6 @@ export function OverlayHost() {
       if (!next) {
         return;
       }
-      gen.current += 1;
       setImage(next);
     }
 
@@ -68,7 +69,7 @@ export function OverlayHost() {
         detail && typeof detail === "object" && typeof detail.y === "number"
           ? detail.y
           : undefined;
-      void showUserCardWindow(next, x, y);
+      void showUserCardWindow(next, x, y).catch(() => toast.error("打开名片失败"));
     }
 
     window.addEventListener(PREVIEW_IMAGE_EVENT, onImage);
@@ -88,13 +89,6 @@ export function OverlayHost() {
     />
   );
 }
-
-type ImageLayout = {
-  width: number;
-  height: number;
-  x: number;
-  y: number;
-};
 
 function ImagePreviewDialog({
   image,
@@ -117,6 +111,7 @@ function ImagePreviewDialog({
     y: 0,
   });
   const [dragging, setDragging] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const src = image ? (sanitizeHttpUrl(image.src) ?? image.src) : "";
   const title = imageName(image);
@@ -132,19 +127,9 @@ function ImagePreviewDialog({
     if (stage == null || img == null || img.naturalWidth === 0) {
       return;
     }
-    const content = {
-      width: stage.clientWidth,
-      height: stage.clientHeight,
-    };
-    const ratio = img.naturalHeight / img.naturalWidth;
-    const width = ratio <= 1 ? content.width : content.height / ratio;
-    const height = ratio > 1 ? content.height : content.width * ratio;
-    commit({
-      width,
-      height,
-      x: (content.width - width) / 2,
-      y: (content.height - height) / 2,
-    });
+    commit(fitImageLayout(
+      img.naturalWidth, img.naturalHeight, stage.clientWidth, stage.clientHeight,
+    ));
   }
 
   useEffect(() => {
@@ -152,6 +137,7 @@ function ImagePreviewDialog({
     setLayout({ width: 0, height: 0, x: 0, y: 0 });
     dragRef.current = null;
     setDragging(false);
+    setFailed(false);
   }, [src]);
 
   useEffect(() => {
@@ -175,9 +161,7 @@ function ImagePreviewDialog({
       return;
     }
     const observer = new ResizeObserver(() => {
-      if (layoutRef.current.width <= 0) {
-        fitImage();
-      }
+      fitImage();
     });
     observer.observe(stage);
     const host = stage;
@@ -187,21 +171,10 @@ function ImagePreviewDialog({
       if (current.width <= 0 || current.height <= 0) {
         return;
       }
-      if (event.deltaY > 0 && (current.width < 20 || current.height < 20)) {
-        return;
-      }
-      const ratio = current.height / current.width;
-      const width = Math.max(20, current.width - event.deltaY);
-      const height = width * ratio;
       const rect = host.getBoundingClientRect();
       const cx = event.clientX - rect.left;
       const cy = event.clientY - rect.top;
-      commit({
-        width,
-        height,
-        x: cx - ((cx - current.x) / current.width) * width,
-        y: cy - ((cy - current.y) / current.height) * height,
-      });
+      commit(zoomImageLayout(current, event.deltaY, cx, cy));
     }
     host.addEventListener("wheel", onWheel, { passive: false });
     return () => {
@@ -255,7 +228,7 @@ function ImagePreviewDialog({
     if (href == null) {
       return;
     }
-    void openUrl(href);
+    void openUrl(href).catch(() => toast.error("打开图片失败"));
   }
 
   return (
@@ -272,10 +245,22 @@ function ImagePreviewDialog({
         showCloseButton
       >
         <DialogHeader className="ov-image-header">
-          <DialogTitle title={title}>{title || "图片预览"}</DialogTitle>
+          <DialogTitle className="ov-image-title" title={title}>{title || "图片预览"}</DialogTitle>
           <DialogDescription className="sr-only">
             滚轮缩放，拖拽移动，Esc 关闭
           </DialogDescription>
+          {image ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              title="适合窗口"
+              aria-label="适合窗口"
+              onClick={fitImage}
+            >
+              <RotateCcw />
+            </Button>
+          ) : null}
           {image ? (
             <Button
               type="button"
@@ -296,26 +281,32 @@ function ImagePreviewDialog({
                 className={`ov-image-stage${dragging ? " is-dragging" : ""}`}
               >
                 <img
+                  key={src}
                   ref={imgRef}
                   src={src}
                   alt={image.alt ?? ""}
                   draggable={false}
                   className="ov-image-canvas"
-                  onLoad={fitImage}
+                  onLoad={() => { setFailed(false); fitImage(); }}
+                  onError={() => setFailed(true)}
                   onMouseDown={onDragStart}
+                  onDoubleClick={fitImage}
                   style={{
+                    visibility: failed ? "hidden" : undefined,
                     width: layout.width ? `${layout.width}px` : "auto",
                     height: layout.height ? `${layout.height}px` : "auto",
                     left: layout.width ? `${layout.x}px` : "50%",
                     top: layout.height ? `${layout.y}px` : "50%",
                   }}
                 />
+                {failed ? <p className="ov-image-error" role="alert">图片加载失败</p> : null}
               </div>
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem
                 onSelect={() => {
-                  void copyImageFromSrc(src, imgRef.current);
+                  void copyImageFromSrc(src, imgRef.current)
+                    .catch(() => toast.error("复制图片失败"));
                 }}
               >
                 复制图片

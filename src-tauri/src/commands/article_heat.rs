@@ -26,8 +26,6 @@ pub const EVENT_ARTICLE_COMMENT: &str = "article://comment";
 
 struct HeatWatch {
     generation: u64,
-    article_id: String,
-    session_generation: u64,
     connection: ArticleConnection,
 }
 
@@ -37,8 +35,7 @@ fn heat_slot() -> &'static Mutex<Option<HeatWatch>> {
 }
 
 fn heat_gate() -> &'static tokio::sync::Mutex<()> {
-    static GATE: LazyLock<tokio::sync::Mutex<()>> =
-        LazyLock::new(|| tokio::sync::Mutex::new(()));
+    static GATE: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
     &GATE
 }
 
@@ -57,12 +54,8 @@ fn begin_pending(generation: u64) {
 }
 
 fn end_pending(generation: u64) {
-    let _ = pending_generation().compare_exchange(
-        generation,
-        0,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    );
+    let _ =
+        pending_generation().compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire);
 }
 
 fn generation_is_active(generation: u64) -> bool {
@@ -128,13 +121,16 @@ pub async fn article_heat_watch(
         return Err(AppError::session_superseded());
     }
 
-    let previous = install(HeatWatch {
-        generation,
-        article_id: id,
+    let previous = install(
+        &state,
         session_generation,
-        connection,
-    });
+        HeatWatch {
+            generation,
+            connection,
+        },
+    );
     end_pending(generation);
+    let previous = previous?;
     if let Some(mut previous) = previous {
         previous.connection.disconnect();
     }
@@ -155,6 +151,14 @@ pub async fn article_heat_close(request: ArticleHeatCloseRequest) -> Result<(), 
         slot.connection.disconnect();
     }
     Ok(())
+}
+
+/// Auth calls this immediately after invalidating/replacing the session.
+pub fn disconnect_article_channel() {
+    pending_generation().store(0, Ordering::Release);
+    if let Some(mut watch) = take_current() {
+        watch.connection.disconnect();
+    }
 }
 
 fn forward_channel(
@@ -185,6 +189,7 @@ fn forward_channel(
             EVENT_ARTICLE_HEAT,
             ArticleHeatEvent {
                 session_generation,
+                watch_generation: generation,
                 article_id: article_id.to_string(),
                 delta,
             },
@@ -201,6 +206,7 @@ fn forward_channel(
         EVENT_ARTICLE_COMMENT,
         ArticleCommentEvent {
             session_generation,
+            watch_generation: generation,
             article_id: article_id.to_string(),
             comment,
         },
@@ -220,6 +226,7 @@ fn unwrap_channel_payload(value: &Value) -> Value {
     value.clone()
 }
 
+#[cfg(test)]
 fn heat_delta(value: &Value) -> Option<i32> {
     delta_of(value).or_else(|| delta_of(&unwrap_channel_payload(value)))
 }
@@ -243,9 +250,17 @@ fn article_type_from(value: Option<u8>) -> ArticleType {
     }
 }
 
-fn install(slot: HeatWatch) -> Option<HeatWatch> {
+fn install(
+    state: &AppState,
+    session_generation: u64,
+    mut slot: HeatWatch,
+) -> Result<Option<HeatWatch>, AppError> {
     let mut guard = heat_slot().lock().unwrap_or_else(|err| err.into_inner());
-    guard.replace(slot)
+    if state.session_generation() != session_generation {
+        slot.connection.disconnect();
+        return Err(AppError::session_superseded());
+    }
+    Ok(guard.replace(slot))
 }
 
 fn take_current() -> Option<HeatWatch> {
@@ -283,13 +298,11 @@ mod tests {
             heat_delta(&json!({"type": "articleHeat", "operation": "+"})),
             Some(1)
         );
-        assert!(
-            ArticleCommentDto::try_from_channel(
-                &json!({"type": "articleHeat", "operation": "+"}),
-                "a1"
-            )
-            .is_none()
-        );
+        assert!(ArticleCommentDto::try_from_channel(
+            &json!({"type": "articleHeat", "operation": "+"}),
+            "a1"
+        )
+        .is_none());
     }
 
     #[test]

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   commandError,
   configImport,
   desktopPrefsGet,
   desktopPrefsSet,
+  matchesDesktopSession,
   reconnectNow,
   reconnectWatch,
   updateApply,
@@ -16,7 +17,12 @@ import {
   type UpdateInfo,
   type WatchReport,
 } from "./api";
-import { loadOffline, mergeOffline, messagePreview, type OfflineSnapshot } from "./offline";
+import { loadOffline, mergeOffline, revokeOffline, messagePreview, type OfflineSnapshot } from "./offline";
+import { setPlayerMode } from "../music/playerStore";
+import { invokeAuthMe } from "../../lib/tauri";
+import { messagePeer } from "../im/threadState";
+import type { ChatMessageEvent } from "../im/types";
+import type { RevokeEvent } from "../../lib/types";
 import "./panel.css";
 
 const RECONNECT_EVENT = "desktop://reconnect";
@@ -35,20 +41,49 @@ export function DesktopMount() {
   const [offline, setOffline] = useState<OfflineSnapshot | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const mounted = useRef(false);
+  const session = useRef<ReturnType<typeof invokeAuthMe> | null>(null);
+
+  async function acceptSession(generation: unknown): Promise<boolean> {
+    try {
+      const owner = await session.current;
+      const current = await invokeAuthMe();
+      return mounted.current && owner != null &&
+        matchesDesktopSession(owner.sessionGeneration, current) &&
+        matchesDesktopSession(generation, current);
+    } catch {
+      return false;
+    }
+  }
 
   useEffect(() => {
+    mounted.current = true;
+    session.current = invokeAuthMe();
+    void session.current.catch(() => undefined);
     let alive = true;
-    void desktopPrefsGet()
-      .then((prefs) => {
-        if (alive) {
+    let prefsRevision = 0;
+    async function refreshPrefs(): Promise<void> {
+      const revision = ++prefsRevision;
+      try {
+        const prefs = await desktopPrefsGet();
+        if (alive && revision === prefsRevision) {
           setMirror(prefs.updateMirror);
+          setPlayerMode(prefs.musicMode);
         }
-      })
-      .catch((err: unknown) => {
-        if (alive) {
-          setError(commandError(err));
-        }
-      });
+      } catch (err: unknown) {
+        if (alive && revision === prefsRevision) setError(commandError(err));
+      }
+    }
+    const importedStop = listen<ImportResult>("desktop://config-imported", (event) => {
+      if (!alive) return;
+      setImported(event.payload);
+      if (event.payload.prefsSaved) void refreshPrefs();
+    });
+    void importedStop.then(() => {
+      if (alive) void refreshPrefs();
+    }).catch(() => {
+      if (alive) void refreshPrefs();
+    });
     void reconnectWatch()
       .then((report) => {
         if (alive) {
@@ -61,8 +96,9 @@ export function DesktopMount() {
         }
       });
     void loadOffline()
-      .then((snapshot) => {
-        if (alive) {
+      .then(async (snapshot) => {
+        const owner = await session.current;
+        if (alive && owner && await acceptSession(owner.sessionGeneration)) {
           setOffline(snapshot);
         }
       })
@@ -73,42 +109,91 @@ export function DesktopMount() {
       });
     return () => {
       alive = false;
+      mounted.current = false;
+      prefsRevision += 1;
+      void importedStop.then((stop) => stop()).catch(() => undefined);
     };
   }, []);
 
   useEffect(() => {
+    let alive = true;
     const unlisten = listen<ReconnectReport>(RECONNECT_EVENT, (event) => {
-      setReconnect(event.payload);
+      void acceptSession(event.payload.sessionGeneration).then((accepted) => {
+        if (alive && accepted) {
+          setReconnect(event.payload);
+        }
+      });
     });
     return () => {
-      void unlisten.then((stop) => stop());
+      alive = false;
+      void unlisten.then((stop) => stop()).catch(() => undefined);
     };
   }, []);
 
   useEffect(() => {
+    let alive = true;
+    async function saveOffline(
+      sessionGeneration: unknown,
+      write: () => Promise<OfflineSnapshot>,
+    ): Promise<void> {
+      if (!alive || !await acceptSession(sessionGeneration)) {
+        return;
+      }
+      try {
+        const snapshot = await write();
+        if (alive && await acceptSession(sessionGeneration)) {
+          setOffline(snapshot);
+        }
+      } catch (err: unknown) {
+        if (alive && await acceptSession(sessionGeneration)) {
+          setError(commandError(err));
+        }
+      }
+    }
+    function saveRevoke(payload: Pick<RevokeEvent, "messageId" | "sessionGeneration">): void {
+      if (typeof payload.messageId !== "string" || !payload.messageId.trim()) return;
+      void saveOffline(payload.sessionGeneration, () => revokeOffline({
+        messageId: payload.messageId,
+        sessionGeneration: payload.sessionGeneration,
+      }));
+    }
     const stops: Array<Promise<() => void>> = [];
     stops.push(
       listen<Record<string, unknown>>("chatroom://msg", (event) => {
-        void mergeOffline({ scope: "chatroom", messages: [event.payload] })
-          .then(setOffline)
-          .catch((err: unknown) => setError(commandError(err)));
+        void saveOffline(event.payload.sessionGeneration, () => mergeOffline({
+          scope: "chatroom",
+          sessionGeneration: event.payload.sessionGeneration as number,
+          messages: [event.payload],
+        }));
       }),
     );
     stops.push(
-      listen<Record<string, unknown>>("chat://msg", (event) => {
-        const peer = typeof event.payload.userName === "string" ? event.payload.userName : "";
+      listen<ChatMessageEvent>("chat://msg", (event) => {
         const message = event.payload.message;
-        if (!peer || message == null || typeof message !== "object") {
+        if (message == null || typeof message !== "object" || Array.isArray(message)) {
           return;
         }
-        void mergeOffline({ scope: "chat", peer, messages: [message] })
-          .then(setOffline)
-          .catch((err: unknown) => setError(commandError(err)));
+        void session.current?.then((owner) => {
+          const self = owner.user?.userName;
+          if (!alive || !self) return;
+          const peer = messagePeer(event.payload.userName, message, self);
+          if (!peer) return;
+          void saveOffline(event.payload.sessionGeneration, () => mergeOffline({
+            scope: "chat",
+            peer,
+            sessionGeneration: event.payload.sessionGeneration,
+            messages: [message],
+          }));
+        }).catch(() => undefined);
       }),
     );
+    for (const channel of ["chatroom://revoke", "chat://revoke"]) {
+      stops.push(listen<RevokeEvent>(channel, (event) => saveRevoke(event.payload)));
+    }
     return () => {
+      alive = false;
       for (const stop of stops) {
-        void stop.then((fn) => fn());
+        void stop.then((fn) => fn()).catch(() => undefined);
       }
     };
   }, []);
@@ -144,8 +229,8 @@ export function DesktopMount() {
     try {
       const result = await updateApply();
       setApplied(result);
-      if (!result.installed) {
-        setError(result.message || "没有安装");
+      if (!result.downloaded && !result.installed) {
+        setError(result.message || "没有下载");
       }
     } catch (err: unknown) {
       setError(commandError(err));
@@ -176,8 +261,6 @@ export function DesktopMount() {
       if (!result.found) {
         setError(result.message);
       }
-      const prefs = await desktopPrefsGet();
-      setMirror(prefs.updateMirror);
     } catch (err: unknown) {
       setError(commandError(err));
     } finally {
@@ -189,7 +272,10 @@ export function DesktopMount() {
     setBusy("reconnect");
     setError("");
     try {
-      setReconnect(await reconnectNow());
+      const report = await reconnectNow();
+      if (await acceptSession(report.sessionGeneration)) {
+        setReconnect(report);
+      }
     } catch (err: unknown) {
       setError(commandError(err));
     } finally {
@@ -241,8 +327,8 @@ export function DesktopMount() {
         )}
         {update && !update.upToDate ? <p className="parity-note">{update.body}</p> : null}
         {applied ? (
-          <p className={applied.installed ? "parity-note" : "parity-error"}>
-            {applied.installed ? "已安装" : "没有安装。"} {applied.message}
+          <p className={applied.downloaded || applied.installed ? "parity-note" : "parity-error"}>
+            {applied.message}
           </p>
         ) : null}
       </section>

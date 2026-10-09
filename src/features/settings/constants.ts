@@ -32,7 +32,7 @@ export const DEFAULT_BOSS_KEY = "Win+F2";
 export const DEFAULT_SETTINGS: DesktopSettings = {
   themeId: "desk",
   alwaysOnTop: false,
-  opacity: 1,
+  opacity: 0.6,
   opacityEnabled: false,
   closeToTray: false,
   bossKey: DEFAULT_BOSS_KEY,

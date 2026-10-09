@@ -1,7 +1,12 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { sanitizeHttpUrl } from "../../lib/markdown";
-import { GESTURES, gestureLabel } from "./constants";
+import { GESTURES } from "./constants";
 import type { GestureIndex } from "./types";
+import rock from "./assets/Rock.png";
+import scissors from "./assets/Scissors.png";
+import paper from "./assets/Paper.png";
+
+const GESTURE_IMAGES = [rock, scissors, paper];
 
 export function GesturePicker({
   value,
@@ -24,15 +29,15 @@ export function GesturePicker({
             type="button"
             className={value === item.value ? "rp-gesture is-active" : "rp-gesture"}
             disabled={disabled}
+            title={item.label}
+            aria-label={item.label}
+            aria-pressed={value === item.value}
             onClick={() => onChange(item.value)}
           >
-            {item.label}
+            <img src={GESTURE_IMAGES[item.value]} alt="" />
           </button>
         ))}
       </div>
-      {value !== undefined ? (
-        <p className="rp-meta">已选 {gestureLabel(value)}</p>
-      ) : null}
     </div>
   );
 }

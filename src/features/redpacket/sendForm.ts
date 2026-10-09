@@ -2,7 +2,9 @@ import {
   DEFAULT_COUNT,
   DEFAULT_MONEY,
   MAX_COUNT,
-  ROCK_PAPER_MIN_MONEY,
+  MAX_MONEY,
+  DEFAULT_BLESSING,
+  isRedPacketType,
 } from "./constants";
 import type { RedPacketType, SendRedPacketRequest } from "./types";
 
@@ -20,6 +22,8 @@ export type SendFormErrors = {
   money?: string;
   count?: string;
   receivers?: string;
+  gesture?: string;
+  type?: string;
 };
 
 export function createSendFormValues(
@@ -40,30 +44,36 @@ export function createSendFormValues(
 export function validateSendForm(
   form: SendFormValues,
 ): { ok: true; request: SendRedPacketRequest } | { ok: false; errors: SendFormErrors } {
-  const money = Number.parseInt(form.money.trim(), 10);
-  const parsedCount = Number.parseInt(form.count.trim(), 10);
+  const money = parseInteger(form.money);
+  const parsedCount = parseInteger(form.count);
   const receivers = uniqueReceivers(form);
   const errors: SendFormErrors = {};
 
-  if (!Number.isFinite(money) || money <= 0) {
-    errors.money = "积分必须大于 0";
-  } else if (form.type === "rockPaperScissors" && money < ROCK_PAPER_MIN_MONEY) {
-    errors.money = `猜拳红包至少 ${ROCK_PAPER_MIN_MONEY} 积分`;
+  if (!isRedPacketType(form.type)) {
+    errors.type = "红包类型无效";
+  }
+  if (!Number.isSafeInteger(money) || money <= 0 || money > MAX_MONEY) {
+    errors.money = `积分必须是 1 至 ${MAX_MONEY} 的整数`;
   }
 
   if (form.type === "specify" && receivers.length === 0) {
     errors.receivers = "请至少选择一个人收红包";
+  } else if (form.type === "specify" && receivers.length > MAX_COUNT) {
+    errors.receivers = `收件人不能超过 ${MAX_COUNT} 人`;
+  }
+  if (form.type === "rockPaperScissors" && ![0, 1, 2].includes(form.gesture)) {
+    errors.gesture = "猜拳手势无效";
   }
 
   if (showsCountField(form.type)) {
-    if (!Number.isFinite(parsedCount) || parsedCount <= 0) {
-      errors.count = "个数必须大于 0";
+    if (!Number.isSafeInteger(parsedCount) || parsedCount <= 0) {
+      errors.count = "个数必须是大于 0 的整数";
     } else if (parsedCount > MAX_COUNT) {
       errors.count = `个数不能超过 ${MAX_COUNT}`;
     }
   }
 
-  if (errors.money || errors.count || errors.receivers) {
+  if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
 
@@ -74,7 +84,7 @@ export function validateSendForm(
       type: form.type,
       money,
       count,
-      msg: form.message.trim(),
+      msg: form.message.trim() || DEFAULT_BLESSING[form.type],
       recivers: form.type === "specify" ? receivers : [],
       gesture: form.type === "rockPaperScissors" ? form.gesture : undefined,
     },
@@ -94,7 +104,7 @@ function resolvedCount(
     return 1;
   }
   if (type === "specify") {
-    return Math.max(receiverCount, 1);
+    return receiverCount;
   }
   return count;
 }
@@ -104,16 +114,9 @@ function uniqueReceivers(form: SendFormValues): string[] {
     .split(/[,，\s]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-  const merged = [...form.receivers, ...extra];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const name of merged) {
-    const key = name.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    result.push(name);
-  }
-  return result;
+  return [...new Set([...form.receivers, ...extra].map((name) => name.trim()).filter(Boolean))];
+}
+
+function parseInteger(value: string): number {
+  return /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN;
 }

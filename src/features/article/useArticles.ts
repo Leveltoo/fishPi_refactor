@@ -22,9 +22,9 @@ import {
   toUserErrorMessage,
 } from "./errors";
 import { invokeAuthMe } from "../../lib/tauri";
+import { acceptsChannel, applyVote, mergeById } from "./contentState";
 import type {
   ArticleCapabilities,
-  ArticleComment,
   ArticleCommentPushEvent,
   ArticleDetail,
   ArticleHeatEvent,
@@ -52,12 +52,13 @@ const ALL_READY: ArticleCapabilities = {
 type CommentActionKind = "delete" | "thank" | "vote";
 
 type WriteAck = {
+  sessionGeneration: number;
   accepted: boolean;
   outcomeUnknown: boolean;
 };
 
 export function useArticles() {
-  const [listType, setListType] = useState<ArticleListType>("recent");
+  const [listType, setListType] = useState<ArticleListType>("reply");
   const [items, setItems] = useState<ArticleSummary[]>([]);
   const [listPage, setListPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -81,6 +82,7 @@ export function useArticles() {
   const [selfUserName, setSelfUserName] = useState<string | null>(null);
   const [heatCount, setHeatCount] = useState<number | null>(null);
   const [heatLive, setHeatLive] = useState(false);
+  const [watchEpoch, setWatchEpoch] = useState(0);
   const [heatNote, setHeatNote] = useState<string | null>(null);
   const [commentLiveNote, setCommentLiveNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,12 +92,24 @@ export function useArticles() {
 
   const listSeq = useRef(0);
   const detailSeq = useRef(0);
+  const navigationSeq = useRef(0);
+  const sessionGeneration = useRef(0);
   const mounted = useRef(true);
   const sendingLock = useRef(false);
   const thankLock = useRef(false);
   const voteLock = useRef(false);
   const rewardLock = useRef(false);
   const commentActionLock = useRef(false);
+
+  const acceptSession = useCallback((generation: number): boolean => {
+    if (generation <= 0) {
+      return false;
+    }
+    if (sessionGeneration.current === 0) {
+      sessionGeneration.current = generation;
+    }
+    return generation === sessionGeneration.current;
+  }, []);
 
   const markGap = useCallback((command: string): void => {
     setCapabilities((prev) => {
@@ -148,7 +162,8 @@ export function useArticles() {
       }
       try {
         const result = await invokeArticleList({ type, page });
-        if (!mounted.current || seq !== listSeq.current) {
+        if (!mounted.current || seq !== listSeq.current ||
+          !acceptSession(result.sessionGeneration)) {
           return;
         }
         setListPage(page);
@@ -175,7 +190,7 @@ export function useArticles() {
         }
       }
     },
-    [markGap],
+    [acceptSession, markGap],
   );
 
   const loadDetail = useCallback(
@@ -186,15 +201,16 @@ export function useArticles() {
       } else {
         setLoadingDetail(true);
         setError(null);
-        setPendingConfirm(false);
       }
       try {
         const result = await invokeArticleDetail(
           page == null ? { id } : { id, page },
         );
-        if (!mounted.current || seq !== detailSeq.current) {
+        if (!mounted.current || seq !== detailSeq.current ||
+          !acceptSession(result.sessionGeneration)) {
           return;
         }
+        setPendingConfirm(false);
         setDetail((prev) => {
           if (!append || prev == null || prev.id !== result.id) {
             return {
@@ -206,7 +222,8 @@ export function useArticles() {
           if (goingEarlier) {
             return {
               ...result,
-              comments: mergeCommentsFront(result.comments, prev.comments),
+              comments: mergeById(result.comments, prev.comments),
+              commentCount: Math.max(result.commentCount, prev.commentCount),
               commentPage: result.commentPage,
               commentLatestPage: prev.commentLatestPage,
               commentHasEarlier: result.commentHasEarlier,
@@ -215,7 +232,8 @@ export function useArticles() {
           }
           return {
             ...result,
-            comments: mergeComments(prev.comments, result.comments),
+            comments: mergeById(prev.comments, result.comments),
+            commentCount: Math.max(result.commentCount, prev.commentCount),
             commentPage: prev.commentPage,
             commentLatestPage: result.commentPage,
             commentHasEarlier: prev.commentHasEarlier,
@@ -238,16 +256,16 @@ export function useArticles() {
         }
       }
     },
-    [markGap],
+    [acceptSession, markGap],
   );
 
   useEffect(() => {
     mounted.current = true;
-    void loadList("recent", 1, false);
+    void loadList("reply", 1, false);
     void (async () => {
       try {
         const me = await invokeAuthMe();
-        if (mounted.current) {
+        if (mounted.current && acceptSession(me.sessionGeneration)) {
           setSelfUserName(me.user?.userName ?? null);
         }
       } catch {
@@ -256,11 +274,16 @@ export function useArticles() {
     })();
     return () => {
       mounted.current = false;
+      listSeq.current += 1;
+      detailSeq.current += 1;
+      navigationSeq.current += 1;
     };
-  }, [loadList]);
+  }, [acceptSession, loadList]);
 
   const changeType = useCallback(
     (type: ArticleListType) => {
+      navigationSeq.current += 1;
+      detailSeq.current += 1;
       setListType(type);
       setActiveId(null);
       setDetail(null);
@@ -278,6 +301,7 @@ export function useArticles() {
 
   const openArticle = useCallback(
     (id: string) => {
+      navigationSeq.current += 1;
       setActiveId(id);
       setDetail(null);
       setNotice(null);
@@ -287,12 +311,15 @@ export function useArticles() {
   );
 
   const closeArticle = useCallback(() => {
+    navigationSeq.current += 1;
     detailSeq.current += 1;
     setActiveId(null);
     setDetail(null);
     setPendingConfirm(false);
     setNotice(null);
     setLoadingDetail(false);
+    setLoadingMoreComments(false);
+    setError(null);
   }, []);
 
   const loadEarlierComments = useCallback(() => {
@@ -334,7 +361,7 @@ export function useArticles() {
     async (draft: CommentSubmit): Promise<boolean> => {
       const id = activeId;
       const text = draft.content.trim();
-      if (!id || !text || sendingLock.current) {
+      if (!id || !text || sendingLock.current || pendingConfirm || !detail?.commentable) {
         return false;
       }
       if (!capabilities.comment) {
@@ -345,6 +372,7 @@ export function useArticles() {
       setSending(true);
       setError(null);
       setNotice(null);
+      const navigation = navigationSeq.current;
       try {
         const result = await invokeCommentPost({
           articleId: id,
@@ -353,7 +381,8 @@ export function useArticles() {
           anonymous: draft.anonymous,
           visible: draft.visible,
         });
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current ||
+          !acceptSession(result.sessionGeneration)) {
           return false;
         }
         if (result.outcomeUnknown) {
@@ -371,7 +400,7 @@ export function useArticles() {
         void loadDetail(id, undefined, false);
         return true;
       } catch (err) {
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current) {
           return false;
         }
         if (isBridgeGapError(err)) {
@@ -395,7 +424,7 @@ export function useArticles() {
         }
       }
     },
-    [activeId, capabilities.comment, loadDetail, markGap],
+    [acceptSession, activeId, capabilities.comment, detail?.commentable, loadDetail, markGap, pendingConfirm],
   );
 
   const runCommentAction = useCallback(
@@ -419,9 +448,11 @@ export function useArticles() {
       setCommentAction({ id: commentId, kind });
       setError(null);
       setNotice(null);
+      const navigation = navigationSeq.current;
       try {
         const result = await invoke(commentId);
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current ||
+          !acceptSession(result.sessionGeneration)) {
           return;
         }
         if (result.outcomeUnknown || !result.accepted) {
@@ -430,7 +461,7 @@ export function useArticles() {
         }
         apply();
       } catch (err) {
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current) {
           return;
         }
         if (isBridgeGapError(err)) {
@@ -450,7 +481,7 @@ export function useArticles() {
         }
       }
     },
-    [markGap],
+    [acceptSession, markGap],
   );
 
   const deleteComment = useCallback(
@@ -533,9 +564,11 @@ export function useArticles() {
       setCommentAction({ id: commentId, kind: "vote" });
       setError(null);
       setNotice(null);
+      const navigation = navigationSeq.current;
       try {
         const result = await invokeCommentVote({ id: commentId, direction });
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current ||
+          !acceptSession(result.sessionGeneration)) {
           return;
         }
         if (result.outcomeUnknown || !result.accepted) {
@@ -552,12 +585,12 @@ export function useArticles() {
               return item;
             }
             changed = true;
-            return applyCommentVote(item, direction);
+            return applyVote(item, direction);
           });
           return changed ? { ...prev, comments } : prev;
         });
       } catch (err) {
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current) {
           return;
         }
         if (isBridgeGapError(err)) {
@@ -577,7 +610,7 @@ export function useArticles() {
         }
       }
     },
-    [capabilities.commentVote, markGap],
+    [acceptSession, capabilities.commentVote, markGap],
   );
 
   const heatArticleId = detail?.id ?? null;
@@ -598,8 +631,47 @@ export function useArticles() {
       generation: 0,
       unlistenHeat: undefined as UnlistenFn | undefined,
       unlistenComment: undefined as UnlistenFn | undefined,
+      unlistenReconnect: undefined as UnlistenFn | undefined,
     };
     const bucket = { ready: false, extra: 0 };
+    const queued: Array<ArticleHeatEvent | ArticleCommentPushEvent> = [];
+    function receive(payload: ArticleHeatEvent | ArticleCommentPushEvent): void {
+      if (alive.cancelled || payload.articleId !== id) {
+        return;
+      }
+      if (alive.generation === 0) {
+        queued.push(payload);
+        return;
+      }
+      if (!acceptsChannel(payload, id, sessionGeneration.current, alive.generation)) {
+        return;
+      }
+      if ("delta" in payload) {
+        if (payload.delta !== 1 && payload.delta !== -1) {
+          return;
+        }
+        if (!bucket.ready) {
+          bucket.extra += payload.delta;
+          return;
+        }
+        setHeatCount((prev) => prev == null ? null : Math.max(0, prev + payload.delta));
+        return;
+      }
+      const comment = mapComment(payload.comment);
+      if (!comment) {
+        return;
+      }
+      setDetail((prev) => {
+        if (!prev || prev.id !== id || prev.comments.some((item) => item.id === comment.id)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          comments: [...prev.comments, comment],
+          commentCount: prev.commentCount + 1,
+        };
+      });
+    }
     setHeatCount(null);
     setHeatLive(false);
     setHeatNote(null);
@@ -607,19 +679,22 @@ export function useArticles() {
 
     void (async () => {
       try {
+        alive.unlistenReconnect = await listen<{ sessionGeneration: number }>(
+          "desktop://reconnect",
+          ({ payload }) => {
+            if (!alive.cancelled && sessionGeneration.current > 0 &&
+              payload?.sessionGeneration === sessionGeneration.current) {
+              setWatchEpoch((value) => value + 1);
+            }
+          },
+        );
+      } catch {
+        // Reconnect observation unavailable; manual detail reopen still works.
+      }
+      try {
         alive.unlistenHeat = await listen<ArticleHeatEvent>(ARTICLE_HEAT_EVENT, (event) => {
           const payload = event.payload;
-          if (!payload || payload.articleId !== id) {
-            return;
-          }
-          if (payload.delta !== 1 && payload.delta !== -1) {
-            return;
-          }
-          if (!bucket.ready) {
-            bucket.extra += payload.delta;
-            return;
-          }
-          setHeatCount((prev) => Math.max(0, (prev ?? 0) + payload.delta));
+          if (payload) receive(payload);
         });
       } catch {
         // 监听挂不上时仍尝试拉 HTTP 人数。
@@ -629,29 +704,7 @@ export function useArticles() {
           ARTICLE_COMMENT_EVENT,
           (event) => {
             const payload = event.payload;
-            if (!payload || payload.articleId !== id) {
-              return;
-            }
-            const comment = mapComment(payload.comment);
-            if (comment == null) {
-              setCommentLiveNote(
-                "收到无法识别的评论推送，已忽略。未按 SDK 对不上的形状伪造条目。",
-              );
-              return;
-            }
-            setDetail((prev) => {
-              if (!prev || prev.id !== id) {
-                return prev;
-              }
-              if (prev.comments.some((item) => item.id === comment.id)) {
-                return prev;
-              }
-              return {
-                ...prev,
-                comments: [...prev.comments, comment],
-                commentCount: prev.commentCount + 1,
-              };
-            });
+            if (payload) receive(payload);
           },
         );
       } catch {
@@ -660,11 +713,12 @@ export function useArticles() {
       if (alive.cancelled) {
         alive.unlistenHeat?.();
         alive.unlistenComment?.();
+        alive.unlistenReconnect?.();
         return;
       }
       try {
         const result = await invokeArticleHeat({ id });
-        if (alive.cancelled) {
+        if (alive.cancelled || !acceptSession(result.sessionGeneration)) {
           return;
         }
         const extra = bucket.extra;
@@ -683,17 +737,17 @@ export function useArticles() {
         } else {
           setHeatNote("在看人数没有拉取到。");
         }
-        return;
       }
       try {
         const watch = await invokeArticleHeatWatch({ id, articleType });
-        if (alive.cancelled) {
+        if (alive.cancelled || !acceptSession(watch.sessionGeneration)) {
           void invokeArticleHeatClose({ watchGeneration: watch.watchGeneration }).catch(
             () => undefined,
           );
           return;
         }
         alive.generation = watch.watchGeneration;
+        queued.splice(0).forEach(receive);
         setHeatLive(true);
       } catch (err) {
         if (alive.cancelled) {
@@ -715,17 +769,19 @@ export function useArticles() {
       alive.cancelled = true;
       alive.unlistenHeat?.();
       alive.unlistenComment?.();
+      alive.unlistenReconnect?.();
       if (alive.generation > 0) {
         void invokeArticleHeatClose({ watchGeneration: alive.generation }).catch(
           () => undefined,
         );
       }
     };
-  }, [heatArticleId, heatArticleType, markGap]);
+  }, [acceptSession, heatArticleId, heatArticleType, markGap, watchEpoch]);
 
   const thankArticle = useCallback(async () => {
     const id = activeId;
-    if (!id || !detail || detail.id !== id || detail.thanked || thankLock.current) {
+    if (!id || !detail || detail.id !== id || detail.thanked || thankLock.current ||
+      detail.authorUserName === selfUserName) {
       return;
     }
     if (!capabilities.thank) {
@@ -736,9 +792,11 @@ export function useArticles() {
     setThanking(true);
     setError(null);
     setNotice(null);
+    const navigation = navigationSeq.current;
     try {
       const result = await invokeArticleThank({ id });
-      if (!mounted.current) {
+      if (!mounted.current || navigation !== navigationSeq.current ||
+        !acceptSession(result.sessionGeneration)) {
         return;
       }
       if (result.outcomeUnknown || !result.accepted) {
@@ -752,7 +810,7 @@ export function useArticles() {
         return { ...prev, thanked: true, thankCount: prev.thankCount + 1 };
       });
     } catch (err) {
-      if (!mounted.current) {
+      if (!mounted.current || navigation !== navigationSeq.current) {
         return;
       }
       if (isBridgeGapError(err)) {
@@ -771,7 +829,7 @@ export function useArticles() {
         setThanking(false);
       }
     }
-  }, [activeId, capabilities.thank, detail, markGap]);
+  }, [acceptSession, activeId, capabilities.thank, detail, markGap, selfUserName]);
 
   const voteArticle = useCallback(
     async (direction: ArticleVoteDirection) => {
@@ -788,9 +846,11 @@ export function useArticles() {
       setError(null);
       setNotice(null);
       const before = detail;
+      const navigation = navigationSeq.current;
       try {
         const result = await invokeArticleVote({ id, direction });
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current ||
+          !acceptSession(result.sessionGeneration)) {
           return;
         }
         if (result.outcomeUnknown || !result.accepted) {
@@ -813,7 +873,7 @@ export function useArticles() {
           );
         });
       } catch (err) {
-        if (!mounted.current) {
+        if (!mounted.current || navigation !== navigationSeq.current) {
           return;
         }
         if (isBridgeGapError(err)) {
@@ -833,7 +893,7 @@ export function useArticles() {
         }
       }
     },
-    [activeId, capabilities.vote, detail, markGap],
+    [acceptSession, activeId, capabilities.vote, detail, markGap],
   );
 
   const rewardArticle = useCallback(async () => {
@@ -849,9 +909,11 @@ export function useArticles() {
     setRewarding(true);
     setError(null);
     setNotice(null);
+    const navigation = navigationSeq.current;
     try {
       const result = await invokeArticleReward({ id });
-      if (!mounted.current) {
+      if (!mounted.current || navigation !== navigationSeq.current ||
+        !acceptSession(result.sessionGeneration)) {
         return;
       }
       if (result.outcomeUnknown || !result.accepted || !result.rewarded) {
@@ -870,7 +932,7 @@ export function useArticles() {
         };
       });
     } catch (err) {
-      if (!mounted.current) {
+      if (!mounted.current || navigation !== navigationSeq.current) {
         return;
       }
       if (isBridgeGapError(err)) {
@@ -889,7 +951,7 @@ export function useArticles() {
         setRewarding(false);
       }
     }
-  }, [activeId, capabilities.reward, detail, markGap]);
+  }, [acceptSession, activeId, capabilities.reward, detail, markGap]);
 
   return {
     listType,
@@ -932,80 +994,4 @@ export function useArticles() {
     voteArticle,
     rewardArticle,
   };
-}
-
-/**
- * 评论赞踩：确定成功后按点击前状态切换（对齐旧客户端）。
- * SDK `comment().vote` 的 bool 对 down 不可靠，这里不依赖它。
- */
-function applyCommentVote(
-  comment: ArticleComment,
-  direction: ArticleVoteDirection,
-): ArticleComment {
-  if (direction === "up") {
-    const wasUp = comment.vote === "up";
-    const wasDown = comment.vote === "down";
-    return {
-      ...comment,
-      goodCount: Math.max(0, comment.goodCount + (wasUp ? -1 : 1)),
-      badCount: Math.max(0, comment.badCount + (wasDown ? -1 : 0)),
-      vote: wasUp ? "none" : "up",
-    };
-  }
-  const wasUp = comment.vote === "up";
-  const wasDown = comment.vote === "down";
-  return {
-    ...comment,
-    badCount: Math.max(0, comment.badCount + (wasDown ? -1 : 1)),
-    goodCount: Math.max(0, comment.goodCount + (wasUp ? -1 : 0)),
-    vote: wasDown ? "none" : "down",
-  };
-}
-
-function applyVote(
-  detail: ArticleDetail,
-  direction: ArticleVoteDirection,
-  active: boolean,
-): ArticleDetail {
-  if (direction === "up") {
-    const delta = detail.vote === "up" ? -1 : 1;
-    return {
-      ...detail,
-      goodCount: Math.max(0, detail.goodCount + delta),
-      vote: active ? "up" : "none",
-    };
-  }
-  const delta = detail.vote === "down" ? -1 : 1;
-  return {
-    ...detail,
-    badCount: Math.max(0, detail.badCount + delta),
-    vote: active ? "down" : "none",
-  };
-}
-
-function mergeById(
-  prev: ArticleSummary[],
-  next: ArticleSummary[],
-): ArticleSummary[] {
-  const seen = new Set(prev.map((item) => item.id));
-  const appended = next.filter((item) => !seen.has(item.id));
-  return appended.length === 0 ? prev : [...prev, ...appended];
-}
-
-function mergeComments(
-  prev: ArticleDetail["comments"],
-  next: ArticleDetail["comments"],
-): ArticleDetail["comments"] {
-  const seen = new Set(prev.map((item) => item.id));
-  const appended = next.filter((item) => !seen.has(item.id));
-  return appended.length === 0 ? prev : [...prev, ...appended];
-}
-
-function mergeCommentsFront(
-  earlier: ArticleDetail["comments"],
-  later: ArticleDetail["comments"],
-): ArticleDetail["comments"] {
-  const seen = new Set(later.map((item) => item.id));
-  const prepended = earlier.filter((item) => !seen.has(item.id));
-  return prepended.length === 0 ? later : [...prepended, ...later];
 }

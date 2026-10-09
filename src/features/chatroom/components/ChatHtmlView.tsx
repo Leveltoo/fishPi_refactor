@@ -16,6 +16,9 @@ import {
   topicFromTarget,
 } from "./MarkdownView";
 import { openSafeExternalUrl, sanitizeHttpUrl } from "../../../lib/markdown";
+import { neteasePlayer } from "../musicEmbed";
+import { playNeteaseSong } from "@/features/music";
+import { toast } from "sonner";
 
 const ALLOWED_TAGS = [
   "p",
@@ -66,7 +69,6 @@ const ALLOWED_ATTR = [
   "class",
   "width",
   "height",
-  "style",
   "color",
   "align",
   "target",
@@ -97,29 +99,8 @@ function isHttpUrl(value: string): boolean {
   return sanitizeHttpUrl(value) != null;
 }
 
-function isNeteasePlayer(src: string): boolean {
-  try {
-    const url = new URL(src, "https://music.163.com");
-    const host = url.hostname.toLowerCase();
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      (host === "music.163.com" || host === "www.music.163.com") &&
-      url.pathname.includes("/outchain/player")
-    );
-  } catch {
-    return false;
-  }
-}
-
 function rewriteNeteaseSrc(src: string): string | null {
-  if (!isNeteasePlayer(src)) {
-    return null;
-  }
-  try {
-    return new URL(src, "https://music.163.com").href;
-  } catch {
-    return null;
-  }
+  return neteasePlayer(src)?.src ?? null;
 }
 
 function ensurePurifyHooks(): void {
@@ -190,7 +171,7 @@ export function messageHtmlSource(message: {
 function sanitizeChatHtml(source: string): string {
   ensurePurifyHooks();
   const withEmoji = expandEmojiShortcodesHtml(source);
-  return DOMPurify.sanitize(withEmoji, {
+  const clean = DOMPurify.sanitize(withEmoji, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
@@ -198,6 +179,36 @@ function sanitizeChatHtml(source: string): string {
     FORBID_TAGS: ["script", "object", "embed", "link", "meta", "form"],
     FORBID_ATTR: ["srcdoc"],
   });
+  const doc = new DOMParser().parseFromString(clean, "text/html");
+  // Untrusted message classes must not access the application's global layout utilities.
+  for (const element of Array.from(doc.querySelectorAll("[class]"))) {
+    if (element.nodeName === "IMG" && isEmojiImage(element)) element.setAttribute("class", "emoji");
+    else element.removeAttribute("class");
+  }
+  for (const iframe of Array.from(doc.querySelectorAll("iframe"))) {
+    const player = neteasePlayer(iframe.getAttribute("src") ?? "");
+    if (player == null) {
+      iframe.remove();
+      continue;
+    }
+    iframe.src = player.src;
+    iframe.width = "100%";
+    iframe.height = String(player.height);
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    iframe.setAttribute("referrerpolicy", "no-referrer");
+    if (player.songId == null) continue;
+    const wrapper = doc.createElement("div");
+    wrapper.className = "chat-netease-player";
+    wrapper.dataset.songId = player.songId;
+    const cover = doc.createElement("button");
+    cover.type = "button";
+    cover.className = "chat-netease-cover";
+    cover.title = "点击聆听";
+    cover.setAttribute("aria-label", "点击聆听");
+    iframe.replaceWith(wrapper);
+    wrapper.append(iframe, cover);
+  }
+  return doc.body.innerHTML;
 }
 
 function onHtmlClick(
@@ -206,6 +217,14 @@ function onHtmlClick(
 ): void {
   const target = event.target;
   if (!(target instanceof Element)) {
+    return;
+  }
+  const cover = target.closest(".chat-netease-cover");
+  if (cover != null) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = cover.parentElement?.dataset.songId;
+    if (id && !playNeteaseSong(id)) toast.error("播放列表未就绪");
     return;
   }
 

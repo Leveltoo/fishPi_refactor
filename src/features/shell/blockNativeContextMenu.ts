@@ -1,14 +1,14 @@
 /**
  * 拦截 WebView 默认右键菜单。只在业务菜单区域（Radix trigger / data-menu）放行。
- * 对齐旧版 main.js：始终 preventDefault，非菜单区域 stopPropagation。
+ * 业务菜单自行 preventDefault；提前取消会让 Radix 跳过打开逻辑。
  */
 export function installNativeContextMenuGuard(): void {
   window.addEventListener(
     "contextmenu",
     (event) => {
-      event.preventDefault();
       const target = event.target;
       if (!(target instanceof Element)) {
+        event.preventDefault();
         event.stopPropagation();
         return;
       }
@@ -19,6 +19,7 @@ export function installNativeContextMenuGuard(): void {
       ) {
         return;
       }
+      event.preventDefault();
       event.stopPropagation();
     },
     true,

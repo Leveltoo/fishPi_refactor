@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import { Pause, Play, SkipBack, SkipForward, Trash2, Volume2, VolumeX, X } from "lucide-react";
+import { Music, Pause, Play, SkipBack, SkipForward, Trash2, Volume2, VolumeX, X } from "lucide-react";
 import {
   getPlayerSnapshot,
   playerClear,
@@ -52,7 +52,7 @@ export function HeaderMusic() {
         aria-expanded={expanded}
         onClick={() => setExpanded((open) => !open)}
       >
-        ♪
+        <Music />
       </button>
       <span
         className={

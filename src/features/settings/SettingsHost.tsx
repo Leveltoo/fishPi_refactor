@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { WarningIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,6 +15,7 @@ import {
   type ShieldRule,
 } from "@/features/chatroom/chatroomApi";
 import { commandError, desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
+import type { ImportResult } from "../desktop/api";
 import { clampMusicMode, MUSIC_MODE_OPTIONS } from "@/features/music/modes";
 import {
   getPlayerSnapshot,
@@ -44,7 +46,7 @@ export function SettingsHost() {
         <p className="settings-kicker">桌面</p>
         <h1 className="settings-title">设置</h1>
         <p className="settings-lead">
-          内置主题仍走受控 CSS 变量。本机扩展目录里的主题文件在本页下方加载，不拉取远程样式。
+          内置主题仍走受控 CSS 变量。
         </p>
       </header>
 
@@ -351,8 +353,12 @@ function MusicModeSelect() {
       value={String(clampMusicMode(mode))}
       onChange={(event) => {
         const next = clampMusicMode(Number(event.target.value));
+        const previous = getPlayerSnapshot().mode;
         setPlayerMode(next);
         void desktopPrefsSet({ musicMode: next }).catch((err: unknown) => {
+          if (getPlayerSnapshot().mode === next) {
+            setPlayerMode(previous);
+          }
           toast.error(commandError(err));
         });
       }}
@@ -415,39 +421,54 @@ function ChatroomFiltersSection() {
   const [error, setError] = useState<string | null>(null);
   const persistTimer = useRef(0);
   const ready = useRef(false);
+  const revision = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    void loadChatroomFilters()
-      .then((loaded) => {
-        if (cancelled) {
-          return;
-        }
+    async function refresh(): Promise<void> {
+      const token = ++revision.current;
+      ready.current = false;
+      window.clearTimeout(persistTimer.current);
+      setLoading(true);
+      setBusy(false);
+      setError(null);
+      try {
+        const loaded = await loadChatroomFilters();
+        if (cancelled || token !== revision.current) return;
         setShield(loaded.shield);
         setCareUsers(loaded.careUsers);
         ready.current = true;
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError("读取聊天室屏蔽失败");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
+      } catch {
+        if (!cancelled && token === revision.current) setError("读取聊天室屏蔽失败");
+      } finally {
+        if (!cancelled && token === revision.current) setLoading(false);
+      }
+    }
+    const stop = listen<ImportResult>("desktop://config-imported", (event) => {
+      if (!cancelled && event.payload.filtersSaved) void refresh();
+    });
+    void stop.then(() => {
+      if (!cancelled) void refresh();
+    }).catch(() => {
+      if (!cancelled) void refresh();
+    });
     return () => {
       cancelled = true;
+      ready.current = false;
+      revision.current += 1;
       window.clearTimeout(persistTimer.current);
+      void stop.then((unlisten) => unlisten()).catch(() => undefined);
     };
   }, []);
 
   async function persist(next: ChatroomFilters, quiet = true): Promise<boolean> {
+    if (!ready.current) return false;
+    const token = revision.current;
     setBusy(true);
     setError(null);
     try {
       const saved = await saveChatroomFilters(next);
+      if (!ready.current || token !== revision.current) return false;
       setShield(saved.shield);
       setCareUsers(saved.careUsers);
       if (!quiet) {
@@ -455,12 +476,13 @@ function ChatroomFiltersSection() {
       }
       return true;
     } catch (err) {
+      if (!ready.current || token !== revision.current) return false;
       const message = err instanceof Error ? err.message : "保存失败";
       setError(message);
       toast.error(message);
       return false;
     } finally {
-      setBusy(false);
+      if (token === revision.current) setBusy(false);
     }
   }
 
@@ -469,25 +491,29 @@ function ChatroomFiltersSection() {
       return;
     }
     window.clearTimeout(persistTimer.current);
+    const token = revision.current;
     persistTimer.current = window.setTimeout(() => {
-      void persist(next);
+      if (ready.current && token === revision.current) void persist(next);
     }, 400);
   }
 
   function updateShield(next: ShieldRule[]): void {
+    if (!ready.current) return;
     setShield(next);
     schedulePersist({ shield: next, careUsers });
   }
 
   async function addCare(): Promise<void> {
     const name = careDraft.trim();
-    if (name.length === 0 || careUsers.includes(name) || busy) {
+    if (!ready.current || name.length === 0 || careUsers.includes(name) || busy) {
       return;
     }
+    const token = revision.current;
     setBusy(true);
     setError(null);
     try {
       const found = await lookupUserName(name);
+      if (!ready.current || token !== revision.current) return;
       if (found !== name) {
         setError("用户名不存在");
         toast.error("用户名不存在");
@@ -501,11 +527,12 @@ function ChatroomFiltersSection() {
         setCareDraft("");
       }
     } catch (err) {
+      if (!ready.current || token !== revision.current) return;
       const message = err instanceof Error ? err.message : "添加失败";
       setError(message);
       toast.error(message);
     } finally {
-      setBusy(false);
+      if (token === revision.current) setBusy(false);
     }
   }
 

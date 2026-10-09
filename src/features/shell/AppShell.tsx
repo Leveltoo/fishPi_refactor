@@ -1,5 +1,6 @@
 import {
   Bell,
+  Blocks,
   Leaf,
   ListMusic,
   MessageSquare,
@@ -49,18 +50,15 @@ import { OverlayHost } from "@/features/overlay";
 import { RedPacketHost } from "@/features/redpacket";
 import { DesktopMount, ExtensionMount, PlaylistMount } from "@/features/desktop/mounts";
 import { SettingsHost } from "@/features/settings";
-import {
-  invokeAlwaysOnTop,
-  invokeSettingsSet,
-  normalizeSettings,
-} from "@/features/settings/api";
 import { DEFAULT_SETTINGS } from "@/features/settings/constants";
 import {
-  currentDesktopSettings,
-  publishDesktopSettings,
   subscribeDesktopSettings,
 } from "@/features/settings/settingsStore";
 import { FishMark } from "./FishMark";
+import { listen } from "@tauri-apps/api/event";
+import { OPEN_CHATROOM_EVENT } from "./navigation";
+import { showUserCardWindow } from "../usercard/window";
+import { REDPACKET_SEND_EVENT } from "../redpacket/events";
 import { HeaderMusic } from "./HeaderMusic";
 import { OPEN_IM_EVENT, OPEN_SETTINGS_EVENT } from "../../lib/nav";
 import {
@@ -77,6 +75,8 @@ import {
   closeMainWindow,
   hideMainToTray,
   toggleWindowOpacity,
+  toggleWindowPin,
+  startWindowDrag,
 } from "./windowActions";
 import "./AppShell.css";
 
@@ -95,6 +95,7 @@ type MainPage =
   | "breezemoon"
   | "activity"
   | "music"
+  | "extension"
   | "settings";
 
 const MAIN_NAV: { id: MainPage; label: string; Icon: LucideIcon }[] = [
@@ -104,6 +105,7 @@ const MAIN_NAV: { id: MainPage; label: string; Icon: LucideIcon }[] = [
   { id: "breezemoon", label: "清风明月", Icon: Leaf },
   { id: "activity", label: "活动（签到/通知）", Icon: Bell },
   { id: "music", label: "播放列表", Icon: ListMusic },
+  { id: "extension", label: "扩展", Icon: Blocks },
 ];
 
 const PAGE_TITLES: Record<MainPage, string> = {
@@ -113,6 +115,7 @@ const PAGE_TITLES: Record<MainPage, string> = {
   breezemoon: "清风明月",
   activity: "活动",
   music: "播放列表",
+  extension: "扩展",
   settings: "设置",
 };
 
@@ -251,11 +254,25 @@ export function AppShell({
     function onOpenSettings(): void {
       setPage("settings");
     }
+    function onOpenChatroom(): void {
+      setPage("chatroom");
+    }
     window.addEventListener(OPEN_IM_EVENT, onOpenIm);
     window.addEventListener(OPEN_SETTINGS_EVENT, onOpenSettings);
+    window.addEventListener(OPEN_CHATROOM_EVENT, onOpenChatroom);
+    const stops = [
+      listen<{ userName: string }>(OPEN_IM_EVENT, (event) => {
+        window.dispatchEvent(new CustomEvent(OPEN_IM_EVENT, { detail: event.payload }));
+      }),
+      listen(REDPACKET_SEND_EVENT, (event) => {
+        window.dispatchEvent(new CustomEvent(REDPACKET_SEND_EVENT, { detail: event.payload }));
+      }),
+    ];
     return () => {
       window.removeEventListener(OPEN_IM_EVENT, onOpenIm);
       window.removeEventListener(OPEN_SETTINGS_EVENT, onOpenSettings);
+      window.removeEventListener(OPEN_CHATROOM_EVENT, onOpenChatroom);
+      stops.forEach((stop) => { void stop.then((fn) => fn()).catch(() => undefined); });
     };
   }, []);
 
@@ -270,21 +287,7 @@ export function AppShell({
   }, [opacityEnabled, settingsOpacity]);
 
   const onTogglePin = useCallback(() => {
-    void (async () => {
-      const next = !alwaysOnTop;
-      try {
-        const result = await invokeAlwaysOnTop(next);
-        setAlwaysOnTop(next);
-        if (result.status === "ok") {
-          const base = currentDesktopSettings()?.settings ?? DEFAULT_SETTINGS;
-          const settings = normalizeSettings({ ...base, alwaysOnTop: next });
-          publishDesktopSettings({ ready: true, settings });
-          void invokeSettingsSet(settings);
-        }
-      } catch {
-        setAlwaysOnTop(next);
-      }
-    })();
+    void toggleWindowPin(alwaysOnTop).then(setAlwaysOnTop);
   }, [alwaysOnTop]);
 
   const onClose = useCallback(() => {
@@ -296,7 +299,7 @@ export function AppShell({
       <div className="shell">
         <ContextMenu>
           <ContextMenuTrigger asChild>
-            <header className="shell__header">
+            <header className="shell__header" onMouseDown={startWindowDrag}>
               <div className="shell__header-title">
                 <FishMark />
                 <span className="shell__header-title-text">
@@ -463,6 +466,11 @@ export function AppShell({
                   className="shell-account-menu"
                 >
                   <DropdownMenuLabel>{name}</DropdownMenuLabel>
+                  <DropdownMenuItem onSelect={() => {
+                    void showUserCardWindow(user.userName);
+                  }}>
+                    我的名片
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     variant="destructive"
@@ -501,13 +509,15 @@ export function AppShell({
               <div className="shell__page" hidden={page !== "music"}>
                 <PlaylistMount />
               </div>
+              <div className="shell__page shell__page--stack" hidden={page !== "extension"}>
+                <ExtensionMount />
+              </div>
               <div
                 className="shell__page shell__page--stack"
                 hidden={page !== "settings"}
               >
                 <SettingsHost />
                 <DesktopMount />
-                <ExtensionMount />
               </div>
             </div>
           </section>

@@ -1,39 +1,37 @@
 import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { RefreshCw } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { commandError, desktopPrefsGet, desktopPrefsSet } from "../desktop/api";
-import { extensionLoadTheme, extensionScan, type ExtensionItem, type ExtensionScan } from "./api";
+import {
+  extensionCall, extensionLoadTheme, extensionScan,
+  type ExtensionDetail, type ExtensionItem, type ExtensionScan,
+} from "./api";
+import { applyLegacyTheme } from "./theme";
 import "../desktop/panel.css";
-
-const STYLE_ID = "fishpi-local-theme";
-
-function applyCss(css: string): void {
-  const current = document.getElementById(STYLE_ID);
-  if (!css) {
-    current?.remove();
-    return;
-  }
-  const style = current instanceof HTMLStyleElement ? current : document.createElement("style");
-  style.id = STYLE_ID;
-  style.textContent = css;
-  if (!style.parentNode) {
-    document.head.appendChild(style);
-  }
-}
+import "./extension.css";
 
 function safeDataIcon(icon: string): string | null {
-  if (!icon.startsWith("data:image/")) {
+  if (!/^data:image\/(?:png|jpeg|gif|webp|x-icon);base64,[A-Za-z0-9+/=]+$/.test(icon)) {
     return null;
   }
   return icon;
 }
 
-function pluginLink(item: ExtensionItem): string {
-  return item.homepage || item.repository;
+function safeWebLink(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
+      ? url.href : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * 本机扩展目录：列出插件（图标 / 作者 / 主页），只注入一个本地主题 CSS。
- * 不执行 activate，不提供调试用 API 调用。
+ * Read-only extension metadata and README, plus controlled legacy theme colors.
  */
 export function ExtensionMount() {
   const [root, setRoot] = useState("");
@@ -41,103 +39,171 @@ export function ExtensionMount() {
   const [scan, setScan] = useState<ExtensionScan | null>(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
-  const mounted = useRef(true);
+  const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState("");
+  const [detail, setDetail] = useState<ExtensionDetail | null>(null);
+  const mounted = useRef(false);
+  const revision = useRef(0);
+  const detailRevision = useRef(0);
+  const savedRoot = useRef("");
 
-  async function refresh(nextRoot: string, nextTheme: string): Promise<void> {
+  async function refresh(): Promise<void> {
+    const request = ++revision.current;
+    detailRevision.current += 1;
+    setDetail(null);
+    setSelected("");
+    setBusy(true);
     setError("");
     try {
-      const listed = await extensionScan(nextRoot || undefined);
-      const loaded = await extensionLoadTheme(nextTheme, nextRoot || undefined);
-      if (!mounted.current) {
+      const prefs = await desktopPrefsGet();
+      const [listed, loaded] = await Promise.all([
+        extensionScan(prefs.extensionRoot || undefined),
+        extensionLoadTheme(prefs.theme, prefs.extensionRoot || undefined),
+      ]);
+      if (!mounted.current || request !== revision.current) {
         return;
       }
+      savedRoot.current = prefs.extensionRoot;
+      setRoot(prefs.extensionRoot);
+      setTheme(prefs.theme);
       setScan(listed);
-      applyCss(loaded.applied ? loaded.css : "");
-      setNote(loaded.message);
+      const mapped = applyLegacyTheme(loaded.applied ? loaded.css : "");
+      setNote(mapped.mapped
+        ? `已应用 ${mapped.mapped} 项主题颜色，忽略 ${mapped.ignored} 项未适配样式。`
+        : prefs.theme === "Default"
+          ? "当前使用内置主题。"
+          : loaded.applied
+            ? "主题没有可适配的颜色，当前使用内置主题。"
+            : loaded.message);
     } catch (err: unknown) {
-      if (!mounted.current) {
+      if (!mounted.current || request !== revision.current) {
         return;
       }
-      applyCss("");
+      applyLegacyTheme("");
+      setScan(null);
       setError(commandError(err));
+    } finally {
+      if (mounted.current && request === revision.current) {
+        setBusy(false);
+      }
     }
   }
 
   useEffect(() => {
     mounted.current = true;
     let alive = true;
-    void desktopPrefsGet()
-      .then(async (prefs) => {
-        if (!alive) {
-          return;
-        }
-        setRoot(prefs.extensionRoot);
-        setTheme(prefs.theme);
-        try {
-          const listed = await extensionScan(prefs.extensionRoot || undefined);
-          const loaded = await extensionLoadTheme(prefs.theme, prefs.extensionRoot || undefined);
-          if (!alive) {
-            return;
-          }
-          setScan(listed);
-          applyCss(loaded.applied ? loaded.css : "");
-          setNote(loaded.message);
-        } catch (err: unknown) {
-          if (alive) {
-            applyCss("");
-            setError(commandError(err));
-          }
-        }
-      })
+    // Register first so importing settings while this panel stays mounted is observed.
+    const stop = listen("desktop://prefs-changed", () => {
+      if (alive) {
+        void refresh();
+      }
+    });
+    void stop.then(() => {
+      if (alive) {
+        void refresh();
+      }
+    })
       .catch((err: unknown) => {
         if (alive) {
           setError(commandError(err));
+          void refresh();
         }
       });
     return () => {
       alive = false;
       mounted.current = false;
-      applyCss("");
+      revision.current += 1;
+      detailRevision.current += 1;
+      void stop.then((unlisten) => unlisten()).catch(() => undefined);
+      applyLegacyTheme("");
     };
   }, []);
 
-  async function save(nextRoot: string, nextTheme: string): Promise<void> {
+  async function save(patch: { extensionRoot?: string; theme?: string }): Promise<void> {
+    setBusy(true);
     setError("");
     try {
-      const prefs = await desktopPrefsSet({
-        extensionRoot: nextRoot.trim(),
-        theme: nextTheme,
-      });
-      setRoot(prefs.extensionRoot);
-      setTheme(prefs.theme);
-      await refresh(prefs.extensionRoot, prefs.theme);
+      await desktopPrefsSet(patch);
+      if (mounted.current) {
+        await refresh();
+      }
     } catch (err: unknown) {
-      setError(commandError(err));
+      if (mounted.current) {
+        setError(commandError(err));
+        setBusy(false);
+      }
     }
   }
 
-  const plugins = scan?.plugins ?? [];
+  async function viewDetail(item: ExtensionItem): Promise<void> {
+    const request = ++detailRevision.current;
+    if (selected === item.key) {
+      setSelected("");
+      setDetail(null);
+      return;
+    }
+    setSelected(item.key);
+    setDetail(null);
+    setError("");
+    try {
+      const result = await extensionCall("readme", item.key, scan?.root);
+      if (mounted.current && request === detailRevision.current) {
+        setDetail(result);
+      }
+    } catch (err: unknown) {
+      if (mounted.current && request === detailRevision.current) {
+        setError(commandError(err));
+      }
+    }
+  }
+
+  async function openLink(link: string): Promise<void> {
+    const safe = safeWebLink(link);
+    if (!safe) {
+      return;
+    }
+    try {
+      await openUrl(safe);
+    } catch (err: unknown) {
+      if (mounted.current) {
+        setError(commandError(err));
+      }
+    }
+  }
+
+  const items = [...(scan?.plugins ?? []), ...(scan?.themes ?? [])];
 
   return (
-    <section className="parity-panel" aria-label="扩展">
+    <section className="parity-panel extension-panel" aria-label="扩展" aria-busy={busy}>
       <section className="parity-section">
         <h2>本地扩展</h2>
-        <label className="parity-row">
-          扩展目录
+        <div className="parity-row">
+          <label htmlFor="extension-root">扩展目录</label>
           <input
+            id="extension-root"
             value={root}
+            disabled={busy}
             onChange={(event) => setRoot(event.target.value)}
-            onBlur={() => void save(root, theme)}
+            onBlur={() => {
+              if (root.trim() !== savedRoot.current) {
+                void save({ extensionRoot: root.trim() });
+              }
+            }}
           />
-        </label>
+          <button type="button" disabled={busy} title="重新扫描" aria-label="重新扫描"
+            onClick={() => void refresh()}>
+            <RefreshCw size={16} aria-hidden="true" />
+          </button>
+        </div>
         <label className="parity-row">
           主题
           <select
             value={theme}
+            disabled={busy}
             onChange={(event) => {
               const next = event.target.value;
               setTheme(next);
-              void save(root, next);
+              void save({ theme: next });
             }}
           >
             <option value="Default">默认</option>
@@ -152,38 +218,54 @@ export function ExtensionMount() {
           </select>
         </label>
         <p className="parity-note">
-          {note || scan?.message || "只读取本机目录，不下载远程插件，也不执行 activate。"}
+          {note || "正在读取本地扩展。"}
         </p>
-        {plugins.length ? (
+        {scan?.diagnostics.length ? (
+          <ul className="parity-list">
+            {scan.diagnostics.map((text, index) => <li key={index}>{text}</li>)}
+          </ul>
+        ) : null}
+        {items.length ? (
           <ul className="parity-ext-list">
-            {plugins.map((item) => (
-              <ExtensionCard key={item.key} item={item} />
+            {items.map((item) => (
+              <ExtensionCard key={item.key} item={item} selected={selected === item.key}
+                onDetail={() => void viewDetail(item)} onLink={(link) => void openLink(link)} />
             ))}
           </ul>
         ) : (
-          <p className="parity-note">没有可列出的本地插件。</p>
+          <p className="parity-note">{busy ? "正在扫描。" : "没有可列出的本地扩展。"}</p>
         )}
       </section>
 
-      <section className="parity-section">
-        <h2>不支持的插件 API</h2>
-        <p className="parity-note">
-          旧 Electron 插件 API 没有安全等价物。下列能力一律拒绝，不会在本页提供调试调用。
-        </p>
-        <ul className="parity-list">
-          {(scan?.unsupported ?? []).map((name) => (
-            <li key={name}>{name}</li>
-          ))}
-        </ul>
-      </section>
-      {error ? <p className="parity-error">{error}</p> : null}
+      {selected ? (
+        <section className="parity-section extension-readme" aria-label="扩展详情" aria-live="polite">
+          <h2>{items.find((item) => item.key === selected)?.displayName ?? selected}</h2>
+          {detail ? (
+            detail.readme ? (
+              <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
+                a: ({ href, children }) => href && safeWebLink(href)
+                  ? <button type="button" className="parity-ext__link"
+                      onClick={() => void openLink(href)}>{children}</button>
+                  : <span>{children}</span>,
+                img: ({ alt }) => <span>{alt ?? ""}</span>,
+              }}>{detail.readme}</ReactMarkdown>
+            ) : <p className="parity-note">作者没有提供介绍。</p>
+          ) : <p className="parity-note">{error ? "详情未载入。" : "正在读取介绍。"}</p>}
+        </section>
+      ) : null}
+      {error ? <p className="parity-error" role="alert">{error}</p> : null}
     </section>
   );
 }
 
-function ExtensionCard({ item }: { item: ExtensionItem }) {
+function ExtensionCard({ item, selected, onDetail, onLink }: {
+  item: ExtensionItem;
+  selected: boolean;
+  onDetail: () => void;
+  onLink: (link: string) => void;
+}) {
   const icon = safeDataIcon(item.icon);
-  const link = pluginLink(item);
+  const link = safeWebLink(item.homepage || item.repository);
   const title = item.displayName || item.name;
 
   return (
@@ -199,9 +281,7 @@ function ExtensionCard({ item }: { item: ExtensionItem }) {
             <button
               type="button"
               className="parity-ext__link"
-              onClick={() => {
-                void openUrl(link).catch(() => undefined);
-              }}
+              onClick={() => onLink(link)}
             >
               {title}
             </button>
@@ -211,16 +291,15 @@ function ExtensionCard({ item }: { item: ExtensionItem }) {
           {item.version ? <sub>{item.version}</sub> : null}
         </h3>
         <p className="parity-ext__desc">{item.description || "作者什么也没有介绍。"}</p>
-        <p className="parity-ext__author">{item.author || "神秘开发者"}（未执行）</p>
+        <p className="parity-ext__author">{item.author || "神秘开发者"}（{item.kind === "theme" ? "主题" : "脚本未运行"}）</p>
+        <button type="button" aria-pressed={selected} onClick={onDetail}>详情</button>
         {link ? (
           <p className="parity-ext__author">
             主页{" "}
             <button
               type="button"
               className="parity-ext__link"
-              onClick={() => {
-                void openUrl(link).catch(() => undefined);
-              }}
+              onClick={() => onLink(link)}
             >
               {link}
             </button>

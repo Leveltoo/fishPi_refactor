@@ -27,9 +27,9 @@ export const COMMAND_LABEL: Record<string, string> = {
   [USER_COMMAND.rewardLiveness]: "领取昨日奖励",
 };
 
-/** SDK 1.1.0 无签到写 API 时后端返回的业务错误文案（与 Rust 常量一致）。 */
+/** SDK 1.1.1 仍无签到写 API（与 Rust 常量一致）。 */
 export const CHECKIN_UNSUPPORTED =
-  "签到写操作暂不可用：fishpi-sdk 1.1.0 仅提供 is_checkin() 查询，没有签到写 API。本次没有真正签到。";
+  "签到写操作暂不可用：fishpi-sdk 1.1.1 仅提供 is_checkin() 查询，没有签到写 API。本次没有真正签到。";
 export const CHECKIN_UNAVAILABLE = "签到命令尚未接入，本次没有真正签到。";
 export const CHECKIN_PENDING =
   "结果待确认。请稍后核对是否已经签到，请勿重复提交。";

@@ -7,6 +7,9 @@
 import { loadOffline } from "../desktop/offline";
 import { mapPrivateMessage } from "./mappers";
 import type { PrivateMessageDto } from "./types";
+import { mergeThreadMessages } from "./threadState";
+
+export { mergeThreadMessages } from "./threadState";
 
 export async function loadOfflineThread(
   peer: string,
@@ -24,75 +27,8 @@ export async function loadOfflineThread(
     const mapped = rows
       .map(mapPrivateMessage)
       .filter((item): item is PrivateMessageDto => item != null);
-    return sortThread(mapped);
+    return mergeThreadMessages([], mapped);
   } catch {
     return [];
-  }
-}
-
-/**
- * 按 ID 合并。
- * `incomingWins`：历史覆盖离线内容用 true；晚到的离线种子补洞用 false。
- * `revoked` 任一为真则保持撤回，后到数据不得复活。
- */
-export function mergeThreadMessages(
-  current: PrivateMessageDto[],
-  incoming: PrivateMessageDto[],
-  options?: { incomingWins?: boolean },
-): PrivateMessageDto[] {
-  const incomingWins = options?.incomingWins !== false;
-  const byId = new Map<string, PrivateMessageDto>();
-  for (const item of current) {
-    byId.set(item.id, item);
-  }
-  for (const item of incoming) {
-    const previous = byId.get(item.id);
-    if (previous == null) {
-      byId.set(item.id, item);
-      continue;
-    }
-    const merged = incomingWins
-      ? { ...previous, ...item }
-      : { ...item, ...previous };
-    byId.set(item.id, {
-      ...merged,
-      revoked: previous.revoked || item.revoked,
-    });
-  }
-  return sortThread([...byId.values()]);
-}
-
-function sortThread(messages: PrivateMessageDto[]): PrivateMessageDto[] {
-  if (messages.length < 2) {
-    return messages.slice();
-  }
-  return messages.slice().sort((left, right) => {
-    const byId = compareMessageId(left.id, right.id);
-    if (byId !== 0) {
-      return byId;
-    }
-    if (left.time && right.time && left.time !== right.time) {
-      return left.time < right.time ? -1 : 1;
-    }
-    return 0;
-  });
-}
-
-function compareMessageId(left: string, right: string): number {
-  if (left === right) {
-    return 0;
-  }
-  try {
-    const a = BigInt(left);
-    const b = BigInt(right);
-    if (a < b) {
-      return -1;
-    }
-    if (a > b) {
-      return 1;
-    }
-    return 0;
-  } catch {
-    return left < right ? -1 : left > right ? 1 : 0;
   }
 }

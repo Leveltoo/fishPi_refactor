@@ -1,18 +1,13 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isUploadableMedia, uploadMediaToMarkdown } from "../../lib/upload";
+import { isImageFile, uploadMediaToMarkdown } from "../../lib/upload";
+import { sanitizeHttpUrl } from "../../lib/markdown";
 
 /** 对齐旧 `htmlGetImg`：抽出 HTML 里 `src="..."`。 */
 export function htmlImageSources(html: string): string[] {
-  const out: string[] = [];
-  const re = /src="([^"]+)"/gi;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(html)) != null) {
-    const src = match[1].trim();
-    if (src.length > 0) {
-      out.push(src);
-    }
-  }
-  return out;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return [...new Set(Array.from(doc.querySelectorAll("img[src]"))
+    .map((image) => image.getAttribute("src")?.trim() ?? "")
+    .filter(Boolean))];
 }
 
 export function isRemoteImageSrc(src: string): boolean {
@@ -26,7 +21,9 @@ export function isFileSrc(src: string): boolean {
 export function remoteImageMarkdown(srcs: readonly string[]): string {
   return srcs
     .filter(isRemoteImageSrc)
-    .map((url) => `![图片](${url})`)
+    .map((src) => sanitizeHttpUrl(src))
+    .filter((src): src is string => src != null)
+    .map((url) => `![图片](<${url}>)`)
     .join("\n");
 }
 
@@ -76,7 +73,7 @@ export async function fileFromLocalSrc(src: string): Promise<File | null> {
       const file = new File([blob], name, {
         type: blob.type || "image/png",
       });
-      if (isUploadableMedia(file)) {
+      if (isImageFile(file)) {
         return file;
       }
     } catch {
@@ -92,9 +89,10 @@ export async function uploadLocalSources(
   const files: File[] = [];
   for (const src of srcs) {
     const file = await fileFromLocalSrc(src);
-    if (file != null) {
-      files.push(file);
+    if (file == null) {
+      throw new Error("无法读取粘贴的本地图片，请用上传图片选择该文件。");
     }
+    files.push(file);
   }
   if (files.length === 0) {
     return "";

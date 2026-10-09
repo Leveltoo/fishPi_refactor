@@ -1,9 +1,10 @@
 import { gestureLabel } from "./constants";
-import type { GestureIndex, RedPacketGot, RedPacketInfo } from "./types";
+import type { GestureIndex, RedPacketGot, RedPacketInfo, RedPacketType } from "./types";
 
 export function openHeadline(
   data: RedPacketInfo,
   selfUserName: string,
+  packetType?: RedPacketType,
 ): string {
   const self = data.who.find((item) => sameUser(item.userName, selfUserName));
   const isSpecify = data.receivers.length > 0;
@@ -13,7 +14,7 @@ export function openHeadline(
   if (isSpecify && selfUserName && !specified) {
     return "会错意了";
   }
-  if (data.info.gesture !== undefined) {
+  if (data.info.gesture !== undefined || packetType === "rockPaperScissors") {
     return rockPaperTitle(data, selfUserName);
   }
   if (!self) {
@@ -88,5 +89,21 @@ export function senderGestureText(
 }
 
 export function sameUser(left: string, right: string): boolean {
-  return left.length > 0 && left.toLowerCase() === right.toLowerCase();
+  return left.length > 0 && left === right;
+}
+
+export function resolveSenderGesture(
+  data: RedPacketInfo,
+  selected: GestureIndex | undefined,
+  selfUserName: string,
+): GestureIndex | undefined {
+  if (data.info.gesture !== undefined) {
+    return data.info.gesture;
+  }
+  const first = data.who[0];
+  if (selected === undefined || !first || !sameUser(first.userName, selfUserName)) {
+    return undefined;
+  }
+  return (first.userMoney > 0 ? [1, 2, 0] :
+    first.userMoney < 0 ? [2, 0, 1] : [0, 1, 2])[selected] as GestureIndex;
 }

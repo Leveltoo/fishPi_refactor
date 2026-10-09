@@ -1,60 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 import { invokeAuthMe } from "../../lib/tauri";
+import { fetchUserProfile } from "../overlay/api";
 import {
-  invokeChatConnect,
-  invokeChatDisconnect,
-  invokeChatHistory,
-  invokeChatList,
-  invokeChatMarkRead,
-  invokeChatRevoke,
-  invokeChatSend,
-  invokeChatUnread,
-  invokeUserSearch,
-  listenChatEvents,
+  invokeChatConnect, invokeChatDisconnect, invokeChatHistory, invokeChatList,
+  invokeChatMarkRead, invokeChatRevoke, invokeChatSend, invokeChatUnread,
+  invokeUserSearch, listenChatEvents,
 } from "./api";
 import { HISTORY_PAGE_SIZE } from "./constants";
 import { formatPrivateReply } from "./replyQuote";
-import { loadOfflineThread, mergeThreadMessages } from "./offlineSeed";
+import { loadOfflineThread } from "./offlineSeed";
+import { confirmsWrite, mergeThreadMessages, messagePeer, type PendingWrite } from "./threadState";
 import {
-  applyUnreadCounts,
-  bumpUnread,
-  clearUnread,
-  conversationsFrom,
+  applyUnreadCounts, bumpUnread, clearUnread, conversationsFrom, toConversation,
   upsertConversation,
 } from "./conversation";
-import {
-  isBridgeGapError,
-  isOutcomeUnknown,
-  toUserErrorMessage,
-} from "./errors";
-import { fetchUserProfile } from "../overlay/api";
+import { isBridgeGapError, isOutcomeUnknown, toUserErrorMessage } from "./errors";
 import { publishImUnread, sumUnread } from "./unreadBus";
 import type {
-  ChatListenEvent,
-  Conversation,
-  PrivateMessageDto,
-  ReplyTarget,
-  UserSearchHit,
+  ChatConnectRequest, ChatListenEvent, Conversation, PrivateMessageDto,
+  ReplyTarget, UserSearchHit,
 } from "./types";
 import { CHAT_COMMAND, NOTICE_COMMAND, USER_COMMAND } from "./types";
 
 export type ImCapabilities = {
-  list: boolean;
-  history: boolean;
-  send: boolean;
-  search: boolean;
-  events: boolean;
+  list: boolean; history: boolean; send: boolean; search: boolean; events: boolean;
 };
-
-const ALL_READY: ImCapabilities = {
-  list: true,
-  history: true,
-  send: true,
-  search: true,
-  events: true,
-};
+const ALL_READY: ImCapabilities = { list: true, history: true, send: true, search: true, events: true };
+type Connection = ChatConnectRequest & { userName: string };
 
 export function usePrivateChat() {
   const [selfUserName, setSelfUserName] = useState<string | null>(null);
@@ -64,754 +39,518 @@ export function usePrivateChat() {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingThread, setLoadingThread] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
   const [sending, setSending] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<ImCapabilities>(ALL_READY);
   const [startOpen, setStartOpen] = useState(false);
-  const [quote, setQuoteState] = useState<ReplyTarget | null>(null);
+  const [quote, setQuote] = useState<ReplyTarget | null>(null);
   const [peerNickname, setPeerNickname] = useState<string | null>(null);
-  /** 右键「@对方」后待写入 Composer 的用户名；Composer 消费后 clear。 */
   const [pendingMention, setPendingMention] = useState<string | null>(null);
+  const [confirmedContent, setConfirmedContent] = useState<string | null>(null);
 
-  const selfRef = useRef<string | null>(null);
-  const activeUserRef = useRef<string | null>(null);
-  const sessionGenRef = useRef(0);
+  const selfRef = useRef("");
+  const sessionRef = useRef(0);
+  const lifecycleRef = useRef(0);
+  const mountedRef = useRef(false);
+  const activeRef = useRef<string | null>(null);
+  const sequenceRef = useRef(0);
+  const openSequenceRef = useRef(0);
+  const listSequenceRef = useRef(0);
+  const unreadSequenceRef = useRef(0);
   const pageRef = useRef(1);
-  const loadSeqRef = useRef(0);
-  const connectedUserRef = useRef<string | null>(null);
-  const globalConnectedRef = useRef(false);
-  const listReadyRef = useRef(false);
-  const mountedRef = useRef(true);
+  const moreRef = useRef(false);
+  const pagingRef = useRef(false);
+  const connectedRef = useRef<Connection | null>(null);
+  const connectQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const bootRef = useRef<Promise<void>>(Promise.resolve());
+  const messagesRef = useRef(messages);
+  const quoteRef = useRef(quote);
+  const sendingRef = useRef(false);
+  const pendingWritesRef = useRef(new Map<string, PendingWrite>());
+  const confirmedDraftsRef = useRef(new Map<string, string>());
+  const conversationsRef = useRef(conversations);
+  const revokedIdsRef = useRef(new Set<string>());
   const revokingIdsRef = useRef(new Set<string>());
-  const handleEventRef = useRef<(event: ChatListenEvent) => void>(() => undefined);
-  const quoteRef = useRef<ReplyTarget | null>(null);
+  const uncertainRevokesRef = useRef(new Set<string>());
+  const seenMessagesRef = useRef(new Set<string>());
+  const readingRef = useRef(new Set<string>());
+  const readAgainRef = useRef(new Set<string>());
+  const handlerRef = useRef<(event: ChatListenEvent) => void>(() => undefined);
+  const visibleRef = useRef(false);
+  messagesRef.current = messages;
+  conversationsRef.current = conversations;
   quoteRef.current = quote;
 
-  const markGap = useCallback((command: string): void => {
-    setCapabilities((prev) => {
-      if (command === CHAT_COMMAND.list && prev.list) {
-        return { ...prev, list: false };
-      }
-      if (command === CHAT_COMMAND.history && prev.history) {
-        return { ...prev, history: false };
-      }
-      if (command === CHAT_COMMAND.send && prev.send) {
-        return { ...prev, send: false };
-      }
-      if (command === USER_COMMAND.search && prev.search) {
-        return { ...prev, search: false };
-      }
-      return prev;
-    });
+  const current = useCallback((life: number, session: number): boolean =>
+    mountedRef.current && life === lifecycleRef.current && session > 0 && session === sessionRef.current, []);
+
+  const markCapability = useCallback((command: string, ready: boolean): void => {
+    const key = command === CHAT_COMMAND.list ? "list" :
+      command === CHAT_COMMAND.history ? "history" :
+      command === CHAT_COMMAND.send ? "send" :
+      command === USER_COMMAND.search ? "search" : null;
+    if (key) setCapabilities((previous) => ({ ...previous, [key]: ready }));
   }, []);
 
-  const markReady = useCallback((command: string): void => {
-    setCapabilities((prev) => {
-      if (command === CHAT_COMMAND.list && !prev.list) {
-        return { ...prev, list: true };
-      }
-      if (command === CHAT_COMMAND.history && !prev.history) {
-        return { ...prev, history: true };
-      }
-      if (command === CHAT_COMMAND.send && !prev.send) {
-        return { ...prev, send: true };
-      }
-      if (command === USER_COMMAND.search && !prev.search) {
-        return { ...prev, search: true };
-      }
-      return prev;
-    });
-  }, []);
-
-  const acceptSession = useCallback((eventGen: number): boolean => {
-    const current = sessionGenRef.current;
-    if (eventGen <= 0 || current <= 0) {
-      return true;
-    }
-    return eventGen === current;
-  }, []);
+  const handleError = useCallback((err: unknown): void => {
+    if (isBridgeGapError(err)) markCapability(err.command, false);
+    setError(toUserErrorMessage(err));
+  }, [markCapability]);
 
   const refreshUnread = useCallback(async (): Promise<void> => {
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
+    const seq = ++unreadSequenceRef.current;
     try {
       const result = await invokeChatUnread();
-      if (!mountedRef.current || !acceptSession(result.sessionGeneration)) {
-        return;
-      }
-      const unread = conversationsFrom(result.messages, selfRef.current);
-      setConversations((list) => applyUnreadCounts(list, unread));
+      if (!current(life, session) || result.sessionGeneration !== session ||
+          seq !== unreadSequenceRef.current) return;
+      // unread 是逐条消息，不能先按 peer 去重。
+      const rows = result.messages.map((row) => toConversation(row, selfRef.current));
+      setConversations((list) => applyUnreadCounts(list, rows));
     } catch (err) {
-      if (isBridgeGapError(err)) {
-        markGap(err.command);
-      }
+      if (current(life, session)) handleError(err);
     }
-  }, [acceptSession, markGap]);
+  }, [current, handleError]);
+
+  const markRead = useCallback(async (userName: string): Promise<void> => {
+    if (!visibleRef.current || activeRef.current !== userName) return;
+    if (readingRef.current.has(userName)) {
+      readAgainRef.current.add(userName);
+      return;
+    }
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
+    readingRef.current.add(userName);
+    try {
+      await invokeChatMarkRead({ userName, sessionGeneration: session });
+      if (!current(life, session)) return;
+      ++unreadSequenceRef.current;
+      setConversations((list) => clearUnread(list, userName));
+    } catch (err) {
+      if (current(life, session)) handleError(err);
+    } finally {
+      readingRef.current.delete(userName);
+      if (readAgainRef.current.delete(userName) && current(life, session)) void markRead(userName);
+    }
+  }, [current, handleError]);
 
   const loadList = useCallback(async (): Promise<void> => {
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
+    const seq = ++listSequenceRef.current;
     setLoadingList(true);
     try {
       const result = await invokeChatList();
-      if (!mountedRef.current) {
-        return;
-      }
-      if (result.sessionGeneration > 0) {
-        sessionGenRef.current = result.sessionGeneration;
-      }
-      markReady(CHAT_COMMAND.list);
-      listReadyRef.current = true;
+      if (!current(life, session) || result.sessionGeneration !== session ||
+          seq !== listSequenceRef.current) return;
+      markCapability(CHAT_COMMAND.list, true);
       const items = conversationsFrom(result.conversations, selfRef.current);
-      setConversations(items);
+      setConversations((list) => [
+        ...items.map((item) => ({ ...item, unread: list.find((x) => x.peerUserName === item.peerUserName)?.unread ?? 0 })),
+        ...list.filter((item) => !items.some((x) => x.peerUserName === item.peerUserName)),
+      ]);
       setError(null);
       await refreshUnread();
     } catch (err) {
-      if (!mountedRef.current) {
-        return;
-      }
-      if (isBridgeGapError(err)) {
-        markGap(err.command);
-        listReadyRef.current = false;
-        setConversations([]);
-        setError(err.message);
-        return;
-      }
-      setError(toUserErrorMessage(err));
+      if (current(life, session)) handleError(err);
     } finally {
-      if (mountedRef.current) {
-        setLoadingList(false);
-      }
+      if (current(life, session) && seq === listSequenceRef.current) setLoadingList(false);
     }
-  }, [markGap, markReady, refreshUnread]);
+  }, [current, handleError, markCapability, refreshUnread]);
 
-  const connectGlobal = useCallback(async (): Promise<void> => {
-    try {
-      const result = await invokeChatConnect({});
-      if (!mountedRef.current) {
-        void invokeChatDisconnect({}).catch(() => undefined);
-        return;
-      }
-      globalConnectedRef.current = true;
-      if (result.sessionGeneration > 0) {
-        sessionGenRef.current = result.sessionGeneration;
-      }
-    } catch (err) {
-      globalConnectedRef.current = false;
-      if (isBridgeGapError(err)) {
-        markGap(err.command);
-      }
-    }
-  }, [markGap]);
-
-  const openConversation = useCallback(
-    async (userName: string): Promise<void> => {
-      const trimmed = userName.trim();
-      if (trimmed.length === 0) {
-        return;
-      }
-      const seq = ++loadSeqRef.current;
-      activeUserRef.current = trimmed;
-      setActiveUser(trimmed);
-      setMessages([]);
-      setPendingConfirm(false);
-      setHasMore(true);
-      setQuoteState(null);
-      pageRef.current = 1;
-      setLoadingThread(true);
-      setConversations((list) =>
-        upsertConversation(clearUnread(list, trimmed), {
-          peerUserName: trimmed,
-          peerAvatarUrl: list.find((item) => item.peerUserName === trimmed)?.peerAvatarUrl ?? "",
-          preview: "",
-          time: "",
-          unread: 0,
-        }),
-      );
-
-      // 离线种子只影响展示；live 写入仍由 DesktopMount 合并进 offline 库。
-      void loadOfflineThread(trimmed).then((seed) => {
-        if (!mountedRef.current || seq !== loadSeqRef.current || seed.length === 0) {
-          return;
-        }
-        setMessages((current) =>
-          mergeThreadMessages(current, seed, { incomingWins: false }),
-        );
-        setLoadingThread(false);
-      });
-
-      const previous = connectedUserRef.current;
-      if (previous && previous !== trimmed) {
-        try {
-          await invokeChatDisconnect({ userName: previous });
-        } catch (err) {
-          if (isBridgeGapError(err)) {
-            markGap(err.command);
-          }
-        }
-        if (connectedUserRef.current === previous) {
-          connectedUserRef.current = null;
-        }
-      }
-
-      if (!mountedRef.current || seq !== loadSeqRef.current) {
-        return;
-      }
-
-      if (!globalConnectedRef.current) {
-        await connectGlobal();
-        if (!mountedRef.current || seq !== loadSeqRef.current) {
-          return;
-        }
-      }
-
-      try {
-        const connected = await invokeChatConnect({ userName: trimmed });
-        if (!mountedRef.current || seq !== loadSeqRef.current) {
-          void invokeChatDisconnect({ userName: trimmed }).catch(() => undefined);
-          return;
-        }
-        connectedUserRef.current = trimmed;
-        if (connected.sessionGeneration > 0) {
-          sessionGenRef.current = connected.sessionGeneration;
-        }
-      } catch (err) {
-        if (isBridgeGapError(err)) {
-          markGap(err.command);
-        }
-      }
-
-      if (!mountedRef.current || seq !== loadSeqRef.current) {
-        return;
-      }
-
-      try {
-        await invokeChatMarkRead({ userName: trimmed });
-      } catch (err) {
-        if (isBridgeGapError(err)) {
-          markGap(err.command);
-        }
-      }
-
-      try {
-        const history = await invokeChatHistory({
-          userName: trimmed,
-          page: 1,
-          size: HISTORY_PAGE_SIZE,
-        });
-        if (!mountedRef.current || seq !== loadSeqRef.current) {
-          return;
-        }
-        if (history.sessionGeneration > 0) {
-          sessionGenRef.current = history.sessionGeneration;
-        }
-        markReady(CHAT_COMMAND.history);
-        setMessages((current) => mergeThreadMessages(current, history.messages));
-        setHasMore(history.exhausted !== true && history.messages.length >= HISTORY_PAGE_SIZE);
-        setError(null);
-      } catch (err) {
-        if (!mountedRef.current || seq !== loadSeqRef.current) {
-          return;
-        }
-        if (isBridgeGapError(err)) {
-          markGap(err.command);
-          setError(err.message);
-          return;
-        }
-        setError(toUserErrorMessage(err));
-      } finally {
-        if (mountedRef.current && seq === loadSeqRef.current) {
-          setLoadingThread(false);
-        }
-      }
-    },
-    [connectGlobal, markGap, markReady],
-  );
-
-  const loadMore = useCallback(async (): Promise<void> => {
-    const userName = activeUserRef.current;
-    if (!userName || loadingMore || !hasMore) {
-      return;
-    }
-    const nextPage = pageRef.current + 1;
-    const seq = loadSeqRef.current;
-    setLoadingMore(true);
+  const loadHistory = useCallback(async (userName: string, page: number, seq: number): Promise<void> => {
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
     try {
       const history = await invokeChatHistory({
-        userName,
-        page: nextPage,
-        size: HISTORY_PAGE_SIZE,
+        userName, page, size: HISTORY_PAGE_SIZE, sessionGeneration: session,
       });
-      if (!mountedRef.current || seq !== loadSeqRef.current) {
-        return;
+      if (!current(life, session) || history.sessionGeneration !== session ||
+          seq !== sequenceRef.current || activeRef.current !== userName) return;
+      if (page > 1 || pageRef.current === 1) {
+        pageRef.current = page;
+        moreRef.current = !history.exhausted && history.messages.length >= HISTORY_PAGE_SIZE;
+        setHasMore(moreRef.current);
       }
-      pageRef.current = nextPage;
-      markReady(CHAT_COMMAND.history);
-      setMessages((current) => mergeThreadMessages(current, history.messages));
-      setHasMore(history.exhausted !== true && history.messages.length >= HISTORY_PAGE_SIZE);
+      const pending = pendingWritesRef.current.get(userName);
+      const confirmed = pending && history.messages.some((message) => confirmsWrite(message, pending, selfRef.current));
+      for (const message of history.messages) {
+        seenMessagesRef.current.add(message.id);
+        if (message.revoked) revokedIdsRef.current.add(message.id);
+      }
+      setMessages((list) => mergeThreadMessages(list, history.messages, { revokedIds: revokedIdsRef.current }));
+      markCapability(CHAT_COMMAND.history, true);
+      setError(null);
+      if (confirmed && pending) {
+        pendingWritesRef.current.delete(userName);
+        confirmedDraftsRef.current.set(userName, pending.draftContent ?? pending.content);
+        setPendingConfirm(false);
+        setConfirmedContent(pending.draftContent ?? pending.content);
+        setQuote(null);
+      }
+      if (page === 1) void markRead(userName);
     } catch (err) {
-      if (isBridgeGapError(err)) {
-        markGap(err.command);
-        setHasMore(false);
-        return;
+      if (current(life, session) && seq === sequenceRef.current) handleError(err);
+    }
+  }, [current, handleError, markCapability, markRead]);
+
+  const openConversation = useCallback(async (name: string): Promise<void> => {
+    const userName = name.trim();
+    if (!userName) return;
+    const requestSeq = ++openSequenceRef.current;
+    const life = lifecycleRef.current;
+    await bootRef.current;
+    const session = sessionRef.current;
+    if (!current(life, session) || requestSeq !== openSequenceRef.current) return;
+    const known = conversationsRef.current.find((item) => item.peerUserName === userName);
+    const profile = await fetchUserProfile(userName);
+    if (!current(life, session) || requestSeq !== openSequenceRef.current) return;
+    if (profile.status !== "ok" && !known) {
+      toast.error(profile.message);
+      return;
+    }
+    const seq = ++sequenceRef.current;
+    activeRef.current = userName;
+    setActiveUser(userName);
+    setPeerNickname(profile.status === "ok" ? profile.profile.userNickname || null : null);
+    setQuote(null);
+    setPendingMention(null);
+    setConfirmedContent(confirmedDraftsRef.current.get(userName) ?? null);
+    setSending(false);
+    setPendingConfirm(pendingWritesRef.current.has(userName));
+    setMessages([]);
+    pageRef.current = 1;
+    pagingRef.current = false;
+    moreRef.current = false;
+    setLoadingMore(false);
+    setHasMore(false);
+    setLoadingThread(true);
+    setConversations((list) => upsertConversation(list, {
+      peerUserName: userName, peerAvatarUrl: profile.status === "ok" ? profile.profile.userAvatarUrl : known?.peerAvatarUrl ?? "",
+      preview: "", time: "", unread: list.find((item) => item.peerUserName === userName)?.unread ?? 0,
+    }));
+    void loadOfflineThread(userName).then((seed) => {
+      if (!current(life, session) || seq !== sequenceRef.current) return;
+      setMessages((list) => mergeThreadMessages(list, seed, {
+        incomingWins: false, revokedIds: revokedIdsRef.current,
+      }));
+    });
+    const history = loadHistory(userName, 1, seq);
+    const connect = connectQueueRef.current.catch(() => undefined).then(async () => {
+      if (!current(life, session) || seq !== sequenceRef.current) return;
+      const previous = connectedRef.current;
+      if (previous && previous.userName !== userName) {
+        await invokeChatDisconnect(previous);
+        connectedRef.current = null;
       }
-      toast.error(toUserErrorMessage(err));
+      if (!current(life, session) || seq !== sequenceRef.current) return;
+      const connection = await invokeChatConnect({ userName, sessionGeneration: session });
+      if (!current(life, session) || connection.sessionGeneration !== session) return;
+      connectedRef.current = {
+        userName, sessionGeneration: session, connectionGeneration: connection.connectionGeneration,
+      };
+      // 新打开仍通过队列断开；旧回调不越过新打开的同名连接。
+      if (seq !== sequenceRef.current && activeRef.current !== userName) {
+        await invokeChatDisconnect(connectedRef.current);
+        connectedRef.current = null;
+      }
+    });
+    connectQueueRef.current = connect;
+    try {
+      await Promise.all([history, connect]);
+    } catch (err) {
+      if (current(life, session) && seq === sequenceRef.current) handleError(err);
     } finally {
-      if (mountedRef.current) {
+      if (current(life, session) && seq === sequenceRef.current) setLoadingThread(false);
+    }
+  }, [current, handleError, loadHistory]);
+
+  const loadMore = useCallback(async (): Promise<void> => {
+    const userName = activeRef.current;
+    if (!userName || pagingRef.current || !moreRef.current) return;
+    const seq = sequenceRef.current;
+    pagingRef.current = true;
+    setLoadingMore(true);
+    try {
+      await loadHistory(userName, pageRef.current + 1, seq);
+    } finally {
+      if (mountedRef.current && seq === sequenceRef.current) {
+        pagingRef.current = false;
         setLoadingMore(false);
       }
     }
-  }, [hasMore, loadingMore, markGap, markReady]);
+  }, [loadHistory]);
 
-  const revoke = useCallback(
-    async (messageId: string): Promise<void> => {
-      const id = messageId.trim();
-      if (id.length === 0 || revokingIdsRef.current.has(id)) {
-        return;
-      }
-      revokingIdsRef.current.add(id);
-      try {
-        await invokeChatRevoke({ id });
-        if (!mountedRef.current) {
-          return;
-        }
-        setMessages((current) =>
-          current.map((item) => (item.id === id ? { ...item, revoked: true } : item)),
-        );
-      } catch (err) {
-        if (isBridgeGapError(err)) {
-          markGap(err.command);
-          toast.error(err.message);
-          return;
-        }
-        if (isOutcomeUnknown(err)) {
-          toast.warning("撤回结果待确认。请核对，不要重复提交。");
-          return;
-        }
-        toast.error(toUserErrorMessage(err));
-      } finally {
-        revokingIdsRef.current.delete(id);
-      }
-    },
-    [markGap],
-  );
-
-  const send = useCallback(async (content: string): Promise<boolean> => {
-    const userName = activeUserRef.current;
-    if (!userName) {
-      toast.error("请先选择会话");
-      return false;
-    }
-    const quote = quoteRef.current;
-    const payload = quote != null ? formatPrivateReply(quote, content) : content;
-    setSending(true);
-    try {
-      const result = await invokeChatSend({ userName, content: payload });
-      if (!mountedRef.current) {
-        return false;
-      }
-      markReady(CHAT_COMMAND.send);
-      if (result.outcomeUnknown) {
-        setPendingConfirm(true);
-        toast.warning("结果待确认。请等待回显，不要重复发送。");
-        return false;
-      }
-      if (result.accepted) {
-        setPendingConfirm(false);
-        setQuoteState(null);
-        return true;
-      }
-      toast.error("发送未被接受，消息未发出");
-      return false;
-    } catch (err) {
-      if (isBridgeGapError(err)) {
-        markGap(err.command);
-        toast.error(err.message);
-        return false;
-      }
-      if (isOutcomeUnknown(err)) {
-        setPendingConfirm(true);
-        toast.warning("结果待确认。请等待回显，不要重复发送。");
-        return false;
-      }
-      toast.error(toUserErrorMessage(err));
-      return false;
-    } finally {
-      if (mountedRef.current) {
-        setSending(false);
-      }
-    }
-  }, [markGap, markReady]);
-
-  const setQuote = useCallback((target: ReplyTarget): void => {
-    setQuoteState(target);
-  }, []);
-
-  const clearQuote = useCallback((): void => {
-    setQuoteState(null);
-  }, []);
-
-  /** 清屏：去掉引用并重拉当前会话历史；不动未读计数。 */
   const clearThread = useCallback(async (): Promise<void> => {
-    setQuoteState(null);
-    const userName = activeUserRef.current;
-    if (!userName) {
-      return;
-    }
-    const seq = ++loadSeqRef.current;
+    const userName = activeRef.current;
+    if (!userName) return;
+    const seq = ++sequenceRef.current;
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
     pageRef.current = 1;
-    setHasMore(true);
+    pagingRef.current = false;
+    setLoadingMore(false);
+    setQuote(null);
     setMessages([]);
     setLoadingThread(true);
+    await loadHistory(userName, 1, seq);
+    if (current(life, session) && seq === sequenceRef.current) setLoadingThread(false);
+  }, [current, loadHistory]);
+
+  const send = useCallback(async (content: string): Promise<boolean> => {
+    const userName = activeRef.current;
+    const connection = connectedRef.current;
+    if (!userName || connection?.userName !== userName || sendingRef.current ||
+        pendingWritesRef.current.has(userName) || !content.trim()) return false;
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
+    const seq = sequenceRef.current;
+    const sentQuote = quoteRef.current;
+    const payload = sentQuote ? formatPrivateReply(sentQuote, content) : content;
+    const pending: PendingWrite = { content: payload, draftContent: content, knownIds: new Set(seenMessagesRef.current) };
+    pendingWritesRef.current.set(userName, pending);
+    confirmedDraftsRef.current.delete(userName);
+    setConfirmedContent(null);
+    sendingRef.current = true;
+    setSending(true);
+    let uncertain = false;
     try {
-      const history = await invokeChatHistory({
-        userName,
-        page: 1,
-        size: HISTORY_PAGE_SIZE,
-      });
-      if (!mountedRef.current || seq !== loadSeqRef.current) {
-        return;
+      const result = await invokeChatSend({ ...connection, userName, content: payload });
+      if (!current(life, session) || result.sessionGeneration !== session) return false;
+      markCapability(CHAT_COMMAND.send, true);
+      if (result.outcomeUnknown) {
+        uncertain = true;
+        if (pendingWritesRef.current.has(userName) && seq === sequenceRef.current) {
+          setPendingConfirm(true);
+          toast.warning("发送结果待确认，请等待回显。");
+        }
+        return false;
       }
-      if (history.sessionGeneration > 0) {
-        sessionGenRef.current = history.sessionGeneration;
+      pendingWritesRef.current.delete(userName);
+      if (result.accepted) {
+        confirmedDraftsRef.current.set(userName, content);
+        if (activeRef.current === userName) {
+          setConfirmedContent(content);
+          setPendingConfirm(false);
+          if (quoteRef.current === sentQuote) setQuote(null);
+        }
+        return true;
       }
-      markReady(CHAT_COMMAND.history);
-      setMessages(history.messages);
-      setHasMore(history.exhausted !== true && history.messages.length >= HISTORY_PAGE_SIZE);
-      setError(null);
+      toast.error("发送未被接受");
+      return false;
     } catch (err) {
-      if (!mountedRef.current || seq !== loadSeqRef.current) {
-        return;
+      uncertain = isOutcomeUnknown(err);
+      if (current(life, session) && seq === sequenceRef.current) {
+        if (uncertain) {
+          setPendingConfirm(pendingWritesRef.current.has(userName));
+          toast.warning("发送结果待确认，请等待回显。");
+        } else handleError(err);
       }
-      if (isBridgeGapError(err)) {
-        markGap(err.command);
-        setError(err.message);
-        return;
-      }
-      setError(toUserErrorMessage(err));
+      return false;
     } finally {
-      if (mountedRef.current && seq === loadSeqRef.current) {
-        setLoadingThread(false);
-      }
+      if (!uncertain) pendingWritesRef.current.delete(userName);
+      sendingRef.current = false;
+      if (current(life, session) && activeRef.current === userName) setSending(false);
     }
-  }, [markGap, markReady]);
+  }, [current, handleError, markCapability]);
 
-  const searchUsers = useCallback(
-    async (query: string): Promise<UserSearchHit[]> => {
-      const needle = query.trim();
-      if (needle.length === 0) {
-        return [];
+  const revoke = useCallback(async (id: string): Promise<void> => {
+    if (revokingIdsRef.current.has(id) || uncertainRevokesRef.current.has(id) ||
+        !messagesRef.current.some((message) => message.id === id && message.userName === selfRef.current && !message.revoked)) return;
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
+    const seq = sequenceRef.current;
+    revokingIdsRef.current.add(id);
+    try {
+      await invokeChatRevoke({ id, sessionGeneration: session });
+      if (!current(life, session)) return;
+      revokedIdsRef.current.add(id);
+      if (seq === sequenceRef.current) {
+        setMessages((list) => mergeThreadMessages(list, [], { revokedIds: revokedIdsRef.current }));
+        if (quoteRef.current?.id === id) setQuote(null);
       }
-      try {
-        const result = await invokeUserSearch({ query: needle });
-        markReady(USER_COMMAND.search);
-        return result.users;
-      } catch (err) {
-        if (isBridgeGapError(err)) {
-          markGap(err.command);
-          return [];
-        }
-        toast.error(toUserErrorMessage(err));
-        return [];
-      }
-    },
-    [markGap, markReady],
-  );
+    } catch (err) {
+      if (!current(life, session)) return;
+      if (isOutcomeUnknown(err)) {
+        uncertainRevokesRef.current.add(id);
+        toast.warning("撤回结果待确认，请勿重复提交。");
+      } else handleError(err);
+    } finally {
+      revokingIdsRef.current.delete(id);
+    }
+  }, [current, handleError]);
 
-  const startChat = useCallback(
-    (user: UserSearchHit): void => {
-      setStartOpen(false);
-      setConversations((list) =>
-        upsertConversation(list, {
-          peerUserName: user.userName,
-          peerAvatarUrl: user.userAvatarUrl,
-          preview: "",
-          time: "",
-          unread: 0,
-        }),
-      );
-      void openConversation(user.userName);
-    },
-    [openConversation],
-  );
+  const searchUsers = useCallback(async (query: string): Promise<UserSearchHit[]> => {
+    const life = lifecycleRef.current;
+    const session = sessionRef.current;
+    if (!query.trim()) return [];
+    try {
+      const result = await invokeUserSearch({ query: query.trim() });
+      if (!current(life, session) || (result.sessionGeneration && result.sessionGeneration !== session)) return [];
+      markCapability(USER_COMMAND.search, true);
+      return result.users;
+    } catch (err) {
+      if (current(life, session)) handleError(err);
+      return [];
+    }
+  }, [current, handleError, markCapability]);
 
-  useEffect(() => {
-    handleEventRef.current = (event: ChatListenEvent) => {
-      if (event.event === "chat://msg") {
-        if (!acceptSession(event.payload.sessionGeneration)) {
-          return;
-        }
-        const message = event.payload.message;
-        const peer = resolvePeer(
-          event.payload.userName,
-          message.userName,
-          selfRef.current,
-          activeUserRef.current,
-        );
-        if (!peer) {
-          return;
-        }
-        const viewing = activeUserRef.current === peer;
+  const startChat = useCallback((user: UserSearchHit): void => {
+    setStartOpen(false);
+    void openConversation(user.userName);
+  }, [openConversation]);
+
+  const setVisible = useCallback((visible: boolean): void => {
+    const changed = visibleRef.current !== visible;
+    visibleRef.current = visible;
+    if (changed && visible && activeRef.current) void markRead(activeRef.current);
+  }, [markRead]);
+
+  const clearQuote = useCallback(() => setQuote(null), []);
+  const clearPendingMention = useCallback(() => setPendingMention(null), []);
+
+  handlerRef.current = (event: ChatListenEvent): void => {
+    if (!mountedRef.current || event.payload.sessionGeneration !== sessionRef.current || sessionRef.current <= 0) return;
+    if (event.event === "chat://msg") {
+      const message = event.payload.message;
+      const peer = messagePeer(event.payload.userName, message, selfRef.current);
+      if (!peer) return;
+      const connection = connectedRef.current;
+      if (event.payload.userName && connection?.userName === peer &&
+          event.payload.connectionGeneration && connection.connectionGeneration &&
+          event.payload.connectionGeneration !== connection.connectionGeneration) return;
+      const duplicate = seenMessagesRef.current.has(message.id);
+      seenMessagesRef.current.add(message.id);
+      const viewing = activeRef.current === peer;
+      const pending = pendingWritesRef.current.get(peer);
+      if (pending && confirmsWrite(message, pending, selfRef.current)) {
+        pendingWritesRef.current.delete(peer);
+        confirmedDraftsRef.current.set(peer, pending.draftContent ?? pending.content);
         if (viewing) {
           setPendingConfirm(false);
-          setMessages((current) => appendMessage(current, message));
-          setConversations((list) =>
-            bumpUnread(clearUnread(list, peer), peer, 0, {
-              preview: previewOf(message),
-              time: message.time,
-              peerAvatarUrl: message.userName === selfRef.current ? undefined : message.userAvatarUrl,
-            }),
-          );
-          void invokeChatMarkRead({ userName: peer }).catch((err: unknown) => {
-            if (isBridgeGapError(err)) {
-              markGap(err.command);
-            }
-          });
-          return;
+          setConfirmedContent(pending.draftContent ?? pending.content);
+          setQuote(null);
         }
-        setConversations((list) =>
-          bumpUnread(list, peer, 1, {
-            preview: previewOf(message),
-            time: message.time,
-            peerAvatarUrl: message.userAvatarUrl,
-          }),
-        );
-        toast.message(`${peer} 发来私聊`, {
-          description: previewOf(message) || "新消息",
-        });
+      }
+      if (viewing) {
+        setMessages((list) => mergeThreadMessages(list, [message], { revokedIds: revokedIdsRef.current }));
+        if (visibleRef.current) void markRead(peer);
+      }
+      const incoming = message.userName !== selfRef.current;
+      setConversations((list) => bumpUnread(list, peer,
+        !duplicate && incoming ? 1 : 0, {
+          preview: previewOf(message), time: message.time,
+          ...(incoming && message.userAvatarUrl ? { peerAvatarUrl: message.userAvatarUrl } : {}),
+        }));
+      return;
+    }
+    if (event.event === "chat://revoke") {
+      const connection = connectedRef.current;
+      if (event.payload.userName && event.payload.userName !== activeRef.current) {
+        revokedIdsRef.current.add(event.payload.messageId);
         return;
       }
-
-      if (event.event === "chat://revoke") {
-        if (!acceptSession(event.payload.sessionGeneration)) {
-          return;
-        }
-        const messageId = event.payload.messageId;
-        setMessages((current) =>
-          current.map((item) =>
-            item.id === messageId ? { ...item, revoked: true } : item,
-          ),
-        );
-        return;
+      if (event.payload.userName && connection?.connectionGeneration &&
+          event.payload.connectionGeneration !== connection.connectionGeneration) return;
+      revokedIdsRef.current.add(event.payload.messageId);
+      uncertainRevokesRef.current.delete(event.payload.messageId);
+      setMessages((list) => mergeThreadMessages(list, [], { revokedIds: revokedIdsRef.current }));
+      if (quoteRef.current?.id === event.payload.messageId) setQuote(null);
+      return;
+    }
+    if (event.event === "chat://notice" || event.event === "notice://refresh") {
+      if (event.payload.command === NOTICE_COMMAND.unreadRefresh && event.payload.count === 0) {
+        ++unreadSequenceRef.current;
+        setConversations((list) => list.map((item) => ({ ...item, unread: 0 })));
+      } else if (event.payload.command === NOTICE_COMMAND.unreadRefresh ||
+                 event.payload.command === NOTICE_COMMAND.refreshNotification ||
+                 event.payload.command === NOTICE_COMMAND.idleMessage) {
+        // 全局/用户频道可能重复通知；以逐条未读为准，不双加。
+        void refreshUnread();
+        const sender = event.payload.senderUserName;
+        if (sender && activeRef.current === sender && visibleRef.current) void markRead(sender);
       }
-
-      if (event.event === "chat://notice" || event.event === "notice://refresh") {
-        if (!acceptSession(event.payload.sessionGeneration)) {
-          return;
-        }
-        const command = event.payload.command;
-        if (
-          command === NOTICE_COMMAND.unreadRefresh ||
-          command === NOTICE_COMMAND.refreshNotification
-        ) {
-          if ((event.payload.count ?? 1) > 0) {
-            void refreshUnread();
-          } else {
-            setConversations((list) => list.map((item) => ({ ...item, unread: 0 })));
-          }
-          return;
-        }
-        if (command === NOTICE_COMMAND.idleMessage) {
-          const sender = event.payload.senderUserName;
-          if (!sender || sender === selfRef.current) {
-            return;
-          }
-          if (activeUserRef.current === sender) {
-            void invokeChatMarkRead({ userName: sender }).catch((err: unknown) => {
-              if (isBridgeGapError(err)) {
-                markGap(err.command);
-              }
-            });
-            return;
-          }
-          setConversations((list) =>
-            bumpUnread(list, sender, 1, {
-              preview: event.payload.preview,
-              peerAvatarUrl: event.payload.senderAvatarUrl,
-            }),
-          );
-          toast.message(`${sender} 发来私聊`, {
-            description: event.payload.preview || "新消息",
-          });
-        }
-      }
-    };
-  }, [acceptSession, markGap, refreshUnread]);
+    }
+  };
 
   useEffect(() => {
-    // 宿主随登录挂载。AppShell 用 display:none 隐藏面板，不会卸载，故此处不得按可见性断开。
+    const life = ++lifecycleRef.current;
     mountedRef.current = true;
-    let unlisten: (() => void) | undefined;
+    const stops: Array<() => void> = [];
     let cancelled = false;
-
     async function boot(): Promise<void> {
       try {
         const me = await invokeAuthMe();
-        if (cancelled) {
-          return;
-        }
-        selfRef.current = me.user?.userName ?? null;
+        if (cancelled || life !== lifecycleRef.current) return;
+        if (!me.user || me.sessionGeneration <= 0) throw new Error("unauthorized");
+        selfRef.current = me.user.userName;
+        sessionRef.current = me.sessionGeneration;
         setSelfUserName(selfRef.current);
-        if (me.sessionGeneration > 0) {
-          sessionGenRef.current = me.sessionGeneration;
-        }
-      } catch {
-        if (!cancelled) {
-          setError("无法读取当前登录用户");
-        }
-      }
-
-      try {
         const stop = await listenChatEvents((event) => {
-          handleEventRef.current(event);
+          if (!cancelled) handlerRef.current(event);
         });
-        if (cancelled) {
-          stop();
-          return;
+        if (cancelled) { stop(); return; }
+        stops.push(stop);
+        const reconnectStop = await listen<{ chat?: string; sessionGeneration: number }>("desktop://reconnect", (event) => {
+          if (cancelled || event.payload.sessionGeneration !== sessionRef.current ||
+              !["已重新连接", "部分私聊通道已重新连接"].includes(event.payload.chat ?? "")) return;
+          void loadList();
+          const user = activeRef.current;
+          if (user) void loadHistory(user, 1, sequenceRef.current);
+        });
+        if (cancelled) { reconnectStop(); return; }
+        stops.push(reconnectStop);
+        try {
+          await invokeChatConnect({ sessionGeneration: sessionRef.current });
+        } catch (err) {
+          if (!cancelled) handleError(err);
         }
-        unlisten = stop;
-        setCapabilities((prev) => (prev.events ? prev : { ...prev, events: true }));
-      } catch {
-        if (!cancelled) {
-          setCapabilities((prev) => ({ ...prev, events: false }));
+        if (!cancelled) await loadList();
+      } catch (err) {
+        if (!cancelled && life === lifecycleRef.current) {
+          handleError(err);
+          setLoadingList(false);
         }
       }
-
-      if (cancelled) {
-        return;
-      }
-
-      await connectGlobal();
-      if (cancelled) {
-        return;
-      }
-      await loadList();
     }
-
-    void boot();
-
+    bootRef.current = boot();
     return () => {
       cancelled = true;
       mountedRef.current = false;
-      unlisten?.();
-      const user = connectedUserRef.current;
-      connectedUserRef.current = null;
-      globalConnectedRef.current = false;
-      if (user) {
-        void invokeChatDisconnect({ userName: user }).catch(() => undefined);
-      }
-      void invokeChatDisconnect({}).catch(() => undefined);
-    };
-  }, [connectGlobal, loadList]);
-
-  const setStartOpenAndMaybeRetry = useCallback(
-    (open: boolean) => {
-      setStartOpen(open);
-      if (open && !listReadyRef.current) {
-        void connectGlobal();
-        void loadList();
-      }
-    },
-    [connectGlobal, loadList],
-  );
-
-  useEffect(() => {
-    publishImUnread(sumUnread(conversations));
-  }, [conversations]);
-
-  useEffect(() => {
-    return () => {
+      ++sequenceRef.current;
+      ++lifecycleRef.current;
+      stops.forEach((stop) => stop());
       publishImUnread(0);
+      // 全局频道共享给通知宿主，由退出状态统一清理。
+      const cleanupLife = lifecycleRef.current;
+      void connectQueueRef.current.catch(() => undefined).then(() => {
+        if (mountedRef.current || cleanupLife !== lifecycleRef.current) return;
+        const connection = connectedRef.current;
+        connectedRef.current = null;
+        if (connection) void invokeChatDisconnect(connection).catch(() => undefined);
+      });
     };
-  }, []);
+  }, [handleError, loadHistory, loadList]);
 
-  useEffect(() => {
-    if (!activeUser) {
-      setPeerNickname(null);
-      return;
-    }
-    let cancelled = false;
-    setPeerNickname(null);
-    void fetchUserProfile(activeUser).then((outcome) => {
-      if (cancelled) {
-        return;
-      }
-      if (outcome.status === "ok") {
-        const nick = outcome.profile.userNickname.trim();
-        setPeerNickname(nick.length > 0 ? nick : null);
-        return;
-      }
-      setPeerNickname(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeUser]);
+  useEffect(() => { publishImUnread(sumUnread(conversations)); }, [conversations]);
 
   return {
-    selfUserName,
-    conversations,
-    activeUser,
-    peerNickname,
-    messages,
-    loadingList,
-    loadingThread,
-    loadingMore,
-    hasMore,
-    sending,
-    pendingConfirm,
-    error,
-    capabilities,
-    startOpen,
-    setStartOpen: setStartOpenAndMaybeRetry,
-    quote,
-    setQuote,
-    clearQuote,
-    clearThread,
-    pendingMention,
-    setPendingMention,
-    clearPendingMention: () => setPendingMention(null),
-    openConversation,
-    loadMore,
-    send,
-    revoke,
-    searchUsers,
-    startChat,
+    selfUserName, conversations, activeUser, peerNickname, messages, loadingList,
+    loadingThread, loadingMore, hasMore, sending, pendingConfirm, error, capabilities,
+    startOpen, setStartOpen, quote, setQuote, clearQuote,
+    clearThread, pendingMention, setPendingMention,
+    clearPendingMention,
+    openConversation, loadMore, send, revoke, searchUsers, startChat, setVisible,
+    confirmedContent,
   };
 }
 
 function previewOf(message: PrivateMessageDto): string {
-  const text = message.text?.trim() || message.md?.trim() || "";
-  return text.length > 80 ? `${text.slice(0, 80)}…` : text;
-}
-
-function appendMessage(
-  current: PrivateMessageDto[],
-  message: PrivateMessageDto,
-): PrivateMessageDto[] {
-  if (current.some((item) => item.id === message.id)) {
-    return current.map((item) =>
-      item.id === message.id
-        ? {
-            ...item,
-            ...message,
-            revoked: item.revoked || message.revoked,
-          }
-        : item,
-    );
-  }
-  return [...current, message];
-}
-
-function resolvePeer(
-  eventUser: string | undefined,
-  messageUser: string,
-  selfUserName: string | null,
-  activeUser: string | null,
-): string | null {
-  if (eventUser && eventUser !== selfUserName) {
-    return eventUser;
-  }
-  if (messageUser && messageUser !== selfUserName) {
-    return messageUser;
-  }
-  return activeUser;
+  const text = message.md || message.text || "";
+  const plain = text.includes("<") || text.includes("&")
+    ? new DOMParser().parseFromString(text, "text/html").body.textContent ?? "" : text;
+  return plain.replace(/\s+/g, " ").trim().slice(0, 80);
 }

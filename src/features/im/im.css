@@ -383,12 +383,14 @@
   display: flex;
   align-items: baseline;
   gap: 0.45rem;
+  flex-wrap: wrap;
   margin-bottom: 0.2rem;
 }
 
 .im-msg-name {
   font-size: 0.82rem;
   font-weight: 650;
+  overflow-wrap: anywhere;
 }
 
 .im-msg-time {
@@ -685,8 +687,34 @@
 }
 
 .im-composer-addon {
-  justify-content: space-between;
+  justify-content: flex-end;
   width: 100%;
+}
+
+.im-pane-who { overflow-wrap: anywhere; }
+.im-clear-thread { margin-left: auto; flex-shrink: 0; }
+.im-msg-content iframe { display: block; width: 100%; max-width: 100%; border: 0; height: 86px; }
+.im-msg-content iframe[src*="type=1"] { height: 210px; }
+.im-msg-content video { max-width: 100%; }
+.im-msg-content .chat-html { overflow-wrap: anywhere; }
+.im-msg-content .chat-html img { max-width: 100%; height: auto; }
+.im-md img.emoji { display: inline-block; max-width: 40px; max-height: 40px; vertical-align: middle; }
+.im-msg.is-image-only .im-msg-content {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.im-msg.is-image-only .im-msg-content::before { display: none; }
+.im-msg.is-image-only .im-msg-body { max-width: 90%; }
+@media (max-width: 500px) {
+  .im-sidebar { width: 3.5rem; flex-basis: 3.5rem; }
+  .im-thread-inner { padding: 0.5rem; }
+  .im-composer { padding: 0.4rem; }
+  .im-msg-body, .im-msg.is-mine .im-msg-body { max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .im-thread-stream [data-msg-id].is-highlight::after { animation: none; }
 }
 
 .im-composer-hint {

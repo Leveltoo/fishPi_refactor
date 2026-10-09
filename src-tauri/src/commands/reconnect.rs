@@ -1,16 +1,15 @@
-//! 网络恢复 / 休眠唤醒后各尝试一次现有 connect。
-//!
-//! SDK 1.1.0 的 `ChatRoomConnection::reconnect` 等需要 `&mut` 句柄。
-//! `AppState` 只有 `take_*`（会作废代次并拆掉已挂上的监听）和幂等 `connect`
-//! （句柄还在就直接返回）。这里不拆监听、不循环重试。句柄仍在时界面标明未自动重连。
+//! 网络恢复 / 休眠唤醒后重连原句柄，保留 SDK handler 与业务监听。
+//! 网络等待在状态锁外；换号或断开后拒绝放回旧连接。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::dto::ChatConnectRequest;
+use crate::dto::{ChatConnectRequest, ConnectionStatus};
+use crate::realtime::{emit_cached_chatroom_presence, emit_connection_status};
 use crate::state::AppState;
+use std::time::Duration;
 
 const EVENT: &str = "desktop://reconnect";
 
@@ -29,6 +28,7 @@ pub struct WatchReport {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReconnectReport {
+    pub session_generation: u64,
     pub attempted: bool,
     pub relinked: bool,
     pub message: String,
@@ -44,10 +44,12 @@ pub fn reconnect_watch(app: AppHandle) -> WatchReport {
     arm_watchers()
 }
 
-/// 立刻尝试一次。已有句柄的通道跳过，避免空转 connect。
+/// 立刻重连一次，结果同时通知聊天页面补拉历史。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn reconnect_now(app: AppHandle) -> Result<ReconnectReport, AppError> {
-    Ok(attempt(&app).await)
+    let report = attempt(&app).await;
+    let _ = app.emit(EVENT, &report);
+    Ok(report)
 }
 
 use crate::error::AppError;
@@ -57,6 +59,7 @@ static WATCH_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 async fn attempt(app: &AppHandle) -> ReconnectReport {
     if BUSY.swap(true, Ordering::AcqRel) {
         return ReconnectReport {
+            session_generation: app.state::<AppState>().session_generation(),
             attempted: false,
             relinked: false,
             message: "上一次重连尚未结束，未再次发起".to_string(),
@@ -65,8 +68,14 @@ async fn attempt(app: &AppHandle) -> ReconnectReport {
             notice: "未尝试".to_string(),
         };
     }
+    struct BusyGuard;
+    impl Drop for BusyGuard {
+        fn drop(&mut self) {
+            BUSY.store(false, Ordering::Release);
+        }
+    }
+    let _busy = BusyGuard;
     let report = attempt_inner(app).await;
-    BUSY.store(false, Ordering::Release);
     report
 }
 
@@ -74,6 +83,7 @@ async fn attempt_inner(app: &AppHandle) -> ReconnectReport {
     let state = app.state::<AppState>();
     if !state.has_session() {
         return ReconnectReport {
+            session_generation: state.session_generation(),
             attempted: false,
             relinked: false,
             message: "未登录，未重连".to_string(),
@@ -83,27 +93,131 @@ async fn attempt_inner(app: &AppHandle) -> ReconnectReport {
         };
     }
 
-    let chatroom = one_channel(
-        state.has_chatroom_connection(),
-        super::chatroom_connect(app.clone(), state.clone()),
-    )
-    .await;
-    let chat = one_channel(state.has_global_chat(), async {
-        super::chat_connect(app.clone(), state.clone(), ChatConnectRequest::default()).await
-    })
-    .await;
-    let notice = one_channel(state.has_notice_connection(), async {
-        super::notice_connect(app.clone(), state.clone()).await
-    })
-    .await;
+    let connections = state.take_for_reconnect();
+    let session = connections.session_generation;
+    let chatroom = match connections.chatroom {
+        Some(mut connection) => {
+            emit_connection_status(
+                app,
+                session,
+                connections.connection_generation,
+                ConnectionStatus::Reconnecting,
+            );
+            let result = if state.session_generation() == session
+                && state.connection_generation() == connections.connection_generation
+            {
+                reconnect_step(connection.reconnect()).await
+            } else {
+                Step::Failed("会话或连接已切换".into())
+            };
+            match state.restore_reconnected_chatroom(
+                session,
+                connections.connection_generation,
+                connection,
+            ) {
+                Ok(()) => {
+                    let status = if matches!(result, Step::Fresh) {
+                        ConnectionStatus::Connected
+                    } else {
+                        ConnectionStatus::Unknown
+                    };
+                    emit_connection_status(app, session, connections.connection_generation, status);
+                    if matches!(result, Step::Fresh) {
+                        emit_cached_chatroom_presence(app);
+                    }
+                    result
+                }
+                Err(mut rejected) => {
+                    rejected.disconnect();
+                    Step::Failed("会话或连接已切换，未恢复旧连接".into())
+                }
+            }
+        }
+        None if state.session_generation() == session => {
+            reconnect_step(super::chatroom_connect(app.clone(), state.clone())).await
+        }
+        None => Step::Failed("会话已切换".into()),
+    };
+    let global = match connections.global_chat {
+        Some((generation, mut connection)) => {
+            let result = if state.session_generation() == session
+                && state.global_chat_generation() == Some(generation)
+            {
+                reconnect_step(connection.reconnect()).await
+            } else {
+                Step::Failed("会话或私聊已切换".into())
+            };
+            match state.install_global_chat(session, generation, connection) {
+                Ok(_) => result,
+                Err(mut rejected) => {
+                    rejected.disconnect();
+                    Step::Failed("会话已切换，未恢复旧私聊连接".into())
+                }
+            }
+        }
+        None if state.has_global_chat() => Step::Failed("私聊连接仍在建立，未重复连接".into()),
+        None if state.session_generation() == session => {
+            reconnect_step(super::chat_connect(
+                app.clone(),
+                state.clone(),
+                ChatConnectRequest::default(),
+            ))
+            .await
+        }
+        None => Step::Failed("会话已切换".into()),
+    };
+    let mut chats = vec![global];
+    for (user, generation, mut connection) in connections.chats {
+        let result = if state.session_generation() == session
+            && state.user_chat_generation(&user) == Some(generation)
+        {
+            reconnect_step(connection.reconnect()).await
+        } else {
+            Step::Failed("会话或私聊已切换".into())
+        };
+        match state.install_user_chat(&user, session, generation, connection) {
+            Ok(_) => chats.push(result),
+            Err(mut rejected) => {
+                rejected.disconnect();
+                chats.push(Step::Failed("会话或私聊已切换".into()));
+            }
+        }
+    }
+    let chat = aggregate(&chats);
+    let notice = match connections.notice {
+        Some((generation, mut connection)) => {
+            let result = if state.session_generation() == session
+                && state.notice_generation() == Some(generation)
+            {
+                reconnect_step(connection.reconnect()).await
+            } else {
+                Step::Failed("会话已切换".into())
+            };
+            match state.install_notice_connection(session, generation, connection) {
+                Ok(_) => result,
+                Err(mut rejected) => {
+                    rejected.disconnect();
+                    Step::Failed("会话已切换，未恢复旧通知连接".into())
+                }
+            }
+        }
+        None if state.has_notice_connection() => {
+            Step::Failed("通知连接仍在建立，未重复连接".into())
+        }
+        None if state.session_generation() == session => {
+            reconnect_step(super::notice_connect(app.clone(), state.clone())).await
+        }
+        None => Step::Failed("会话已切换".into()),
+    };
 
     let steps = [&chatroom, &chat, &notice];
-    let relinked = steps.iter().any(|step| matches!(step, Step::Fresh));
-    let blocked = steps.iter().any(|step| matches!(step, Step::Blocked));
-    let failed = steps.iter().any(|step| matches!(step, Step::Failed(_)));
-    let message = if blocked {
-        "未自动重连。已有连接句柄时不能调用 SDK reconnect，否则会拆掉现有监听。".to_string()
-    } else if relinked && !failed {
+    let relinked = steps
+        .iter()
+        .any(|step| matches!(step, Step::Fresh | Step::Partial(_)));
+    let failed = steps
+        .iter()
+        .any(|step| matches!(step, Step::Failed(_) | Step::Partial(_)));
+    let message = if relinked && !failed {
         "已重新连接".to_string()
     } else if relinked {
         "部分通道已重新连接，失败的通道没有重试".to_string()
@@ -112,6 +226,7 @@ async fn attempt_inner(app: &AppHandle) -> ReconnectReport {
     };
 
     ReconnectReport {
+        session_generation: session,
         attempted: true,
         relinked,
         message,
@@ -122,32 +237,48 @@ async fn attempt_inner(app: &AppHandle) -> ReconnectReport {
 }
 
 enum Step {
-    Blocked,
     Fresh,
+    Partial(String),
     Failed(String),
 }
 
 impl Step {
     fn text(&self) -> String {
         match self {
-            Step::Blocked => "句柄仍在，未自动重连".to_string(),
             Step::Fresh => "已重新连接".to_string(),
+            Step::Partial(_) => "部分私聊通道已重新连接".to_string(),
             Step::Failed(message) => message.clone(),
         }
     }
 }
 
-async fn one_channel<F, T, E>(blocked: bool, connect: F) -> Step
+async fn reconnect_step<F, T, E>(connect: F) -> Step
 where
     F: std::future::Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
+    E: Into<AppError>,
 {
-    if blocked {
-        return Step::Blocked;
+    match tokio::time::timeout(Duration::from_secs(20), connect).await {
+        Ok(Ok(_)) => Step::Fresh,
+        Ok(Err(error)) => Step::Failed(clip(error.into().message())),
+        Err(_) => Step::Failed("重连超时".into()),
     }
-    match connect.await {
-        Ok(_) => Step::Fresh,
-        Err(err) => Step::Failed(clip(&err.to_string())),
+}
+
+fn aggregate(steps: &[Step]) -> Step {
+    match steps.iter().find_map(|step| match step {
+        Step::Failed(message) => Some(message.clone()),
+        Step::Partial(message) => Some(message.clone()),
+        Step::Fresh => None,
+    }) {
+        Some(message)
+            if steps
+                .iter()
+                .any(|step| matches!(step, Step::Fresh | Step::Partial(_))) =>
+        {
+            Step::Partial(message)
+        }
+        Some(message) => Step::Failed(message),
+        None => Step::Fresh,
     }
 }
 
@@ -192,7 +323,7 @@ fn arm_watchers() -> WatchReport {
     let net = arm_net();
     let watching = power || net;
     let message = match (power, net) {
-        (true, true) => "已监听网络恢复和休眠唤醒。已有句柄时不会自动重连。",
+        (true, true) => "已监听网络恢复和休眠唤醒，恢复后重连各通道并刷新消息。",
         (true, false) => "已监听休眠唤醒，网络监听没有注册成功。",
         (false, true) => "已监听网络恢复，休眠唤醒没有注册成功。",
         (false, false) => "没能监听系统恢复。可以手动重连一次。",
@@ -252,7 +383,12 @@ fn arm_net() -> bool {
 
     let mut registration: HANDLE = std::ptr::null_mut();
     let status = unsafe {
-        NotifyNetworkConnectivityHintChange(Some(on_network), std::ptr::null(), 0, &mut registration)
+        NotifyNetworkConnectivityHintChange(
+            Some(on_network),
+            std::ptr::null(),
+            0,
+            &mut registration,
+        )
     };
     if status == 0 {
         true
@@ -288,5 +424,34 @@ unsafe extern "system" fn on_network(
         || hint.ConnectivityLevel == NetworkConnectivityLevelHintConstrainedInternetAccess
     {
         schedule_once();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn reconnect_reports_success_and_failure() {
+        assert!(matches!(
+            reconnect_step(async { Ok::<_, AppError>(()) }).await,
+            Step::Fresh
+        ));
+        assert!(matches!(
+            reconnect_step(async { Err::<(), _>(AppError::business("failed")) }).await,
+            Step::Failed(_)
+        ));
+        assert!(matches!(
+            aggregate(&[Step::Fresh, Step::Fresh]),
+            Step::Fresh
+        ));
+        assert!(matches!(
+            aggregate(&[Step::Fresh, Step::Failed("failed".into())]),
+            Step::Partial(_)
+        ));
+        assert!(matches!(
+            aggregate(&[Step::Failed("failed".into())]),
+            Step::Failed(_)
+        ));
     }
 }

@@ -83,28 +83,12 @@ function toInvokeError(error: unknown): AppInvokeError {
 }
 
 function mapSendResult(payload: unknown): SendResult {
-  if (payload == null) {
-    return {
-      sessionGeneration: 0,
-      accepted: true,
-      outcomeUnknown: false,
-    };
-  }
-  if (typeof payload === "object") {
-    const record = payload as Record<string, unknown>;
-    return {
-      sessionGeneration:
-        typeof record.sessionGeneration === "number"
-          ? record.sessionGeneration
-          : 0,
-      accepted: record.accepted !== false,
-      outcomeUnknown: record.outcomeUnknown === true,
-    };
-  }
+  const record = isRecord(payload) ? payload : undefined;
   return {
-    sessionGeneration: 0,
-    accepted: true,
-    outcomeUnknown: false,
+    sessionGeneration: readSessionGeneration(payload),
+    accepted: record?.accepted === true,
+    outcomeUnknown: !record || typeof record.accepted !== "boolean" ||
+      record.outcomeUnknown === true,
   };
 }
 
@@ -206,6 +190,9 @@ function firstString(
     const value = record[key];
     if (typeof value === "string" && value.trim().length > 0) {
       return value;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
     }
   }
   return undefined;

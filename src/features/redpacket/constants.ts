@@ -31,7 +31,7 @@ export const GESTURES: readonly {
 export const DEFAULT_MONEY = 32;
 export const DEFAULT_COUNT = 2;
 export const MAX_COUNT = 1000;
-export const ROCK_PAPER_MIN_MONEY = 256;
+export const MAX_MONEY = 0xffff_ffff;
 
 export function typeLabel(type: RedPacketType | undefined): string {
   return REDPACKET_TYPES.find((item) => item.value === type)?.label ?? "红包";

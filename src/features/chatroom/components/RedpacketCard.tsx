@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { GiftIcon } from "@phosphor-icons/react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   ContextMenu,
@@ -11,9 +12,14 @@ import {
   dispatchRedpacketOpen,
   dispatchRedpacketResend,
   redpacketCardOf,
+  toRedpacketResendDetail,
   whoFromCardOrStatus,
 } from "../redpacketEvents";
 import { UserContextMenu } from "./UserContextMenu";
+import { FISHPI_REDPACKET_RESULT_EVENT } from "../redpacketEvents";
+import { readSelfSession, parseOpenPayload } from "../../redpacket/api";
+import type { RedPacketInfo } from "../../redpacket/types";
+import { GesturePicker } from "../../redpacket/parts";
 
 const TYPE_LABEL: Record<string, string> = {
   random: "拼手气红包",
@@ -58,17 +64,16 @@ export function RedpacketCard({
   mine,
   statusWho,
 }: RedpacketCardProps) {
-  const [claimed, setClaimed] = useState(false);
+  const opened = useConfirmedResult(message.id, selfUserName);
   const card = redpacketCardOf(message);
   const type = card?.type ?? "";
-  const got = card?.got ?? 0;
-  const count = card?.count ?? 0;
+  const got = Math.max(card?.got ?? 0, opened?.info.got ?? 0);
+  const count = opened?.info.count || card?.count || 0;
   const money = card?.money ?? 0;
   const msg = card?.msg?.trim() || message.rawHint?.trim() || "恭喜发财";
-  const who = whoFromCardOrStatus(card, statusWho);
+  const who = whoFromCardOrStatus(card, [...(statusWho ?? []), ...(opened?.who ?? [])]);
   const empty = count > 0 && got >= count;
   const alreadyGot =
-    claimed ||
     (selfUserName != null &&
       selfUserName.length > 0 &&
       who.some((entry) => entry.userName === selfUserName));
@@ -83,15 +88,12 @@ export function RedpacketCard({
     if (isRps && !mine && !empty && !alreadyGot) {
       return;
     }
-    dispatchRedpacketOpen(message);
-    if (!isRps) {
-      setClaimed(true);
-    }
+    dispatchRedpacketOpen(message, { detailOnly: mine || empty || alreadyGot });
   }
 
   function pickGesture(gesture: 0 | 1 | 2): void {
+    if (message.revoked || !gestureVisible) return;
     dispatchRedpacketOpen(message, { type: "rockPaperScissors", gesture });
-    setClaimed(true);
   }
 
   const title = empty ? "红包已领完" : alreadyGot ? "红包已领取" : "快快点击领取红包";
@@ -106,7 +108,7 @@ export function RedpacketCard({
       >
         <div className="chat-rp-main">
           <span className="chat-rp-icon" aria-hidden="true">
-            🧧
+            <GiftIcon size={24} />
           </span>
           <span className="chat-rp-msg">{msg}</span>
         </div>
@@ -120,15 +122,7 @@ export function RedpacketCard({
       </button>
       {gestureVisible ? (
         <div className="chat-gesture" title="猜猜我出什么呢~">
-          <button type="button" title="石头" onClick={() => pickGesture(0)}>
-            ✊
-          </button>
-          <button type="button" title="剪刀" onClick={() => pickGesture(1)}>
-            ✌️
-          </button>
-          <button type="button" title="布" onClick={() => pickGesture(2)}>
-            ✋
-          </button>
+          <GesturePicker onChange={pickGesture} />
         </div>
       ) : null}
     </div>
@@ -143,10 +137,12 @@ export function RedpacketWhoRow({
   userAvatarMap,
   onMention,
 }: RedpacketWhoRowProps) {
+  const opened = useConfirmedResult(message.id, selfUserName);
   if (message.revoked) {
     return null;
   }
-  const who = whoFromCardOrStatus(redpacketCardOf(message), statusWho);
+  const who = whoFromCardOrStatus(redpacketCardOf(message),
+    [...(statusWho ?? []), ...(opened?.who ?? [])]);
   if (who.length === 0) {
     return null;
   }
@@ -195,18 +191,36 @@ export function RedpacketWhoRow({
 
 /** 右键「再发一个」：猜拳按旧版 money/0.95 还原后直接重发。 */
 export function resendRedpacket(message: ChatMessageDto): boolean {
-  const card = redpacketCardOf(message);
-  if (card == null || !card.type) {
+  const detail = toRedpacketResendDetail(message);
+  if (!detail) {
     return false;
   }
-  const money =
-    card.type === "rockPaperScissors" ? Math.ceil(card.money / 0.95) : card.money;
-  dispatchRedpacketResend({
-    type: card.type,
-    msg: card.msg,
-    money,
-    count: card.count,
-    recivers: card.recivers ?? [],
-  });
+  dispatchRedpacketResend(detail);
   return true;
+}
+
+function useConfirmedResult(messageId: string, selfUserName: string | null): RedPacketInfo | null {
+  const [result, setResult] = useState<RedPacketInfo | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    setResult(null);
+    function onResult(event: Event) {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.messageId !== messageId) return;
+      const data = parseOpenPayload(detail);
+      if (!data) return;
+      void readSelfSession().then((me) => {
+        if (!stopped && me?.sessionGeneration === data.sessionGeneration &&
+          me.user?.userName === selfUserName) {
+          setResult(data);
+        }
+      });
+    }
+    window.addEventListener(FISHPI_REDPACKET_RESULT_EVENT, onResult);
+    return () => {
+      stopped = true;
+      window.removeEventListener(FISHPI_REDPACKET_RESULT_EVENT, onResult);
+    };
+  }, [messageId, selfUserName]);
+  return result;
 }

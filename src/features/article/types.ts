@@ -100,6 +100,7 @@ export type CommentVoteRequest = {
 export type ArticleVoteDirection = "up" | "down";
 
 export type ArticleVoteResult = {
+  sessionGeneration: number;
   accepted: boolean;
   outcomeUnknown: boolean;
   active: boolean;
@@ -112,6 +113,7 @@ export type ArticleVoteResult = {
 export type CommentVoteResult = CommentPostResult;
 
 export type ArticleRewardResult = {
+  sessionGeneration: number;
   accepted: boolean;
   outcomeUnknown: boolean;
   rewarded: boolean;
@@ -120,19 +122,25 @@ export type ArticleRewardResult = {
 };
 
 export type ArticleHeatResult = {
+  sessionGeneration: number;
   count: number;
 };
 
 export type ArticleHeatWatchResult = {
+  sessionGeneration: number;
   watchGeneration: number;
 };
 
 export type ArticleHeatEvent = {
+  sessionGeneration: number;
+  watchGeneration: number;
   articleId: string;
   delta: number;
 };
 
 export type ArticleCommentPushEvent = {
+  sessionGeneration: number;
+  watchGeneration: number;
   articleId: string;
   comment: unknown;
 };
@@ -148,6 +156,7 @@ export type ArticleSummary = {
   preview: string;
   commentCount: number;
   viewCount: number;
+  viewCountDisplay: string;
   thumbnailUrl: string;
   sticky: boolean;
   perfect: boolean;
@@ -177,12 +186,16 @@ export type ArticleComment = {
 };
 
 export type ArticleDetail = {
+  sessionGeneration: number;
   id: string;
   title: string;
   authorUserName: string;
   authorNickname: string;
   avatarUrl: string;
   time: string;
+  createdTime: string;
+  updatedTime: string;
+  updated: boolean;
   tags: string;
   markdown: string;
   html: string;
@@ -211,12 +224,14 @@ export type ArticleDetail = {
 };
 
 export type ArticleListResult = {
+  sessionGeneration: number;
   items: ArticleSummary[];
   page: number;
   hasMore: boolean;
 };
 
 export type CommentPostResult = {
+  sessionGeneration: number;
   accepted: boolean;
   outcomeUnknown: boolean;
 };

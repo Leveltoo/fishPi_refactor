@@ -218,9 +218,9 @@ impl From<&ChatRoomMsg> for ChatMessageDto {
                 None,
                 redpacket_card(&msg.content),
             ),
-            ChatMessageKind::Unknown
-            | ChatMessageKind::Barrager
-            | ChatMessageKind::Custom => (None, None, Some(unknown_hint()), None, None, None),
+            ChatMessageKind::Unknown | ChatMessageKind::Barrager | ChatMessageKind::Custom => {
+                (None, None, Some(unknown_hint()), None, None, None)
+            }
         };
         let (via_client, via_version) = via_parts(&msg.client);
 
@@ -343,7 +343,7 @@ fn classify_chat_msg(msg: &ChatRoomMsg) -> ChatMessageKind {
 }
 
 fn normal_body(msg: &ChatRoomMsg) -> (Option<String>, Option<String>, Option<String>) {
-    let md = nonempty(&msg.md);
+    let md = nonempty_raw(&msg.md);
     // `type=Html` 时 content 是服务端 HTML；md 仍是 Markdown。两者都保留：
     // 展示走 HTML，复制 / 回复 / 复读走 md。
     let text = match &msg.content {
@@ -351,6 +351,14 @@ fn normal_body(msg: &ChatRoomMsg) -> (Option<String>, Option<String>, Option<Str
         _ => None,
     };
     (md, text, None)
+}
+
+fn nonempty_raw(value: &str) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 fn music_hint(content: &Value) -> String {
@@ -399,9 +407,7 @@ fn netease_audio_url(source: &str) -> Option<String> {
         let after = &rest[index + marker.len()..];
         let id: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
         if (1..=20).contains(&id.len()) {
-            return Some(format!(
-                "http://music.163.com/song/media/outer/url?id={id}"
-            ));
+            return Some(format!("http://music.163.com/song/media/outer/url?id={id}"));
         }
         rest = &rest[index + marker.len()..];
     }
@@ -480,7 +486,10 @@ fn weather_code(raw: &str) -> String {
 
 fn csv_field(content: &Value, key: &str) -> Vec<String> {
     match json_str(content, &[key]) {
-        Some(value) => value.split(',').map(|part| part.trim().to_string()).collect(),
+        Some(value) => value
+            .split(',')
+            .map(|part| part.trim().to_string())
+            .collect(),
         None => Vec::new(),
     }
 }
@@ -613,7 +622,10 @@ fn via_parts(client: &str) -> (Option<String>, Option<String>) {
             nonempty(name).filter(|value| value.chars().count() <= 32),
             nonempty(version).filter(|value| value.chars().count() <= 32),
         ),
-        None => (nonempty(trimmed).filter(|value| value.chars().count() <= 32), None),
+        None => (
+            nonempty(trimmed).filter(|value| value.chars().count() <= 32),
+            None,
+        ),
     }
 }
 
@@ -739,6 +751,36 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn markdown_original_preserves_whitespace_for_reply_copy_and_repeat() {
+        assert_eq!(
+            nonempty_raw("  first\nsecond  ").as_deref(),
+            Some("  first\nsecond  ")
+        );
+        assert_eq!(nonempty_raw(" \n "), None);
+    }
+
+    #[test]
+    fn weather_and_via_map_old_payload_without_inventing_missing_data() {
+        let card = weather_card(&json!({
+            "t": "city", "st": "clear",
+            "date": "Mon,Tue", "max": "20,21", "min": "10",
+            "weatherCode": "101,url(evil)"
+        }))
+        .unwrap();
+        assert_eq!(card.area, "city");
+        assert_eq!(card.days.len(), 2);
+        assert_eq!(card.days[0].max_temp, "20");
+        assert_eq!(card.days[1].min_temp, "");
+        assert_eq!(card.days[1].code, "");
+        assert_eq!(
+            via_parts("Windows/1.2.3"),
+            (Some("Windows".into()), Some("1.2.3".into()))
+        );
+        assert_eq!(via_parts("Other"), (None, None));
+        assert_eq!(safe_css_color("url(evil)"), None);
+    }
+
+    #[test]
     fn redpacket_card_maps_got_count_money_who() {
         let content = json!({
             "msgType": "redPacket",
@@ -813,7 +855,10 @@ mod tests {
         assert_ne!(first.id, second.id);
         assert!(first.id.starts_with("barrager:"));
         assert!(second.id.starts_with("barrager:"));
-        assert_ne!(first.id, format!("barrager:{}:{}", msg.user_name, msg.barrager_content));
+        assert_ne!(
+            first.id,
+            format!("barrager:{}:{}", msg.user_name, msg.barrager_content)
+        );
         assert!(!first.id.chars().all(|ch| ch.is_ascii_digit()));
     }
 

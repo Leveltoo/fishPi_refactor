@@ -13,17 +13,24 @@ use crate::error::AppError;
 
 const STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
+static SETTINGS_IO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// 前端 `invokeSettingsSet`：形参必须叫 `request`。
 #[tauri::command(rename_all = "camelCase")]
-pub fn settings_set(app: AppHandle, request: SettingsPatch) -> Result<(), AppError> {
+pub async fn settings_set(app: AppHandle, request: SettingsPatch) -> Result<(), AppError> {
+    let _io = SETTINGS_IO.lock().await;
     let store = app
         .store(STORE_FILE)
         .map_err(|_| AppError::business("读取设置失败"))?;
     let current = load_current(&store);
+    let previous_hotkey = current.boss_hotkey().to_string();
     let next = request.apply(current).map_err(AppError::business)?;
     crate::boss_key::rebind(&app, next.boss_hotkey())?;
-    persist(&store, &next)
+    if let Err(error) = persist(&store, &next) {
+        let _ = crate::boss_key::rebind(&app, &previous_hotkey);
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn load_current<R: tauri::Runtime>(store: &tauri_plugin_store::Store<R>) -> AppSettings {
@@ -46,19 +53,25 @@ fn persist<R: tauri::Runtime>(
     store: &tauri_plugin_store::Store<R>,
     settings: &AppSettings,
 ) -> Result<(), AppError> {
-    let value = serde_json::to_value(settings)
-        .map_err(|_| AppError::business("设置无法序列化"))?;
-    store.clear();
-    if let Some(fields) = value.as_object() {
-        for (key, field) in fields {
-            if is_secret_key(key) {
-                continue;
-            }
-            store.set(key.clone(), field.clone());
+    let value = serde_json::to_value(settings).map_err(|_| AppError::business("设置无法序列化"))?;
+    let previous = store.entries();
+    // Keep a complete wrapper visible while replacing legacy top-level fields.
+    store.set(SETTINGS_KEY, value);
+    for key in store.keys() {
+        if key != SETTINGS_KEY {
+            store.delete(key);
         }
     }
-    store.set(SETTINGS_KEY, value);
-    store.save().map_err(|_| AppError::business("保存设置失败"))
+    if store.save().is_err() {
+        store.clear();
+        for (key, value) in previous {
+            if !is_secret_key(&key) {
+                store.set(key, value);
+            }
+        }
+        return Err(AppError::business("保存设置失败"));
+    }
+    Ok(())
 }
 
 fn parse_settings(value: serde_json::Value) -> Option<AppSettings> {

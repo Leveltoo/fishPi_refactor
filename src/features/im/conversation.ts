@@ -77,8 +77,7 @@ export function upsertConversation(
     time: next.time || list[index].time,
     peerAvatarUrl: next.peerAvatarUrl || list[index].peerAvatarUrl,
   };
-  const rest = list.filter((_, i) => i !== index);
-  return [merged, ...rest];
+  return list.map((item, i) => i === index ? merged : item);
 }
 
 export function applyUnreadCounts(
@@ -140,8 +139,7 @@ export function bumpUnread(
     preview: extras?.preview || current.preview,
     peerAvatarUrl: extras?.peerAvatarUrl || current.peerAvatarUrl,
   };
-  const rest = list.filter((_, i) => i !== index);
-  return [next, ...rest];
+  return list.map((item, i) => i === index ? next : item);
 }
 
 export function clearUnread(list: Conversation[], peerUserName: string): Conversation[] {

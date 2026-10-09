@@ -117,8 +117,11 @@ export function invokeChatroomConnect(): Promise<ChatroomConnectResult> {
   return invokeCommand<ChatroomConnectResult>(CHATROOM_COMMAND.connect);
 }
 
-export function invokeChatroomDisconnect(): Promise<void> {
-  return invokeCommand<void>(CHATROOM_COMMAND.disconnect);
+export function invokeChatroomDisconnect(request?: {
+  sessionGeneration: number;
+  connectionGeneration: number;
+}): Promise<void> {
+  return invokeCommand<void>(CHATROOM_COMMAND.disconnect, { request });
 }
 
 export function invokeChatroomSend(request: SendRequest): Promise<SendResult> {

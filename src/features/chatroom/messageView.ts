@@ -1,35 +1,10 @@
-import type { ChatMessageDto } from "../../lib/types";
+import type { ChatMessageDto, MusicCardDto, WeatherCardDto, WeatherDayDto } from "../../lib/types";
 import type { ShieldRule } from "./chatroomApi";
 
-export type WeatherDay = {
-  date: string;
-  maxTemp: string;
-  minTemp: string;
-  code: string;
-};
-
-export type WeatherCard = {
-  area: string;
-  summary: string;
-  days: WeatherDay[];
-};
-
-export type MusicCard = {
-  title: string;
-  source: string;
-  coverUrl: string;
-  from: string;
-  audioUrl?: string;
-};
-
-/** Bridge 在 `ChatMessageDto` 上多出来的字段。`lib/types.ts` 不在本次范围，运行时 JSON 仍带着它们。 */
-export type RichChatMessage = ChatMessageDto & {
-  viaClient?: string;
-  viaVersion?: string;
-  color?: string;
-  weather?: WeatherCard;
-  music?: MusicCard;
-};
+export type WeatherDay = WeatherDayDto;
+export type WeatherCard = WeatherCardDto;
+export type MusicCard = MusicCardDto;
+export type RichChatMessage = ChatMessageDto;
 
 export type AlsoSaid = {
   id: string;
@@ -43,7 +18,7 @@ export type DisplayMessage = RichChatMessage & {
 };
 
 export function asRich(message: ChatMessageDto): RichChatMessage {
-  return message as RichChatMessage;
+  return message;
 }
 
 const VIA_LABEL: Record<string, string> = {
@@ -103,13 +78,13 @@ function comparableBody(message: ChatMessageDto): string | null {
   if (message.revoked || message.kind !== "msg") {
     return null;
   }
-  const md = message.md;
-  if (md != null && md.length > 0) {
-    return md;
-  }
   const text = message.text;
   if (text != null && text.length > 0) {
     return text;
+  }
+  const md = message.md;
+  if (md != null && md.length > 0) {
+    return md;
   }
   return null;
 }
@@ -142,7 +117,14 @@ function displayRowEqual(a: DisplayMessage, b: DisplayMessage): boolean {
   }
   const ra = asRich(a);
   const rb = asRich(b);
-  if (ra.color !== rb.color || ra.viaClient !== rb.viaClient) {
+  if (
+    ra.color !== rb.color ||
+    ra.viaClient !== rb.viaClient ||
+    ra.viaVersion !== rb.viaVersion ||
+    ra.weather !== rb.weather ||
+    ra.music !== rb.music ||
+    a.redpacket !== b.redpacket
+  ) {
     return false;
   }
   for (let index = 0; index < a.alsoSaid.length; index += 1) {
@@ -178,6 +160,10 @@ export function mergeDoubleMessages(messages: ChatMessageDto[]): DisplayMessage[
   }
   const rows: DisplayMessage[] = [];
   for (const message of messages) {
+    // Keep revoke tombstones in the window, but remove them from the visible repeat chain.
+    if (message.revoked) {
+      continue;
+    }
     const body = comparableBody(message);
     const previous = rows[rows.length - 1];
     const previousBody = previous == null ? null : comparableBody(previous);
@@ -215,6 +201,10 @@ export function mergeDoubleMessages(messages: ChatMessageDto[]): DisplayMessage[
   }
   mergeCache = { input: messages, output: rows };
   return rows;
+}
+
+export function displayMessageIds(message: DisplayMessage): string[] {
+  return [message.id, ...message.alsoSaid.map((entry) => entry.id)];
 }
 
 /** 旧 `firstMsg`：最后一条非红包、未撤回的消息，且已经有人「也这么说」才出现 +1。 */

@@ -1,8 +1,9 @@
 import { sanitizeHttpUrl } from "../../lib/markdown";
+import { serializeCloudEmojiText } from "./cloudEmojiLogic";
 
 export type EmojiExportEntry = { name?: string; url: string };
 
-/** 收藏导出为 JSON 数组（`[{name,url}]`），供跨端导入。 */
+/** Server groups use JSON; legacy cloud favorites use newline text separately. */
 export function serializeEmojis(items: EmojiExportEntry[]): string {
   return JSON.stringify(
     items.map((item) => ({ name: item.name ?? "", url: item.url })),
@@ -22,6 +23,17 @@ export function downloadEmojiJson(items: EmojiExportEntry[]): void {
   anchor.download = `fishpi-emoji-${new Date()
     .toISOString()
     .slice(0, 10)}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
+}
+
+export function downloadCloudEmojiText(urls: readonly string[]): void {
+  const href = URL.createObjectURL(new Blob([serializeCloudEmojiText(urls)], { type: "text/plain" }));
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = `fishpi-favorites-${new Date().toISOString().slice(0, 10)}.txt`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

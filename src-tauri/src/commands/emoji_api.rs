@@ -1,4 +1,4 @@
-//! 表情分组。走 SDK 1.1.0 的 `emoji()`，不把本地列表说成已同步。
+//! 服务器表情分组。走 SDK 1.1.1 的 `emoji()`，不等同旧 cloud 收藏。
 
 use fishpi_sdk::domain::emoji::{EmojiGroup, EmojiItem};
 use serde::{Deserialize, Serialize};

@@ -161,6 +161,7 @@ function mapListResult(payload: unknown): ArticleListResult {
     .map(mapSummary)
     .filter((item): item is ArticleSummary => item != null);
   return {
+    sessionGeneration: pickNumber(root, ["sessionGeneration"]),
     items,
     page,
     hasMore: readHasMore(root, items.length),
@@ -221,6 +222,7 @@ function mapSummary(raw: unknown): ArticleSummary | null {
       "articleCommentCount",
     ]),
     viewCount: pickNumber(rec, ["viewCount", "articleViewCount"]),
+    viewCountDisplay: pickString(rec, ["viewCountDisplay", "articleViewCntDisplayFormat"]),
     thumbnailUrl: pickString(rec, [
       "thumbnail",
       "thumbnailUrl",
@@ -250,6 +252,7 @@ function mapDetail(payload: unknown, requestedPage?: number): ArticleDetail {
     asPositiveInt(root?.pageCount) ??
     asPositiveInt(article.pageCount) ??
     asPositiveInt(asRecord(root?.pagination)?.count) ??
+    asPositiveInt(asRecord(root?.pagination)?.paginationPageCount) ??
     1;
   const page =
     asPositiveInt(root?.commentPage) ??
@@ -266,12 +269,17 @@ function mapDetail(payload: unknown, requestedPage?: number): ArticleDetail {
         ? Boolean(article.commentHasEarlier)
         : page > 1;
   return {
+    sessionGeneration: pickNumber(root, ["sessionGeneration"]),
     id: id || "",
     title: summary?.title || displayTitle(article) || "无标题",
     authorUserName: summary?.authorUserName ?? "",
     authorNickname: summary?.authorNickname ?? "",
     avatarUrl: summary?.avatarUrl ?? "",
     time: summary?.time ?? "",
+    createdTime: pickString(article, ["createdTime", "articleCreateTimeStr"]),
+    updatedTime: pickString(article, ["updatedTime", "articleUpdateTimeStr"]),
+    updated: pickBoolean(article, ["updated"]) ||
+      Boolean(article.articleUpdateTime && article.articleUpdateTime !== article.articleCreateTime),
     tags: summary?.tags ?? "",
     markdown: body.markdown,
     html: body.html,
@@ -364,13 +372,12 @@ export function mapComment(raw: unknown): ArticleComment | null {
 }
 
 function mapAck(payload: unknown): CommentPostResult {
-  if (payload == null || typeof payload !== "object") {
-    return { accepted: true, outcomeUnknown: false };
-  }
-  const record = payload as Record<string, unknown>;
+  const record = asRecord(payload);
   return {
-    accepted: record.accepted !== false,
-    outcomeUnknown: record.outcomeUnknown === true,
+    sessionGeneration: pickNumber(record, ["sessionGeneration"]),
+    accepted: record?.accepted === true,
+    outcomeUnknown: !record || typeof record.accepted !== "boolean" ||
+      record.outcomeUnknown === true,
   };
 }
 
@@ -402,7 +409,10 @@ function mapHeatResult(payload: unknown): ArticleHeatResult {
   if (typeof count !== "number" || !Number.isFinite(count) || count < 0) {
     throw new Error("在看人数无效");
   }
-  return { count: Math.trunc(count) };
+  return {
+    sessionGeneration: pickNumber(record, ["sessionGeneration"]),
+    count: Math.trunc(count),
+  };
 }
 
 function mapHeatWatchResult(payload: unknown): ArticleHeatWatchResult {
@@ -414,7 +424,10 @@ function mapHeatWatchResult(payload: unknown): ArticleHeatWatchResult {
   ) {
     throw new Error("在看监听没有返回代次");
   }
-  return { watchGeneration: generation };
+  return {
+    sessionGeneration: pickNumber(asRecord(payload), ["sessionGeneration"]),
+    watchGeneration: generation,
+  };
 }
 
 function readVote(article: Record<string, unknown>): "up" | "down" | "none" {
@@ -505,6 +518,9 @@ function unwrapComments(
   const fromArticle = article.comments;
   if (Array.isArray(fromArticle)) {
     return fromArticle;
+  }
+  if (Array.isArray(article.articleComments)) {
+    return article.articleComments;
   }
   const data = asRecord(root?.data);
   if (Array.isArray(data?.comments)) {

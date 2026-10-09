@@ -42,6 +42,7 @@ export type FishpiRedpacketDetail = {
   count?: number;
   recivers?: string[];
   gesture?: 0 | 1 | 2;
+  detailOnly?: boolean;
 };
 
 /**
@@ -62,6 +63,8 @@ export type FishpiRedpacketResendDetail = {
   count: number;
   recivers: string[];
 };
+
+export const FISHPI_REDPACKET_RESULT_EVENT = "fishpi:redpacket-result";
 
 export function isRedpacketMessage(message: ChatMessageDto): boolean {
   return message.kind === "redpacket";
@@ -122,6 +125,20 @@ export function dispatchRedpacketResend(detail: FishpiRedpacketResendDetail): vo
   );
 }
 
+export function toRedpacketResendDetail(message: ChatMessageDto): FishpiRedpacketResendDetail | null {
+  const card = redpacketCardOf(message);
+  if (message.revoked || !card || !card.type) return null;
+  const money = card.type === "rockPaperScissors" ? Math.ceil(card.money / 0.95) : card.money;
+  if (!Number.isSafeInteger(money) || money <= 0 || money > 0xffff_ffff) return null;
+  return {
+    type: card.type,
+    msg: card.msg,
+    money,
+    count: card.count,
+    recivers: card.recivers ?? [],
+  };
+}
+
 export function whoFromCardOrStatus(
   card: RedpacketCardDto | undefined,
   statusWho: RedpacketWhoDto[] | undefined,
@@ -130,9 +147,6 @@ export function whoFromCardOrStatus(
   const fromStatus = statusWho ?? [];
   if (fromStatus.length === 0) {
     return fromCard;
-  }
-  if (fromCard.length === 0) {
-    return fromStatus;
   }
   const merged = fromCard.map((entry) => ({ ...entry }));
   for (const entry of fromStatus) {

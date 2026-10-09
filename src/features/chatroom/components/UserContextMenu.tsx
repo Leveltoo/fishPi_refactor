@@ -16,14 +16,16 @@ import {
 
 type UserContextMenuContentProps = {
   userName: string;
+  selfUserName?: string | null;
   onMention: (userName: string) => void;
 };
 
 export function UserContextMenu({
   userName,
+  selfUserName,
   onMention,
 }: UserContextMenuContentProps) {
-  if (!userName) {
+  if (!userName || userName === selfUserName) {
     return null;
   }
   return (

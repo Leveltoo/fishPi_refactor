@@ -36,7 +36,9 @@ use crate::dto::{
     RevokeRequest, SendRequest, SendResult,
 };
 use crate::error::AppError;
-use crate::realtime::{attach_chatroom_forwarder, emit_connection_status};
+use crate::realtime::{
+    attach_chatroom_forwarder, emit_cached_chatroom_presence, emit_connection_status,
+};
 use crate::state::AppState;
 
 /// 锚点补拉未指定 `size` 时的默认条数。有界，不承诺一次拉完整段历史。
@@ -52,20 +54,30 @@ pub async fn chatroom_connect(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ConnectionEvent, AppError> {
-    if state.has_chatroom_connection() {
+    if state.has_chatroom_connection() || state.chatroom_is_reconnecting() {
+        emit_cached_chatroom_presence(&app);
         return Ok(current_connection_snapshot(&state));
     }
 
     let (client, session_generation) = require_client(&state)?;
+    let starting_connection_generation = state.connection_generation();
     let mut connection = client.chatroom().connect().await?;
 
     if let Some(snapshot) = abort_if_unusable(&state, session_generation, &mut connection)? {
+        emit_cached_chatroom_presence(&app);
         return Ok(snapshot);
     }
 
-    let reserved_generation = state.reserve_connection_generation();
-    attach_chatroom_forwarder(&app, &connection, session_generation, reserved_generation)
-        .await;
+    let reserved_generation = match state
+        .reserve_connection_generation(session_generation, starting_connection_generation)
+    {
+        Ok(generation) => generation,
+        Err(error) => {
+            connection.disconnect();
+            return Err(error);
+        }
+    };
+    attach_chatroom_forwarder(&app, &connection, session_generation, reserved_generation).await;
 
     if state.session_generation() != session_generation {
         connection.disconnect();
@@ -84,6 +96,7 @@ pub async fn chatroom_connect(
                 installed.connection_generation,
                 ConnectionStatus::Connected,
             );
+            emit_cached_chatroom_presence(&app);
 
             Ok(ConnectionEvent::new(
                 session_generation,
@@ -94,6 +107,7 @@ pub async fn chatroom_connect(
         Err(mut rejected) => {
             rejected.disconnect();
             if state.has_chatroom_connection() {
+                emit_cached_chatroom_presence(&app);
                 return Ok(current_connection_snapshot(&state));
             }
             Err(AppError::session_superseded())
@@ -101,15 +115,29 @@ pub async fn chatroom_connect(
     }
 }
 
-/// 幂等断开聊天室。`take_chatroom_connection` 会作废连接代次；无连接时不补发事件。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatroomDisconnectRequest {
+    pub session_generation: u64,
+    pub connection_generation: u64,
+}
+
+/// 幂等断开聊天室。迟到请求不得作废新账号或新连接。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn chatroom_disconnect(
     app: AppHandle,
     state: State<'_, AppState>,
+    request: Option<ChatroomDisconnectRequest>,
 ) -> Result<(), AppError> {
     let session_generation = state.session_generation();
     let connection_generation = state.connection_generation();
-    if let Some(mut connection) = state.take_chatroom_connection() {
+    let expected_session = request.as_ref().map(|request| request.session_generation);
+    let expected_connection = request
+        .as_ref()
+        .map(|request| request.connection_generation);
+    if let Some(mut connection) =
+        state.take_chatroom_connection(expected_session, expected_connection)
+    {
         connection.disconnect();
         emit_connection_status(
             &app,
@@ -143,7 +171,7 @@ pub async fn chatroom_send(
     map_send_result(session_generation, result)
 }
 
-/// 拉取历史。`page` 与 `aroundId` 互斥；内容类型固定 Markdown，与实时 DTO 同一形状。
+/// 拉取历史。`page` 与 `aroundId` 互斥；HTML 展示与 Markdown 原文都保留。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn chatroom_history(
     state: State<'_, AppState>,
@@ -176,9 +204,7 @@ pub async fn chatroom_revoke(
     request: RevokeRequest,
 ) -> Result<(), AppError> {
     let message_id = request.message_id.trim();
-    if message_id.is_empty() {
-        return Err(AppError::business("撤回消息 ID 不能为空"));
-    }
+    validate_message_id(message_id)?;
     let message_id = message_id.to_string();
 
     let (client, session_generation) = require_client(&state)?;
@@ -194,12 +220,7 @@ pub async fn chatroom_raw(
     request: RevokeRequest,
 ) -> Result<String, AppError> {
     let message_id = request.message_id.trim();
-    if message_id.is_empty() {
-        return Err(AppError::business("消息 ID 不能为空"));
-    }
-    if !message_id.chars().all(|c| c.is_ascii_digit()) {
-        return Err(AppError::business("消息 ID 无效"));
-    }
+    validate_message_id(message_id)?;
     let message_id = message_id.to_string();
     let (client, session_generation) = require_client(&state)?;
     let raw = client.chatroom().raw_message(message_id).await;
@@ -220,7 +241,9 @@ fn ensure_same_session(state: &AppState, expected: u64) -> Result<(), AppError> 
 }
 
 fn current_connection_snapshot(state: &AppState) -> ConnectionEvent {
-    let status = if state.has_chatroom_connection() {
+    let status = if state.chatroom_is_reconnecting() {
+        ConnectionStatus::Connecting
+    } else if state.has_chatroom_connection() {
         ConnectionStatus::Connected
     } else {
         ConnectionStatus::Unknown
@@ -261,6 +284,7 @@ fn parse_history_query(query: &HistoryQuery) -> Result<HistoryCall, AppError> {
             .unwrap_or_default()
             .trim()
             .to_string();
+        validate_message_id(&id)?;
         let mode = query.mode.ok_or_else(|| {
             AppError::business("around 查询必须指定 mode（before / after / context）")
         })?;
@@ -276,6 +300,13 @@ fn parse_history_query(query: &HistoryQuery) -> Result<HistoryCall, AppError> {
         Some(_) => Err(AppError::business("page 必须从 1 开始")),
         None => Err(AppError::business("必须指定 page 或 aroundId")),
     }
+}
+
+fn validate_message_id(id: &str) -> Result<(), AppError> {
+    if id.is_empty() || id.len() > 20 || !id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(AppError::business("消息 ID 无效"));
+    }
+    Ok(())
 }
 
 enum HistoryCall {
@@ -311,7 +342,7 @@ fn map_send_result(
     }
 }
 
-/// 弹幕 +1。走 SDK `chatroom().barrager()`，颜色先过滤，不安全则让 SDK 用它自己的默认色。
+/// 弹幕 +1。SDK 1.1.1 的 barrager 字符串拼接不转义，使用同一协议的安全 JSON。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BarragerRequest {
@@ -325,27 +356,30 @@ pub async fn chatroom_barrager(
     state: State<'_, AppState>,
     request: BarragerRequest,
 ) -> Result<SendResult, AppError> {
-    let content = request.content.trim();
-    if content.is_empty() {
-        return Err(AppError::business("弹幕内容不能为空"));
-    }
-    let content = content.to_string();
-    let color = request
-        .color
-        .as_deref()
-        .and_then(safe_css_color);
-
+    let content = barrager_tag(&request)?;
     let (client, session_generation) = require_client(&state)?;
-    let result = client
-        .chatroom()
-        .barrager(content, color.as_deref())
-        .await;
+    let result = client.chatroom().send(content).await;
     ensure_same_session(&state, session_generation)?;
     match result {
         Ok(_) => Ok(SendResult::accepted(session_generation)),
         Err(err) if is_uncertain_write(&err) => Ok(SendResult::outcome_unknown(session_generation)),
         Err(err) => Err(AppError::from(err)),
     }
+}
+
+fn barrager_tag(request: &BarragerRequest) -> Result<String, AppError> {
+    let content = request.content.trim();
+    // Match the old JS maxlength (UTF-16 code units), including supplementary characters.
+    if content.is_empty() || content.encode_utf16().count() > 32 {
+        return Err(AppError::business("弹幕内容须为 1 到 32 个字符"));
+    }
+    let color = request
+        .color
+        .as_deref()
+        .and_then(safe_css_color)
+        .unwrap_or_else(|| "#ffffff".to_string());
+    let body = serde_json::json!({ "color": color, "content": content });
+    Ok(format!("[barrager]{body}[/barrager]"))
 }
 
 /// 弹幕费用 DTO，camelCase 直出前端。
@@ -367,9 +401,7 @@ impl From<fishpi_sdk::domain::chatroom::BarragerCost> for BarrageCostDto {
 
 /// 拉取发弹幕费用（`chat-room/barrager/get`），供前端展示。
 #[tauri::command(rename_all = "camelCase")]
-pub async fn chatroom_barrage_cost(
-    state: State<'_, AppState>,
-) -> Result<BarrageCostDto, AppError> {
+pub async fn chatroom_barrage_cost(state: State<'_, AppState>) -> Result<BarrageCostDto, AppError> {
     let (client, session_generation) = require_client(&state)?;
     let cost = client.chatroom().barrage_cost().await;
     ensure_same_session(&state, session_generation)?;
@@ -392,5 +424,94 @@ fn is_uncertain_write(err: &SdkError) -> bool {
         SdkError::Transport(inner) => inner.is_timeout() || inner.is_body() || !inner.is_connect(),
         SdkError::Request(_) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_requires_exclusive_cursor_and_valid_anchor() {
+        assert!(parse_history_query(&HistoryQuery::default()).is_err());
+        assert!(parse_history_query(&HistoryQuery {
+            page: Some(0),
+            ..Default::default()
+        })
+        .is_err());
+        assert!(parse_history_query(&HistoryQuery {
+            page: Some(1),
+            around_id: Some("123".into()),
+            ..Default::default()
+        })
+        .is_err());
+        assert!(parse_history_query(&HistoryQuery {
+            around_id: Some("../revoke".into()),
+            mode: Some(HistoryMode::Before),
+            ..Default::default()
+        })
+        .is_err());
+        assert!(parse_history_query(&HistoryQuery {
+            around_id: Some("123".into()),
+            mode: Some(HistoryMode::Before),
+            size: Some(0),
+            ..Default::default()
+        })
+        .is_err());
+        assert!(matches!(
+            parse_history_query(&HistoryQuery {
+                around_id: Some(" 123 ".into()),
+                mode: Some(HistoryMode::Before),
+                ..Default::default()
+            })
+            .unwrap(),
+            HistoryCall::Around { size: 25, .. }
+        ));
+    }
+
+    #[test]
+    fn write_ids_reject_paths_and_synthetic_events() {
+        for id in [
+            "",
+            "custom:1",
+            "123/456",
+            "../123",
+            "１２３",
+            "123456789012345678901",
+        ] {
+            assert!(validate_message_id(id).is_err());
+        }
+        assert!(validate_message_id("12345678901234567890").is_ok());
+    }
+
+    #[test]
+    fn barrager_json_escapes_content_and_filters_color() {
+        let tag = barrager_tag(&BarragerRequest {
+            content: "a\"\\\nb".into(),
+            color: Some("url(evil)".into()),
+        })
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(
+            tag.strip_prefix("[barrager]")
+                .unwrap()
+                .strip_suffix("[/barrager]")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["content"], "a\"\\\nb");
+        assert_eq!(value["color"], "#ffffff");
+    }
+
+    #[test]
+    fn barrager_length_matches_js_maxlength() {
+        let request = |content: String| BarragerRequest {
+            content,
+            color: None,
+        };
+        assert!(barrager_tag(&request(" ".into())).is_err());
+        assert!(barrager_tag(&request("x".repeat(32))).is_ok());
+        assert!(barrager_tag(&request("x".repeat(33))).is_err());
+        assert!(barrager_tag(&request("\u{1f600}".repeat(16))).is_ok());
+        assert!(barrager_tag(&request("\u{1f600}".repeat(17))).is_err());
     }
 }

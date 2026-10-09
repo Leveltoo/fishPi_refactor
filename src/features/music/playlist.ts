@@ -1,4 +1,4 @@
-type PlayHandler = (id: string) => void;
+type PlayHandler = (id: string, forceAdd: boolean) => void;
 type RemoveHandler = (id: string) => void;
 type HasHandler = (id: string) => boolean;
 
@@ -22,12 +22,17 @@ export function bindPlaylistHas(next: HasHandler | null): void {
  * 按当前播放模式处理一首网易云歌曲编号。
  * 播放器未挂载时返回 false，不抛错。
  */
-export function playNeteaseSong(id: string): boolean {
+export function playNeteaseSong(id: string, forceAdd = false): boolean {
   if (handler == null) {
     return false;
   }
-  handler(id);
+  handler(id, forceAdd);
   return true;
+}
+
+/** 右键加入列表：去重追加并保留当前曲，不受普通点击策略影响。 */
+export function enqueueNeteaseSong(id: string): boolean {
+  return playNeteaseSong(id, true);
 }
 
 /** 从播放列表移出指定歌曲；播放器未挂载返回 false。 */

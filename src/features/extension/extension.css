@@ -1,0 +1,50 @@
+.extension-panel .parity-row input,
+.extension-panel .parity-row select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.extension-panel .parity-row input {
+  flex: 1;
+  width: 12rem;
+}
+
+.extension-panel .parity-row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.extension-panel button:disabled,
+.extension-panel input:disabled,
+.extension-panel select:disabled {
+  opacity: 0.6;
+}
+
+.extension-panel .parity-ext__link,
+.extension-panel .parity-list,
+.extension-readme {
+  overflow-wrap: anywhere;
+}
+
+.extension-panel button.parity-ext__link {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-accent);
+  text-align: left;
+}
+
+.extension-readme pre,
+.extension-readme table {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+}
+
+.extension-readme pre {
+  white-space: pre-wrap;
+}

@@ -11,7 +11,7 @@ export type UserCardDetail = {
 };
 
 export function dispatchPreviewImage(src: string, alt?: string): void {
-  const href = src.trim();
+  const href = sanitizeHttpUrl(src);
   if (!href) {
     return;
   }
@@ -29,3 +29,4 @@ export function dispatchUserCard(userName: string): void {
   const detail: UserCardDetail = { userName: name };
   window.dispatchEvent(new CustomEvent(USER_CARD_EVENT, { detail }));
 }
+import { sanitizeHttpUrl } from "../../lib/markdown";

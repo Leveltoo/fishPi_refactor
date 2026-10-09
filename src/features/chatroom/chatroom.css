@@ -531,6 +531,13 @@
   gap: 6px;
   align-items: center;
   width: min(420px, 100%);
+  min-width: 0;
+}
+
+.chat-topic-cost {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--chat-muted);
 }
 
 .chat-topic-input {
@@ -576,7 +583,7 @@
   white-space: nowrap;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 500px) {
   .chat-side-box {
     display: none;
   }
@@ -1114,6 +1121,26 @@
   display: block;
 }
 
+.chat-netease-player {
+  position: relative;
+  min-width: min(280px, 100%);
+}
+
+.chat-netease-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.chat-netease-cover:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
 .chat-html video {
   max-width: 100%;
   height: auto;
@@ -1571,10 +1598,60 @@ html[data-theme="feishu"] .chat-send {
   object-fit: contain;
 }
 
+.chat-music {
+  flex-wrap: nowrap;
+  height: 70px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-music-artwork {
+  position: relative;
+  flex: 0 0 70px;
+  width: 70px;
+  height: 70px;
+}
+
 .chat-music-cover {
-  width: 56px;
-  height: 56px;
+  width: 70px;
+  height: 70px;
   object-fit: cover;
+}
+
+.chat-music-play {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  inset: 20px;
+  color: white;
+  filter: drop-shadow(0 1px 2px black);
+}
+
+.chat-music-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.chat-music-title {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.chat-music-title span {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.chat-via {
+  text-decoration: none;
 }
 
 .chat-music-title span,

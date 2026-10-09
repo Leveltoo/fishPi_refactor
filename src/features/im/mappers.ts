@@ -89,6 +89,7 @@ export function mapPrivateMessage(raw: unknown): PrivateMessageDto | null {
       asString(nested.content) ??
       asString(nested.preview),
     userName,
+    receiverUserName: asString(nested.receiverUserName),
     userNickname: asString(nested.userNickname),
     userAvatarUrl:
       asString(nested.userAvatarUrl) ??
@@ -130,10 +131,7 @@ export function mapMessageEvent(payload: unknown): ChatMessageEvent | null {
   return {
     sessionGeneration: asNumber(payload.sessionGeneration) ?? 0,
     connectionGeneration: asNumber(payload.connectionGeneration),
-    userName:
-      asString(payload.userName) ??
-      asString(payload.toUser) ??
-      message.userName,
+    userName: asString(payload.userName) ?? asString(payload.toUser),
     message,
   };
 }
@@ -148,6 +146,7 @@ export function mapNoticeEvent(payload: unknown): ChatNoticeEvent | null {
   }
   return {
     sessionGeneration: asNumber(payload.sessionGeneration) ?? 0,
+    connectionGeneration: asNumber(payload.connectionGeneration),
     command,
     count: asNumber(payload.count),
     senderUserName:
@@ -171,6 +170,7 @@ export function mapRevokeEvent(payload: unknown): ChatRevokeEvent | null {
   }
   return {
     sessionGeneration: asNumber(payload.sessionGeneration) ?? 0,
+    connectionGeneration: asNumber(payload.connectionGeneration),
     messageId,
     userName: asString(payload.userName),
   };

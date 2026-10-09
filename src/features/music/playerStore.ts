@@ -34,6 +34,7 @@ let playing = false;
 let muted = false;
 let error = "";
 let audio: HTMLAudioElement | null = null;
+let generation = 0;
 let cached: PlayerSnapshot = {
   tracks,
   index,
@@ -89,6 +90,7 @@ export function setPlayerIndex(nextIndex: number): void {
 }
 
 export function setPlayerMode(nextMode: number): void {
+  nextMode = nextMode === 1 || nextMode === 2 ? nextMode : 0;
   if (nextMode === mode) {
     return;
   }
@@ -115,6 +117,9 @@ export function setPlayerPlaying(next: boolean): void {
 /** PlaylistMount 挂载/卸载 <audio> 时调用，顶栏才能真正控制播放。 */
 export function bindPlayerAudio(element: HTMLAudioElement | null): void {
   audio = element;
+  if (element) {
+    element.muted = muted;
+  }
   if (element == null && playing) {
     playing = false;
     sync();
@@ -137,6 +142,7 @@ export function playerPrev(): void {
 
 /** 清空播放列表（旧版关闭按钮：playSongs = []）。 */
 export function playerClear(): void {
+  generation += 1;
   const hadSongs = tracks.length > 0 || error.length > 0 || playing;
   tracks = EMPTY_TRACKS;
   index = 0;
@@ -163,10 +169,37 @@ export function playerRemoveCurrent(): void {
     return;
   }
   tracks = next;
-  if (index >= tracks.length) {
-    index = 0;
-  }
+  // Old delSong splices first, then advances in the remaining list.
+  index = (index + 1) % tracks.length;
   sync();
+}
+
+export function getPlayerGeneration(): number {
+  return generation;
+}
+
+export function enqueuePlayerTrack(track: Track, nextMode: number): void {
+  if (nextMode === 0) {
+    setPlayerTracks([track], 0);
+    return;
+  }
+  const next = tracks.some((item) => item.id === track.id)
+    ? tracks
+    : [...tracks, track];
+  // Mode 2 calls old playLast even when the clicked song already exists.
+  setPlayerTracks(next, nextMode === 2 ? next.length - 1 : index);
+}
+
+export function playerRemoveSong(id: string): void {
+  const next = tracks.filter((track) => track.id !== id);
+  if (next.length === tracks.length) {
+    return;
+  }
+  if (next.length === 0) {
+    playerClear();
+    return;
+  }
+  setPlayerTracks(next, index >= next.length ? 0 : index);
 }
 
 export function playerTogglePlay(): void {

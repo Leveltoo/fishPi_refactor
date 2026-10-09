@@ -1,5 +1,7 @@
 # 新老功能对照与开发计划
 
+> 历史快照：下面是 2026-09-23 的规划，不是当前迁移进度。2026-10-09 已升级发布 SDK 到 1.1.1，并按旧版逐模块重新实施；当前状态、剩余差异和验收入口以 [docs/migration/README.md](docs/migration/README.md) 及各模块记录为准。旧“基本对齐”或完成勾选不能替代实测。
+
 > 对照：`fishpi-desktop`（旧 Electron） vs `fishpi-desktop-refactor-tauri`（新 Tauri）  
 > 生成：2026-09-23 · 状态基于源码与各 feature 的 PARITY / TODO  
 > 用途：后续按优先级补齐功能

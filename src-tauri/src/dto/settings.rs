@@ -14,7 +14,7 @@ pub const OPACITY_MAX: f64 = 1.0;
 ///
 /// `hotkey` 与 `bossKey` 同步：计划字段是 hotkey，前端读 bossKey。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
     pub theme_id: String,
     pub hotkey: String,
@@ -69,7 +69,7 @@ impl Default for AppSettings {
             theme_id: "default".to_string(),
             hotkey: DEFAULT_BOSS_HOTKEY.to_string(),
             boss_key: DEFAULT_BOSS_HOTKEY.to_string(),
-            opacity: 1.0,
+            opacity: 0.6,
             opacity_enabled: false,
             always_on_top: false,
             close_to_tray: false,
@@ -100,7 +100,11 @@ impl AppSettings {
             .unwrap_or_else(|| DEFAULT_BOSS_HOTKEY.to_string());
         self.hotkey = hotkey.clone();
         self.boss_key = hotkey;
-        self.opacity = self.opacity.clamp(OPACITY_MIN, OPACITY_MAX);
+        self.opacity = if self.opacity.is_finite() {
+            self.opacity.clamp(OPACITY_MIN, OPACITY_MAX)
+        } else {
+            Self::default().opacity
+        };
         self.notify_talk_pattern = clip_pattern(&self.notify_talk_pattern);
         self
     }
@@ -317,6 +321,7 @@ mod tests {
         assert_eq!(value["alwaysOnTop"], false);
         assert_eq!(value["closeToTray"], false);
         assert_eq!(value["opacityEnabled"], false);
+        assert_eq!(value["opacity"], 0.6);
         assert_eq!(value["notifyEnabled"], false);
         assert_eq!(value["notifyChatroom"], false);
         assert_eq!(value["notifyChat"], false);
@@ -355,7 +360,8 @@ mod tests {
     #[test]
     fn patch_rejects_empty_hotkey() {
         let patch: SettingsPatch =
-            serde_json::from_value(json!({ "hotkey": "   ", "bossKey": "  " })).expect("deserialize");
+            serde_json::from_value(json!({ "hotkey": "   ", "bossKey": "  " }))
+                .expect("deserialize");
         let err = patch.apply(AppSettings::default()).unwrap_err();
         assert!(err.contains("hotkey"));
     }
@@ -365,5 +371,16 @@ mod tests {
         let req: AlwaysOnTopRequest =
             serde_json::from_value(json!({ "on": true })).expect("deserialize");
         assert_eq!(req.value().expect("on"), true);
+    }
+
+    #[test]
+    fn partial_settings_keep_old_defaults_and_nonfinite_opacity_is_safe() {
+        let settings: AppSettings =
+            serde_json::from_value(json!({ "alwaysOnTop": true })).expect("partial");
+        assert!(settings.always_on_top);
+        assert_eq!(settings.opacity, 0.6);
+        let mut settings = settings;
+        settings.opacity = f64::NAN;
+        assert_eq!(settings.sanitize().opacity, 0.6);
     }
 }

@@ -75,6 +75,7 @@ export function useActivity() {
   const [markingRead, setMarkingRead] = useState(false);
   const [capabilities, setCapabilities] =
     useState<ActivityCapabilities>(ALL_READY);
+  const listSequence = useRef(0);
 
   const mountedRef = useRef(true);
   const sessionGenRef = useRef(0);
@@ -160,10 +161,11 @@ export function useActivity() {
 
   const loadList = useCallback(
     async (type: NoticeType): Promise<void> => {
+      const sequence = ++listSequence.current;
       setLoadingList(true);
       try {
         const result = await invokeNoticeList({ type });
-        if (!mountedRef.current || typeRef.current !== type) {
+        if (!mountedRef.current || typeRef.current !== type || sequence !== listSequence.current) {
           return;
         }
         if (!acceptSession(result.sessionGeneration)) {
@@ -175,11 +177,11 @@ export function useActivity() {
         if (isBridgeGapError(error)) {
           markGap(error.command);
         }
-        if (mountedRef.current && typeRef.current === type) {
+        if (mountedRef.current && typeRef.current === type && sequence === listSequence.current) {
           setItems([]);
         }
       } finally {
-        if (mountedRef.current && typeRef.current === type) {
+        if (mountedRef.current && typeRef.current === type && sequence === listSequence.current) {
           setLoadingList(false);
         }
       }
@@ -281,8 +283,13 @@ export function useActivity() {
       return;
     }
     if (outcome.status === "ok") {
-      setCollected(true);
-      toast.success(outcome.message);
+      setCollected((outcome.sum ?? 0) !== 0);
+      if ((outcome.sum ?? 0) > 0) {
+        toast.success(outcome.message);
+      } else {
+        toast.info(outcome.message);
+      }
+      void refreshDaily();
       return;
     }
     toast.error(outcome.message);
@@ -293,7 +300,8 @@ export function useActivity() {
       return;
     }
     setMarkingRead(true);
-    const outcome = await invokeNoticeMakeRead({ type: typeRef.current });
+    const type = typeRef.current;
+    const outcome = await invokeNoticeMakeRead({ type });
     if (!mountedRef.current) {
       return;
     }
@@ -309,9 +317,11 @@ export function useActivity() {
       return;
     }
     if (outcome.status === "ok") {
-      setItems((current) =>
-        current.map((item) => ({ ...item, hasRead: true })),
-      );
+      if (typeRef.current === type) {
+        listSequence.current += 1;
+        setLoadingList(false);
+        setItems((current) => current.map((item) => ({ ...item, hasRead: true })));
+      }
       toast.success(outcome.message);
       void refreshCount();
       return;
@@ -340,6 +350,8 @@ export function useActivity() {
       return;
     }
     if (outcome.status === "ok") {
+      listSequence.current += 1;
+      setLoadingList(false);
       setItems((current) =>
         current.map((item) => ({ ...item, hasRead: true })),
       );
@@ -396,6 +408,7 @@ export function useActivity() {
 
     return () => {
       mountedRef.current = false;
+      listSequence.current += 1;
       listenCancelled = true;
       window.clearInterval(intervalId);
       intervalRef.current = null;

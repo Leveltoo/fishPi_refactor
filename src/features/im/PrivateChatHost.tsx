@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { WarningIcon } from "@phosphor-icons/react";
@@ -18,11 +18,30 @@ import "./im.css";
  */
 export function PrivateChatHost() {
   const chat = usePrivateChat();
+  const rootRef = useRef<HTMLDivElement>(null);
   const active = chat.conversations.find(
     (item) => item.peerUserName === chat.activeUser,
   );
   const bridgeMissing = !chat.loadingList && !chat.capabilities.list;
   const openConversation = chat.openConversation;
+  const setVisible = chat.setVisible;
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const page = root?.closest(".shell__page");
+    function update(): void {
+      setVisible(document.visibilityState === "visible" && root?.closest("[hidden]") == null);
+    }
+    const observer = new MutationObserver(update);
+    if (page) observer.observe(page, { attributes: true, attributeFilter: ["hidden"] });
+    document.addEventListener("visibilitychange", update);
+    update();
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", update);
+      setVisible(false);
+    };
+  }, [setVisible]);
 
   useEffect(() => {
     function onOpenIm(event: Event): void {
@@ -45,15 +64,15 @@ export function PrivateChatHost() {
   }, [chat.activeUser, chat.peerNickname]);
 
   return (
-    <div className="im dark" id="im">
+    <div className="im dark" id="im" ref={rootRef}>
       <h1 className="visually-hidden">私聊</h1>
 
       {bridgeMissing ? (
         <Alert className="im-alert">
           <WarningIcon />
-          <AlertTitle>私聊 Bridge 尚未接入</AlertTitle>
+          <AlertTitle>私聊暂不可用</AlertTitle>
           <AlertDescription>
-            私聊命令尚未注册。界面可预览，发送不会伪装成功；命令就绪后会自动重试。
+            无法加载会话
           </AlertDescription>
         </Alert>
       ) : chat.error ? (
@@ -85,6 +104,7 @@ export function PrivateChatHost() {
           hasMore={chat.hasMore}
           sending={chat.sending}
           pendingConfirm={chat.pendingConfirm}
+          confirmedContent={chat.confirmedContent}
           sendAvailable={chat.capabilities.send}
           quote={chat.quote}
           onQuote={(message) => {

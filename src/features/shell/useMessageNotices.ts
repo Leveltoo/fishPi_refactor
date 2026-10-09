@@ -21,6 +21,8 @@ import { compileTalkPattern, talkPatternHits } from "@/features/settings/talkPat
 import type { DesktopSettings } from "@/features/settings/types";
 
 import type { WarnBroadcast } from "./WarnBroadcast";
+import { noticeTarget } from "../activity/noticeTarget";
+import { openNoticeTarget, type NoticeTarget } from "./navigation";
 
 const WATCHED: readonly NoticeType[] = ["at", "reply", "commented", "sys-announce"];
 
@@ -29,6 +31,7 @@ type Cue = {
   body: string;
   /** 弹系统通知。聊天室普通发言为 false，对齐旧版「聊天室除外」。 */
   popup: boolean;
+  target?: NoticeTarget;
 };
 
 /**
@@ -44,7 +47,7 @@ export function useMessageNotices(selfUserName: string): {
   const settingsRef = useRef(readSettings());
   const selfRef = useRef(selfUserName);
   const seenRef = useRef(new Set<string>());
-  const primedRef = useRef(false);
+  const primedTypesRef = useRef(new Set<NoticeType>());
   const refreshSeq = useRef(0);
   const warnedPatterns = useRef(new Set<string>());
   const lastOnlineRef = useRef<string[] | null>(null);
@@ -68,39 +71,35 @@ export function useMessageNotices(selfUserName: string): {
 
     function pullNotices(): void {
       const seq = ++refreshSeq.current;
-      void loadFreshNotices().then((fresh) => {
+      void loadFreshNotices(seq).then((fresh) => {
         if (!alive || seq !== refreshSeq.current || fresh == null) {
-          return;
-        }
-        if (!primedRef.current) {
-          primedRef.current = true;
           return;
         }
         deliver(fresh, settingsRef.current);
       });
     }
 
-    async function loadFreshNotices(): Promise<Cue[] | null> {
-      let lists: NoticeListResult[];
-      try {
-        lists = await Promise.all(
-          WATCHED.map((type) => invokeNoticeList({ type })),
-        );
-      } catch {
+    async function loadFreshNotices(seq: number): Promise<Cue[] | null> {
+      const results = await Promise.allSettled(
+        WATCHED.map((type) => invokeNoticeList({ type })),
+      );
+      const lists: NoticeListResult[] = results.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : []);
+      if (!alive || seq !== refreshSeq.current) {
         return null;
       }
       const settings = settingsRef.current;
       const fresh: Cue[] = [];
       for (const list of lists) {
+        const primed = primedTypesRef.current.has(list.type);
         for (const item of list.items) {
-          const key = `${list.type}:${item.id}`;
-          if (!primedRef.current) {
-            if (!item.hasRead) {
-              seenRef.current.add(key);
-            }
+          const key = `${list.type}:${item.id}:${item.dataType ?? ""}`;
+          if (!primed) {
+            seenRef.current.add(key);
             continue;
           }
-          if (item.hasRead || seenRef.current.has(key)) {
+          if (item.hasRead || item.deleted || seenRef.current.has(key) ||
+              (list.type === "at" && item.author === selfRef.current)) {
             continue;
           }
           if (!categoryEnabled(list.type, settings)) {
@@ -112,6 +111,7 @@ export function useMessageNotices(selfUserName: string): {
             fresh.push(next);
           }
         }
+        primedTypesRef.current.add(list.type);
       }
       return fresh;
     }
@@ -220,6 +220,11 @@ export function useMessageNotices(selfUserName: string): {
     }).catch(() => undefined);
 
     pullNotices();
+    stops.push(subscribeDesktopSettings((snapshot) => {
+      if (snapshot.ready) {
+        pullNotices();
+      }
+    }));
     void loadChatroomFilters()
       .then((filters) => {
         if (alive) {
@@ -242,7 +247,7 @@ function readSettings(): DesktopSettings {
   return currentDesktopSettings()?.settings ?? DEFAULT_SETTINGS;
 }
 
-function chatroomCue(
+export function chatroomCue(
   message: ChatMessageEvent,
   selfUserName: string,
   settings: DesktopSettings,
@@ -259,7 +264,8 @@ function chatroomCue(
     if (!settings.redpackNotice) {
       return null;
     }
-    return cue("红包提醒", `${name} 发红包啦~`, true);
+    return cue("红包提醒", `${name} 发红包啦~`, true,
+      { page: "chatroom", messageId: message.id });
   }
   if (message.kind !== "msg") {
     return null;
@@ -270,7 +276,8 @@ function chatroomCue(
     if (pattern === "invalid") {
       warnInvalidPattern(settings.notifyTalkPattern, warned);
     } else if (talkPatternHits(pattern, text)) {
-      return cue("关心的消息", `${name} 说：“${clip(text, 80)}”`, true);
+      return cue("关心的消息", `${name} 说：“${clip(text, 80)}”`, true,
+        { page: "chatroom", messageId: message.id });
     }
   }
   if (!settings.notifyChatroom) {
@@ -280,7 +287,7 @@ function chatroomCue(
   return cue("聊天室", body, false);
 }
 
-function idleCue(
+export function idleCue(
   sender: string | undefined,
   preview: string | undefined,
   selfUserName: string,
@@ -289,7 +296,8 @@ function idleCue(
   if (!settings.notifyChat || !sender || sender === selfUserName) {
     return null;
   }
-  return cue("新消息", `${sender} 说：“${clip(preview ?? "", 10)}”`, true);
+  return cue("新消息", `${sender} 说：“${clip(preview ?? "", 10)}”`, true,
+    { page: "im", userName: sender });
 }
 
 function careOnlineCues(
@@ -314,19 +322,23 @@ function careOnlineCues(
     .filter((item): item is Cue => item != null);
 }
 
-function noticeCue(type: NoticeType, item: NoticeItemDto): Cue | null {
+export function noticeCue(type: NoticeType, item: NoticeItemDto): Cue | null {
+  if (item.deleted) {
+    return null;
+  }
+  const target = noticeTarget(item);
   if (type === "at") {
     const title = item.author ? `${item.author} 提及了你` : "提及了我";
-    return cue(title, item.content || item.title, true);
+    return cue(title, item.content || item.title, true, target);
   }
   if (type === "reply" || type === "commented") {
     const verb = type === "reply" ? "回复你" : "评论你";
     const who = item.author ? `${item.author}${verb}` : verb;
     const body = item.content ? `${who} ${item.content}` : who;
-    return cue(item.title || "收到回复", body, true);
+    return cue(item.title || "收到回复", body, true, target);
   }
   if (type === "sys-announce") {
-    return cue("摸鱼派系统通知", item.title || item.content, true);
+    return cue("摸鱼派系统通知", item.title || item.content, true, target);
   }
   return null;
 }
@@ -359,17 +371,30 @@ function deliver(cues: Cue[], settings: DesktopSettings): void {
     if (!item.popup) {
       continue;
     }
-    void invokeNotifyShow(item);
+    toast.info(item.title, {
+      description: item.body,
+      action: item.target ? {
+        label: "查看",
+        onClick: () => {
+          void openNoticeTarget(item.target!).catch(() => toast.error("打开通知失败"));
+        },
+      } : undefined,
+    });
+    void invokeNotifyShow(item).then((result) => {
+      if (result.status === "error") {
+        toast.error(result.message);
+      }
+    });
   }
 }
 
-function cue(title: string, body: string, popup: boolean): Cue | null {
+function cue(title: string, body: string, popup: boolean, target?: NoticeTarget): Cue | null {
   const nextTitle = clip(title, 80);
   const nextBody = clip(body, 120);
   if (!nextTitle || !nextBody) {
     return null;
   }
-  return { title: nextTitle, body: nextBody, popup };
+  return { title: nextTitle, body: nextBody, popup, target };
 }
 
 function clip(text: string, max: number): string {

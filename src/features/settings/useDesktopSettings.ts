@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import type { ImportResult } from "../desktop/api";
 
 import {
   clampOpacity,
@@ -10,7 +12,11 @@ import {
   normalizeSettings,
 } from "./api";
 import { BRIDGE_GAP_DETAIL, DEFAULT_SETTINGS } from "./constants";
-import { publishDesktopSettings } from "./settingsStore";
+import {
+  currentDesktopSettings,
+  publishDesktopSettings,
+  subscribeDesktopSettings,
+} from "./settingsStore";
 import { applyTheme, bootDefaultTheme } from "./theme";
 import type { DesktopSettings, ThemeId } from "./types";
 
@@ -31,15 +37,26 @@ export function useDesktopSettings() {
   const opacityTimer = useRef(0);
   const persistTimer = useRef(0);
   const gen = useRef(0);
+  const reloading = useRef(true);
 
   settingsRef.current = settings;
+
+  useEffect(() => subscribeDesktopSettings((snapshot) => {
+    settingsRef.current = snapshot.settings;
+    setSettings(snapshot.settings);
+    applyTheme(snapshot.settings.themeId);
+  }), []);
 
   useEffect(() => {
     bootDefaultTheme();
     let cancelled = false;
-    const token = ++gen.current;
-
-    void (async () => {
+    async function refresh(): Promise<void> {
+      const token = ++gen.current;
+      reloading.current = true;
+      window.clearTimeout(opacityTimer.current);
+      window.clearTimeout(persistTimer.current);
+      setLoading(true);
+      setSaving(false);
       const result = await invokeSettingsGet();
       if (cancelled || token !== gen.current) {
         return;
@@ -55,13 +72,25 @@ export function useDesktopSettings() {
       } else {
         setNotice({ kind: "error", text: result.message });
       }
+      reloading.current = false;
       setLoading(false);
-    })();
+    }
+    const stop = listen<ImportResult>("desktop://config-imported", (event) => {
+      if (!cancelled && event.payload.settingsSaved) void refresh();
+    });
+    void stop.then(() => {
+      if (!cancelled) void refresh();
+    }).catch(() => {
+      if (!cancelled) void refresh();
+    });
 
     return () => {
       cancelled = true;
+      gen.current += 1;
+      reloading.current = true;
       window.clearTimeout(opacityTimer.current);
       window.clearTimeout(persistTimer.current);
+      void stop.then((unlisten) => unlisten()).catch(() => undefined);
     };
   }, []);
 
@@ -76,9 +105,12 @@ export function useDesktopSettings() {
 
   const persist = useCallback((next: DesktopSettings, delay = 0) => {
     window.clearTimeout(persistTimer.current);
+    const token = gen.current;
     const run = async () => {
+      if (token !== gen.current || reloading.current) return;
       setSaving(true);
-      const result = await invokeSettingsSet(next);
+      const result = await invokeSettingsSet(currentDesktopSettings()?.settings ?? next);
+      if (token !== gen.current) return;
       setSaving(false);
       if (result.status === "gap") {
         pushNotice({ kind: "gap", text: BRIDGE_GAP_DETAIL });
@@ -99,7 +131,10 @@ export function useDesktopSettings() {
 
   const patch = useCallback(
     (partial: Partial<DesktopSettings>) => {
-      const next = normalizeSettings({ ...settingsRef.current, ...partial });
+      if (reloading.current) return;
+      const token = gen.current;
+      const base = currentDesktopSettings()?.settings ?? settingsRef.current;
+      const next = normalizeSettings({ ...base, ...partial });
       settingsRef.current = next;
       setSettings(next);
       publishDesktopSettings({ ready: true, settings: next });
@@ -110,6 +145,7 @@ export function useDesktopSettings() {
 
       if (partial.alwaysOnTop !== undefined) {
         void invokeAlwaysOnTop(next.alwaysOnTop).then((result) => {
+          if (token !== gen.current) return;
           if (result.status === "gap") {
             pushNotice({ kind: "gap", text: BRIDGE_GAP_DETAIL });
           } else if (result.status === "error") {
@@ -121,9 +157,11 @@ export function useDesktopSettings() {
       if (partial.opacity !== undefined || partial.opacityEnabled !== undefined) {
         window.clearTimeout(opacityTimer.current);
         opacityTimer.current = window.setTimeout(() => {
+          if (token !== gen.current || reloading.current) return;
           void invokeWindowOpacity(
             next.opacityEnabled ? next.opacity : 1,
           ).then((result) => {
+            if (token !== gen.current) return;
             if (result.status === "gap") {
               pushNotice({ kind: "gap", text: BRIDGE_GAP_DETAIL });
             } else if (result.status === "error") {

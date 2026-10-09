@@ -1,6 +1,6 @@
-# 帖子互动与 SDK 1.1.0
+# 帖子互动与 SDK 1.1.1
 
-对照 crates.io `fishpi-sdk` 1.1.0（`Cargo.lock` 里的 registry 包，不是 path 依赖）的 `ArticleApi`。感谢、赞踩、打赏、在看都由 Rust invoke，WebView 不直连 fishpi.cn。
+对照 crates.io `fishpi-sdk` 1.1.1 的发布源码。完整逐项核对、限制及验证见 `docs/migration/content.md`。
 
 ## 感谢 — 已接上
 
@@ -12,14 +12,14 @@
 
 - SDK：`article().vote(id, like) -> Result<bool>`。`true` 表示响应 `type == -1`，即该方向现在选中。
 - 命令：`article_vote`，`direction` 为 `up` 或 `down`
-- 计数沿用旧客户端：确定成功后，按点击前的状态对该方向 ±1。结果不明不改赞踩状态。
+- 确定成功后按返回选中状态更新双方计数，互斥切换移除原方向计数；结果不明不改状态。
 
 ## 打赏后可见 — 已接上
 
 - SDK：`article().reward(id) -> Result<()>`。成功体不含隐藏正文。
 - 命令：`article_reward`。确定成功后再拉一次详情；只有详情 `rewarded == true` 才带回正文。
 - 未打赏、打赏失败、结果无法确认时都不下发隐藏正文，界面也不标成已打赏。
-- 正文走现有规则：Markdown 原文，或剥掉标签的文本，不转发原始 HTML。
+- 正文保留 Markdown / HTML，HTML 经 DOMPurify 与内容白名单后渲染；禁止提前下发隐藏正文。
 
 ## 在看人数 — 已接上（HTTP 初始值 + 频道加减）
 
@@ -28,6 +28,8 @@
 - 命令：`article_heat`、`article_heat_watch`、`article_heat_close`
 - 事件：`article://heat`，`delta` 只有 `1` 或 `-1`。
 - 没拉到 HTTP 人数时，不用 0 当基数去做本地加减。监听失败时只显示已经拉到的人数。
+- 同会话 `desktop://reconnect` 重建活跃文章监听，只重连，不重发写请求。
+- Auth 失效/换号后应立即调用 `commands::article_heat::disconnect_article_channel()`，同步关闭静态槽里的旧连接。
 
 ## 评论
 

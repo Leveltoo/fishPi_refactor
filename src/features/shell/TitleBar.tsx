@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { FishMark } from "./FishMark";
 import { WindowControls } from "./WindowControls";
+import { startWindowDrag } from "./windowActions";
 import "./AppShell.css";
 
 type TitleBarProps = {
@@ -18,7 +19,7 @@ type TitleBarProps = {
  */
 export function TitleBar({ title, children, compact = false }: TitleBarProps) {
   return (
-    <header className="shell__header">
+    <header className="shell__header" onMouseDown={startWindowDrag}>
       <div className="shell__header-title">
         <FishMark />
         {title ? (

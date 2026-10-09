@@ -1,7 +1,7 @@
 //! 主窗口关闭请求：按 `close_to_tray` 藏到托盘或真正退出。
 //!
 //! 默认关闭即退出，对齐旧版。打开「关闭到托盘」后点关闭只藏起来。
-//! 退出只走托盘菜单「退出」。这里不创建托盘图标，不 `exit`，也不拆 WebSocket。
+//! 关闭即退出时结束整个应用，包括名片子窗；不在这里拆 WebSocket。
 
 use tauri::Manager;
 
@@ -32,6 +32,8 @@ fn on_close_requested(
     // 关闭到托盘 ≠ 退出。用户还在线：不退出进程，不拆 WS。
     // 退出只走托盘菜单「退出」。
     if !close_to_tray(app) {
+        api.prevent_close();
+        app.exit(0);
         return;
     }
 

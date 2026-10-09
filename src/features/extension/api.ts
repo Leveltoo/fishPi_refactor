@@ -13,24 +13,25 @@ export type ExtensionItem = {
   icon: string;
 };
 
-/** 扩展目录里的 hook 脚本原文；Rust 只读取，执行由本模块负责。 */
-export type HookScript = {
-  key: string;
-  source: string;
-};
-
 export type ExtensionScan = {
   root: string;
   themes: ExtensionItem[];
   plugins: ExtensionItem[];
-  hooks: HookScript[];
   unsupported: string[];
+  diagnostics: string[];
   message: string;
 };
 
 export type ThemeCss = {
+  /** Source was read successfully, not applied to the document. */
   applied: boolean;
   css: string;
+  message: string;
+};
+
+export type ExtensionDetail = {
+  key: string;
+  readme: string;
   message: string;
 };
 
@@ -45,6 +46,10 @@ export function extensionLoadTheme(theme: string, root?: string): Promise<ThemeC
   });
 }
 
-export function extensionCall(api: string): Promise<void> {
-  return invoke<void>("extension_call", { api });
+export function extensionCall(api: string, key?: string, root?: string): Promise<ExtensionDetail> {
+  return invoke<ExtensionDetail>("extension_call", {
+    api,
+    key: key ?? null,
+    root: root ?? null,
+  });
 }

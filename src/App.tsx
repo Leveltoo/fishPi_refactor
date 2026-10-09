@@ -44,6 +44,7 @@ export default function App() {
           notice={auth.phase.notice}
           submittingFromGate={auth.busy}
           onLoggedIn={auth.enterSession}
+          onRestoreSession={auth.retryRestore}
         />
       );
       break;
@@ -60,6 +61,7 @@ export default function App() {
     case "ready":
       view = (
         <AppShell
+          key={auth.phase.session.sessionGeneration}
           user={auth.phase.session.user}
           persistWarning={persistNotice(auth.phase.session)}
           loggingOut={auth.busy}

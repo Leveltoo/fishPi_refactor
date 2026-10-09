@@ -1,7 +1,7 @@
 /**
  * 前后端 IPC 契约（camelCase 字段名与 Rust DTO 对齐）。
  *
- * SDK domain 大多不能 serde，Bridge 只映射 P0 需要的字段。
+ * SDK domain 大多不能 serde，Bridge 映射业务页面所需字段。
  * 出站载荷禁止出现 apiKey / token / password / mfa。
  * 消息 ID 用 string：服务端 oId 是雪花数字串，JS number 会丢精度。
  */
@@ -91,7 +91,7 @@ export interface LogoutResult {
 
 /**
  * 消息类别。历史 content.msgType 与实时事件变体都映射到这里。
- * 音乐 / 天气 / 红包 P0 只给安全摘要，不引入播放器。
+ * 特殊消息带结构化卡片数据，不把 JSON 当 HTML。
  */
 export type ChatMessageKind =
   | "msg"
@@ -123,6 +123,27 @@ export type RedpacketCardDto = {
   who?: RedpacketWhoDto[];
 };
 
+export type WeatherDayDto = {
+  date: string;
+  maxTemp: string;
+  minTemp: string;
+  code: string;
+};
+
+export type WeatherCardDto = {
+  area: string;
+  summary: string;
+  days: WeatherDayDto[];
+};
+
+export type MusicCardDto = {
+  title: string;
+  source: string;
+  coverUrl: string;
+  from: string;
+  audioUrl?: string;
+};
+
 export interface ChatMessageDto {
   id: string;
   kind: ChatMessageKind;
@@ -135,6 +156,11 @@ export interface ChatMessageDto {
   revoked: boolean;
   rawHint?: string;
   redpacket?: RedpacketCardDto;
+  viaClient?: string;
+  viaVersion?: string;
+  color?: string;
+  weather?: WeatherCardDto;
+  music?: MusicCardDto;
 }
 
 export interface OnlineUser {

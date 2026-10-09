@@ -1,6 +1,6 @@
 # 红包 Bridge
 
-开包走 `redpacket_open`，发包走现有 `chatroom_send`。不要自动重试；`outcome_unknown` 只提示核对。
+开包走 `redpacket_open`，发包走 `redpacket_send`。不要自动重试；`outcome_unknown` 只提示核对。
 
 ## `redpacket_open`
 
@@ -12,6 +12,6 @@ invoke("redpacket_open", {
 
 对应 SDK `client.redpacket().open(oId, gesture)`。
 
-## `chatroom_send`
+## `redpacket_send`
 
-发红包载荷：`[redpacket]{type,money,count,msg,recivers,gesture?}[/redpacket]`。
+发红包载荷由 SDK `RedPacketSend` 编码为 `[redpacket]{type,money,count,msg,recivers,gesture?}[/redpacket]`。

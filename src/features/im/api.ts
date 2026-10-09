@@ -90,11 +90,7 @@ export function invokeChatHistory(
 export function invokeChatSend(request: ChatSendRequest): Promise<SendResult> {
   return invokeMapped(CHAT_COMMAND.send, { request }, (payload) => {
     if (payload == null || typeof payload !== "object") {
-      return {
-        sessionGeneration: 0,
-        accepted: true,
-        outcomeUnknown: false,
-      };
+      throw new AppInvokeError({ code: "outcome_unknown", message: "" });
     }
     const record = payload as Record<string, unknown>;
     const outcomeUnknown =
@@ -104,7 +100,7 @@ export function invokeChatSend(request: ChatSendRequest): Promise<SendResult> {
         typeof record.sessionGeneration === "number"
           ? record.sessionGeneration
           : 0,
-      accepted: record.accepted !== false && !outcomeUnknown,
+      accepted: record.accepted === true && !outcomeUnknown,
       outcomeUnknown,
     };
   });

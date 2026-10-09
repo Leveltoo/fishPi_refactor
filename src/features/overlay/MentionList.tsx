@@ -23,7 +23,7 @@ type MentionListProps = {
 };
 
 /**
- * Composer `@` 补全。捕获阶段拦截方向键 / Enter / Esc，避免输入框把 Enter 当成发送。
+ * Composer `@` 补全。捕获方向键 / 无修饰键 Enter / Esc，发送组合键留给输入框。
  */
 export function MentionList({ query, onPick, onClose }: MentionListProps) {
   const [users, setUsers] = useState<UserSearchHit[]>([]);
@@ -86,7 +86,10 @@ export function MentionList({ query, onPick, onClose }: MentionListProps) {
         setSelected((current) => nextIndex(current, users.length, -1));
         return;
       }
-      if (event.key === "Enter" && !event.shiftKey) {
+      if (
+        event.key === "Enter" &&
+        !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+      ) {
         event.preventDefault();
         event.stopPropagation();
         const hit = users[selected];

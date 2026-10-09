@@ -11,9 +11,9 @@ import {
   isOutcomeUnknown,
   toUserErrorMessage,
 } from "./errors";
-import { invokeAuthMe } from "../../lib/tauri";
 import type { BreezemoonDto } from "./types";
 import { BREEZEMOON_COMMAND, PAGE_SIZE } from "./types";
+import { mergeById } from "../article/contentState";
 
 export type BreezemoonCapabilities = {
   list: boolean;
@@ -37,13 +37,22 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
   const [error, setError] = useState<string | null>(null);
   const [capabilities, setCapabilities] =
     useState<BreezemoonCapabilities>(ALL_READY);
-  const [selfUserName, setSelfUserName] = useState<string | null>(null);
+  const [scrollReset, setScrollReset] = useState(0);
 
   const pageRef = useRef(1);
   const loadSeqRef = useRef(0);
   const mountedRef = useRef(true);
+  const sendLock = useRef(false);
+  const pagingLock = useRef(false);
+  const sessionGeneration = useRef(0);
   const userNameRef = useRef(userName);
   userNameRef.current = userName;
+
+  function acceptSession(generation: number): boolean {
+    if (generation <= 0) return false;
+    if (sessionGeneration.current === 0) sessionGeneration.current = generation;
+    return sessionGeneration.current === generation;
+  }
 
   const markGap = useCallback((command: string): void => {
     setCapabilities((prev) => {
@@ -67,6 +76,7 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
         return;
       }
       const seq = ++loadSeqRef.current;
+      pagingLock.current = true;
       if (append) {
         setLoadingMore(true);
       } else {
@@ -79,13 +89,14 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
           size: PAGE_SIZE,
           userName: userNameRef.current,
         });
-        if (!mountedRef.current || seq !== loadSeqRef.current) {
+        if (!mountedRef.current || seq !== loadSeqRef.current ||
+          !acceptSession(result.sessionGeneration)) {
           return;
         }
         pageRef.current = page;
         setHasMore(!result.exhausted && result.items.length > 0);
         setItems((current) =>
-          append ? mergeUnique(current, result.items) : result.items,
+          append ? mergeById(current, result.items) : result.items,
         );
       } catch (err) {
         if (!mountedRef.current || seq !== loadSeqRef.current) {
@@ -101,6 +112,7 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
         if (mountedRef.current && seq === loadSeqRef.current) {
           setLoading(false);
           setLoadingMore(false);
+          pagingLock.current = false;
         }
       }
     },
@@ -112,7 +124,7 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
   }, [loadPage]);
 
   const loadMore = useCallback((): void => {
-    if (loading || loadingMore || !hasMore) {
+    if (loading || loadingMore || !hasMore || pagingLock.current) {
       return;
     }
     void loadPage(pageRef.current + 1, true);
@@ -121,18 +133,21 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
   const send = useCallback(
     async (content: string): Promise<boolean> => {
       const text = content.trim();
-      if (text.length === 0) {
+      if (text.length === 0 || sendLock.current || pendingConfirm) {
         return false;
       }
       if (isCommandMissing(BREEZEMOON_COMMAND.send)) {
         setError(new BridgeGapError(BREEZEMOON_COMMAND.send).message);
         return false;
       }
+      sendLock.current = true;
       setSending(true);
       setError(null);
+      const targetUser = userNameRef.current;
       try {
         const result = await invokeBreezemoonSend({ content: text });
-        if (!mountedRef.current) {
+        if (!mountedRef.current || targetUser !== userNameRef.current ||
+          !acceptSession(result.sessionGeneration)) {
           return false;
         }
         if (result.outcomeUnknown) {
@@ -144,11 +159,32 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
           return false;
         }
         setPendingConfirm(false);
-        // 已接受只表示请求进了服务端；用列表回读，不把草稿插进时间线冒充成功。
-        void loadPage(1, false);
+        const seq = ++loadSeqRef.current;
+        pagingLock.current = true;
+        try {
+          const first = await invokeBreezemoonList({
+            page: 1, size: PAGE_SIZE, userName: targetUser,
+          });
+          if (mountedRef.current && seq === loadSeqRef.current &&
+            acceptSession(first.sessionGeneration)) {
+            setItems((current) => mergeById(first.items, current));
+            if (pageRef.current === 1) setHasMore(!first.exhausted);
+            setScrollReset((value) => value + 1);
+          }
+        } catch (err) {
+          if (mountedRef.current && seq === loadSeqRef.current) {
+            setError(`已发送，列表刷新失败：${toUserErrorMessage(err)}`);
+          }
+        } finally {
+          if (mountedRef.current && seq === loadSeqRef.current) {
+            setLoading(false);
+            setLoadingMore(false);
+            pagingLock.current = false;
+          }
+        }
         return true;
       } catch (err) {
-        if (!mountedRef.current) {
+        if (!mountedRef.current || targetUser !== userNameRef.current) {
           return false;
         }
         if (isBridgeGapError(err)) {
@@ -163,28 +199,20 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
         setError(toUserErrorMessage(err));
         return false;
       } finally {
+        sendLock.current = false;
         if (mountedRef.current) {
           setSending(false);
         }
       }
     },
-    [loadPage, markGap],
+    [markGap, pendingConfirm],
   );
 
   useEffect(() => {
     mountedRef.current = true;
-    void (async () => {
-      try {
-        const me = await invokeAuthMe();
-        if (mountedRef.current) {
-          setSelfUserName(me.user?.userName ?? null);
-        }
-      } catch {
-        // 读不到当前用户时不显示编辑/删除入口。
-      }
-    })();
     return () => {
       mountedRef.current = false;
+      loadSeqRef.current += 1;
     };
   }, []);
 
@@ -204,27 +232,9 @@ export function useBreezemoon(options: UseBreezemoonOptions = {}) {
     pendingConfirm,
     error,
     capabilities,
-    selfUserName,
+    scrollReset,
     refresh,
     loadMore,
     send,
   };
-}
-
-function mergeUnique(
-  current: BreezemoonDto[],
-  incoming: BreezemoonDto[],
-): BreezemoonDto[] {
-  if (incoming.length === 0) {
-    return current;
-  }
-  const seen = new Set(current.map((item) => item.id));
-  const extra = incoming.filter((item) => {
-    if (seen.has(item.id)) {
-      return false;
-    }
-    seen.add(item.id);
-    return true;
-  });
-  return extra.length === 0 ? current : [...current, ...extra];
 }

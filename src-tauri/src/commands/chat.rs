@@ -24,7 +24,7 @@ use crate::realtime::attach_chat_forwarder;
 use crate::state::AppState;
 
 const DEFAULT_HISTORY_PAGE: u32 = 1;
-const DEFAULT_HISTORY_SIZE: u32 = 20;
+const DEFAULT_HISTORY_SIZE: u32 = 25;
 
 /// 私聊会话列表。每条 `unread` 为 0，未读数由 `chat_unread` 另拉。
 #[tauri::command(rename_all = "camelCase")]
@@ -68,16 +68,19 @@ pub async fn chat_history(
         return Err(AppError::business("page 必须从 1 开始"));
     }
     let size = query.size.unwrap_or(DEFAULT_HISTORY_SIZE);
-    if size == 0 {
-        return Err(AppError::business("size 必须大于 0"));
+    if size == 0 || size > 100 {
+        return Err(AppError::business("size 必须在 1 到 100 之间"));
     }
 
     let (client, session_generation) = require_client(&state)?;
-    let messages = client
-        .chat()
-        .history(user_name, page, size, false)
-        .await?;
+    check_requested_session(&state, query.session_generation)?;
+    let result = client.chat().history(user_name, page, size, false).await;
     ensure_same_session(&state, session_generation)?;
+    let messages = match result {
+        Ok(messages) => messages,
+        Err(SdkError::Decode(message)) if message.trim() == "没有更多消息了" => Vec::new(),
+        Err(err) => return Err(AppError::from(err)),
+    };
     let exhausted = messages.is_empty() || (messages.len() as u32) < size;
     Ok(ChatHistoryResult {
         session_generation,
@@ -95,7 +98,13 @@ pub async fn chat_send(
     let user_name = require_nonempty(&request.user_name, "用户名不能为空")?;
     let content = require_nonempty(&request.content, "消息内容不能为空")?;
     let (_, session_generation) = require_client(&state)?;
-    let queued = state.send_user_chat(&user_name, &content)?;
+    check_requested_session(&state, request.session_generation)?;
+    let queued = state.send_user_chat_checked(
+        &user_name,
+        &content,
+        session_generation,
+        request.connection_generation,
+    )?;
     ensure_same_session(&state, session_generation)?;
     map_send_result(session_generation, queued)
 }
@@ -110,6 +119,7 @@ pub async fn chat_mark_read(
         .peer_user()
         .ok_or_else(|| AppError::business("用户名不能为空"))?;
     let (client, session_generation) = require_client(&state)?;
+    check_requested_session(&state, request.session_generation)?;
     let result = client.chat().mark_as_read(user_name).await;
     ensure_same_session(&state, session_generation)?;
     map_mark_read(result)
@@ -122,11 +132,14 @@ pub async fn chat_connect(
     state: State<'_, AppState>,
     request: ChatConnectRequest,
 ) -> Result<ChatConnectResult, AppError> {
+    let (_, session_generation) = require_client(&state)?;
+    check_requested_session(&state, request.session_generation)?;
     match request.peer_user() {
-        Some(user) => connect_user(&app, &state, user).await,
+        Some(user) => connect_user(&app, &state, user, session_generation).await,
         None => {
-            let result = connect_global(&app, &state).await?;
+            let result = connect_global(&app, &state, session_generation).await?;
             let _ = ensure_notice_connected(&app, &state).await;
+            ensure_same_session(&state, session_generation)?;
             Ok(result)
         }
     }
@@ -138,14 +151,21 @@ pub async fn chat_disconnect(
     state: State<'_, AppState>,
     request: ChatConnectRequest,
 ) -> Result<(), AppError> {
+    // 代次校验和取走句柄须同锁，迟到清理不能拆掉新连接。
     match request.peer_user() {
         Some(user) => {
-            if let Some(mut connection) = state.take_user_chat(&user) {
+            if let Some(mut connection) = state.take_user_chat_checked(
+                &user,
+                request.session_generation,
+                request.connection_generation,
+            ) {
                 connection.disconnect();
             }
         }
         None => {
-            if let Some(mut connection) = state.take_global_chat() {
+            if let Some(mut connection) = state
+                .take_global_chat_checked(request.session_generation, request.connection_generation)
+            {
                 connection.disconnect();
             }
         }
@@ -161,6 +181,7 @@ pub async fn chat_revoke(
 ) -> Result<(), AppError> {
     let message_id = require_nonempty(&request.message_id, "撤回消息 ID 不能为空")?;
     let (client, session_generation) = require_client(&state)?;
+    check_requested_session(&state, request.session_generation)?;
     let result = client.chat().revoke(message_id).await;
     ensure_same_session(&state, session_generation)?;
     map_revoke(result)
@@ -170,14 +191,30 @@ async fn connect_user(
     app: &AppHandle,
     state: &AppState,
     user: String,
+    expected_session: u64,
 ) -> Result<ChatConnectResult, AppError> {
-    if state.has_user_chat(&user) {
-        return Ok(current_user_snapshot(state, &user));
+    let (client, session_generation) = require_client(state)?;
+    if session_generation != expected_session {
+        return Err(AppError::session_superseded());
+    }
+    if let Some(snapshot) = current_user_snapshot(state, &user, session_generation)? {
+        return Ok(snapshot);
     }
 
-    let (client, session_generation) = require_client(state)?;
     let Some(generation) = state.reserve_user_chat(&user, session_generation)? else {
-        return Ok(current_user_snapshot(state, &user));
+        // pending 不是已连接，不能让第二个调用提前发送。
+        for _ in 0..200 {
+            if let Some(snapshot) = current_user_snapshot(state, &user, session_generation)? {
+                return Ok(snapshot);
+            }
+            if state.user_chat_generation(&user).is_none() {
+                ensure_same_session(state, session_generation)?;
+                return Err(AppError::business("私聊连接未建立"));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        ensure_same_session(state, session_generation)?;
+        return Err(AppError::business("私聊连接仍在建立，请稍后重试"));
     };
 
     let mut connection = match client.chat().connect(Some(&user)).await {
@@ -188,13 +225,24 @@ async fn connect_user(
         }
     };
 
-    if let Some(snapshot) = abort_user_if_unusable(state, &user, session_generation, generation, &mut connection)?
-    {
+    if let Some(snapshot) = abort_user_if_unusable(
+        state,
+        &user,
+        session_generation,
+        generation,
+        &mut connection,
+    )? {
         return Ok(snapshot);
     }
 
-    attach_chat_forwarder(app, &connection, session_generation, generation, Some(user.clone()))
-        .await;
+    attach_chat_forwarder(
+        app,
+        &connection,
+        session_generation,
+        generation,
+        Some(user.clone()),
+    )
+    .await;
 
     if state.session_generation() != session_generation {
         state.cancel_pending_user_chat(&user, generation);
@@ -206,8 +254,8 @@ async fn connect_user(
         Ok(installed) => Ok(ChatConnectResult::new(session_generation, installed)),
         Err(mut rejected) => {
             rejected.disconnect();
-            if state.has_user_chat(&user) {
-                return Ok(current_user_snapshot(state, &user));
+            if let Some(snapshot) = current_user_snapshot(state, &user, session_generation)? {
+                return Ok(snapshot);
             }
             Err(AppError::session_superseded())
         }
@@ -217,14 +265,29 @@ async fn connect_user(
 async fn connect_global(
     app: &AppHandle,
     state: &AppState,
+    expected_session: u64,
 ) -> Result<ChatConnectResult, AppError> {
-    if state.has_global_chat() {
-        return Ok(current_global_snapshot(state));
+    let (client, session_generation) = require_client(state)?;
+    if session_generation != expected_session {
+        return Err(AppError::session_superseded());
+    }
+    if let Some(snapshot) = current_global_snapshot(state, session_generation)? {
+        return Ok(snapshot);
     }
 
-    let (client, session_generation) = require_client(state)?;
     let Some(generation) = state.reserve_global_chat(session_generation)? else {
-        return Ok(current_global_snapshot(state));
+        for _ in 0..200 {
+            if let Some(snapshot) = current_global_snapshot(state, session_generation)? {
+                return Ok(snapshot);
+            }
+            if state.global_chat_generation().is_none() {
+                ensure_same_session(state, session_generation)?;
+                return Err(AppError::business("私聊通知连接未建立"));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        ensure_same_session(state, session_generation)?;
+        return Err(AppError::business("私聊通知连接仍在建立，请稍后重试"));
     };
 
     let mut connection = match client.chat().connect(None).await {
@@ -235,7 +298,8 @@ async fn connect_global(
         }
     };
 
-    if let Some(snapshot) = abort_global_if_unusable(state, session_generation, generation, &mut connection)?
+    if let Some(snapshot) =
+        abort_global_if_unusable(state, session_generation, generation, &mut connection)?
     {
         return Ok(snapshot);
     }
@@ -252,26 +316,31 @@ async fn connect_global(
         Ok(installed) => Ok(ChatConnectResult::new(session_generation, installed)),
         Err(mut rejected) => {
             rejected.disconnect();
-            if state.has_global_chat() {
-                return Ok(current_global_snapshot(state));
+            if let Some(snapshot) = current_global_snapshot(state, session_generation)? {
+                return Ok(snapshot);
             }
             Err(AppError::session_superseded())
         }
     }
 }
 
-fn current_user_snapshot(state: &AppState, user: &str) -> ChatConnectResult {
-    ChatConnectResult::new(
-        state.session_generation(),
-        state.user_chat_generation(user).unwrap_or(0),
-    )
+fn current_user_snapshot(
+    state: &AppState,
+    user: &str,
+    expected_session: u64,
+) -> Result<Option<ChatConnectResult>, AppError> {
+    Ok(state
+        .live_user_chat_generation(user, expected_session)?
+        .map(|generation| ChatConnectResult::new(expected_session, generation)))
 }
 
-fn current_global_snapshot(state: &AppState) -> ChatConnectResult {
-    ChatConnectResult::new(
-        state.session_generation(),
-        state.global_chat_generation().unwrap_or(0),
-    )
+fn current_global_snapshot(
+    state: &AppState,
+    expected_session: u64,
+) -> Result<Option<ChatConnectResult>, AppError> {
+    Ok(state
+        .live_global_chat_generation(expected_session)?
+        .map(|generation| ChatConnectResult::new(expected_session, generation)))
 }
 
 fn abort_user_if_unusable(
@@ -281,15 +350,20 @@ fn abort_user_if_unusable(
     generation: u64,
     connection: &mut ChatConnection,
 ) -> Result<Option<ChatConnectResult>, AppError> {
-    if state.session_generation() != expected_session {
-        state.cancel_pending_user_chat(user, generation);
-        connection.disconnect();
-        return Err(AppError::session_superseded());
-    }
-    if state.user_chat_generation(user) != Some(generation) && state.has_user_chat(user) {
-        state.cancel_pending_user_chat(user, generation);
-        connection.disconnect();
-        return Ok(Some(current_user_snapshot(state, user)));
+    let snapshot = match current_user_snapshot(state, user, expected_session) {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            state.cancel_pending_user_chat(user, generation);
+            connection.disconnect();
+            return Err(err);
+        }
+    };
+    if let Some(snapshot) = snapshot {
+        if snapshot.connection_generation != Some(generation) {
+            state.cancel_pending_user_chat(user, generation);
+            connection.disconnect();
+            return Ok(Some(snapshot));
+        }
     }
     Ok(None)
 }
@@ -300,22 +374,28 @@ fn abort_global_if_unusable(
     generation: u64,
     connection: &mut ChatConnection,
 ) -> Result<Option<ChatConnectResult>, AppError> {
-    if state.session_generation() != expected_session {
-        state.cancel_pending_global_chat(generation);
-        connection.disconnect();
-        return Err(AppError::session_superseded());
-    }
-    if state.global_chat_generation() != Some(generation) && state.has_global_chat() {
-        state.cancel_pending_global_chat(generation);
-        connection.disconnect();
-        return Ok(Some(current_global_snapshot(state)));
+    let snapshot = match current_global_snapshot(state, expected_session) {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            state.cancel_pending_global_chat(generation);
+            connection.disconnect();
+            return Err(err);
+        }
+    };
+    if let Some(snapshot) = snapshot {
+        if snapshot.connection_generation != Some(generation) {
+            state.cancel_pending_global_chat(generation);
+            connection.disconnect();
+            return Ok(Some(snapshot));
+        }
     }
     Ok(None)
 }
 
 fn map_mark_read(result: Result<bool, SdkError>) -> Result<(), AppError> {
     match result {
-        Ok(_) => Ok(()),
+        Ok(true) => Ok(()),
+        Ok(false) => Err(AppError::business("未能标记私聊为已读")),
         Err(err) if is_uncertain_write(&err) => Err(AppError::outcome_unknown()),
         Err(err) => Err(AppError::from(err)),
     }
@@ -323,8 +403,44 @@ fn map_mark_read(result: Result<bool, SdkError>) -> Result<(), AppError> {
 
 fn map_revoke(result: Result<bool, SdkError>) -> Result<(), AppError> {
     match result {
-        Ok(_) => Ok(()),
+        Ok(true) => Ok(()),
+        Ok(false) => Err(AppError::business("撤回未被接受")),
         Err(err) if is_uncertain_write(&err) => Err(AppError::outcome_unknown()),
         Err(err) => Err(AppError::from(err)),
+    }
+}
+
+fn check_requested_session(state: &AppState, generation: Option<u64>) -> Result<(), AppError> {
+    match generation {
+        Some(generation) => ensure_same_session(state, generation),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn false_write_results_are_not_success() {
+        assert!(map_mark_read(Ok(false)).is_err());
+        assert!(map_revoke(Ok(false)).is_err());
+        assert!(map_mark_read(Ok(true)).is_ok());
+        assert!(map_revoke(Ok(true)).is_ok());
+    }
+
+    #[test]
+    fn pending_connections_are_not_ready_snapshots() {
+        let state = AppState::new();
+        let session = state.session_generation();
+        state.reserve_user_chat("alice", session).unwrap();
+        state.reserve_global_chat(session).unwrap();
+        assert!(current_user_snapshot(&state, "alice", session)
+            .unwrap()
+            .is_none());
+        assert!(current_global_snapshot(&state, session).unwrap().is_none());
+        state.invalidate_session();
+        assert!(current_user_snapshot(&state, "alice", session).is_err());
+        assert!(current_global_snapshot(&state, session).is_err());
     }
 }

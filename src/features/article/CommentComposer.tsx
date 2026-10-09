@@ -1,11 +1,12 @@
 import {
+  useEffect,
   useRef,
   useState,
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Image as ImageIcon, Smile } from "lucide-react";
+import { Image as ImageIcon, Send, Smile } from "lucide-react";
 import {
   LockSimpleIcon,
   MaskHappyIcon,
@@ -21,7 +22,12 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { EmojiPanel } from "../chatroom/components/EmojiPanel";
-import { isUploadableMedia, uploadMediaToMarkdown } from "../../lib/upload";
+import { toMusicBox } from "../chatroom/messageView";
+import { isFileSrc, uploadLocalSources } from "../chatroom/pasteImages";
+import { MentionList } from "../overlay/MentionList";
+import { readMention, insertMention } from "../overlay/mention";
+import { isImageFile, uploadMediaToMarkdown } from "../../lib/upload";
+import { emojiCompletion, imageMarkdown, pastedImageSources } from "./commentInput";
 import { toUserErrorMessage } from "./errors";
 import type { CommentReplyTarget, CommentSubmit } from "./types";
 
@@ -35,18 +41,6 @@ type CommentComposerProps = {
   onClearReply: () => void;
   onSend: (draft: CommentSubmit) => Promise<boolean>;
 };
-
-function htmlImageMarkdown(html: string): string {
-  const matches = html.match(/src="([^"]+)"/g) ?? [];
-  const tokens: string[] = [];
-  for (const match of matches) {
-    const url = match.slice(5, -1).trim();
-    if (/^https?:\/\//i.test(url)) {
-      tokens.push(`![图片](${url})`);
-    }
-  }
-  return tokens.join("\n");
-}
 
 /**
  * 评论输入：回复、匿名、仅楼主可见、插图、表情。
@@ -68,15 +62,49 @@ export function CommentComposer({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [caret, setCaret] = useState(0);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [height, setHeight] = useState(() => {
+    const saved = Number(localStorage.getItem("message-height"));
+    return saved > 0 ? Math.min(400, Math.max(48, saved)) : 80;
+  });
+  const [resizing, setResizing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastCursorRef = useRef(0);
+  const uploadLock = useRef(false);
+  const submitLock = useRef(false);
+  const drag = useRef<{ y: number; height: number } | null>(null);
+  const locked = disabled || !commentAvailable || pendingConfirm;
+  const mention = locked ? null : readMention(draft, caret);
+  const completion = mention || locked ? null : emojiCompletion(draft, caret);
+  const completionKey = `${caret}:${draft.slice(0, caret)}`;
+  const showMention = mention && dismissed !== completionKey;
+  const showEmoji = completion && dismissed !== completionKey;
+
+  useEffect(() => {
+    if (!resizing) return;
+    function move(event: PointerEvent) {
+      if (!drag.current) return;
+      const next = Math.min(400, Math.max(48, drag.current.height + event.clientY - drag.current.y));
+      setHeight(next);
+      localStorage.setItem("message-height", String(next));
+    }
+    function end() { drag.current = null; setResizing(false); }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+    };
+  }, [resizing]);
 
   function insertAtCursor(token: string): void {
     setDraft((prev) => {
       const at = Math.max(0, Math.min(lastCursorRef.current, prev.length));
       const next = prev.slice(0, at) + token + prev.slice(at);
       lastCursorRef.current = at + token.length;
+      setCaret(lastCursorRef.current);
       return next;
     });
     requestAnimationFrame(() => {
@@ -90,11 +118,12 @@ export function CommentComposer({
     });
   }
 
-  async function appendUploaded(files: File[]): Promise<void> {
-    const media = files.filter(isUploadableMedia);
-    if (media.length === 0 || uploadBusy) {
+  async function appendUploaded(files: File[], local: string[] = []): Promise<void> {
+    const media = files.filter(isImageFile);
+    if ((media.length === 0 && local.length === 0) || uploadLock.current || locked) {
       return;
     }
+    uploadLock.current = true;
     setUploadBusy(true);
     setUploadError(null);
     try {
@@ -102,9 +131,15 @@ export function CommentComposer({
       if (markdown.length > 0) {
         insertAtCursor(markdown);
       }
+      if (local.length) {
+        const localMarkdown = await uploadLocalSources(local);
+        if (!localMarkdown) throw new Error("本地图片无法读取");
+        insertAtCursor(localMarkdown);
+      }
     } catch (err) {
       setUploadError(toUserErrorMessage(err));
     } finally {
+      uploadLock.current = false;
       setUploadBusy(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -114,7 +149,7 @@ export function CommentComposer({
 
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
     const clipboard = event.clipboardData;
-    if (clipboard == null || disabled) {
+    if (clipboard == null || locked || uploadBusy) {
       return;
     }
     lastCursorRef.current =
@@ -129,34 +164,40 @@ export function CommentComposer({
       }
     }
     const html = clipboard.getData("text/html");
-    const remote = html.length > 0 ? htmlImageMarkdown(html) : "";
-    if (files.length === 0 && remote.length === 0) {
+    const sources = pastedImageSources(html);
+    const remote = files.length ? "" : imageMarkdown(sources);
+    const local = files.length ? [] : sources.filter(isFileSrc);
+    if (files.length === 0 && remote.length === 0 && local.length === 0) {
       return;
     }
     event.preventDefault();
     if (remote.length > 0) {
       insertAtCursor(remote);
     }
-    if (files.length > 0) {
-      void appendUploaded(files);
-    }
+    void appendUploaded(files, local);
   }
 
   async function submit(): Promise<void> {
     const content = draft.trim();
-    if (content.length === 0 || disabled || sending) {
+    if (content.length === 0 || locked || sending || uploadBusy || submitLock.current) {
       return;
     }
-    const accepted = await onSend({
-      content,
-      replyId: reply?.id,
-      anonymous,
-      visible,
-    });
-    if (accepted) {
-      setDraft("");
-      lastCursorRef.current = 0;
-      onClearReply();
+    submitLock.current = true;
+    try {
+      const accepted = await onSend({
+        content: toMusicBox(content),
+        replyId: reply?.id,
+        anonymous,
+        visible,
+      });
+      if (accepted) {
+        setDraft("");
+        setCaret(0);
+        lastCursorRef.current = 0;
+        onClearReply();
+      }
+    } finally {
+      submitLock.current = false;
     }
   }
 
@@ -166,6 +207,13 @@ export function CommentComposer({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") setDismissed(completionKey);
+    if (showEmoji && event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      chooseCompletion(completion.start, `:${completion.items[0].name}:`);
+      return;
+    }
     lastCursorRef.current = event.currentTarget.selectionStart ?? lastCursorRef.current;
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
@@ -173,12 +221,23 @@ export function CommentComposer({
     }
   }
 
-  const locked = disabled || !commentAvailable;
+  function chooseCompletion(start: number, token: string) {
+    setDraft(draft.slice(0, start) + token + draft.slice(caret));
+    const next = start + token.length;
+    lastCursorRef.current = next;
+    setCaret(next);
+    setDismissed(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(next, next);
+    });
+  }
+
   const placeholder = !commentAvailable
     ? "评论接口尚未接入，不会伪装发出"
     : !commentable
       ? "这篇帖子关闭了评论"
-      : "写下评论，Ctrl+Enter 发送";
+      : "说点什么";
 
   return (
     <form className="article-composer" onSubmit={onSubmit} id="article-composer">
@@ -255,6 +314,7 @@ export function CommentComposer({
           size="icon-sm"
           className={anonymous ? "is-active" : undefined}
           title="匿名"
+          aria-label="匿名"
           aria-pressed={anonymous}
           disabled={locked}
           onClick={() => setAnonymous((prev) => !prev)}
@@ -267,6 +327,7 @@ export function CommentComposer({
           size="icon-sm"
           className={visible ? "is-active" : undefined}
           title="仅楼主可见"
+          aria-label="仅楼主可见"
           aria-pressed={visible}
           disabled={locked}
           onClick={() => setVisible((prev) => !prev)}
@@ -281,34 +342,59 @@ export function CommentComposer({
           {uploadError}
         </p>
       ) : null}
+      <div className="article-resize" role="separator" aria-label="调整输入框高度"
+        aria-orientation="horizontal" onPointerDown={(event) => {
+          if (locked) return;
+          event.preventDefault();
+          drag.current = { y: event.clientY, height };
+          setResizing(true);
+        }} />
+      {showMention ? <MentionList query={mention.query}
+        onClose={() => setDismissed(completionKey)}
+        onPick={(name) => {
+          const inserted = insertMention(draft, mention.start, caret, name);
+          chooseCompletion(mention.start, inserted.text.slice(mention.start, inserted.caret));
+        }} /> : null}
+      {showEmoji ? (
+        <div className="article-emoji-complete" role="group" aria-label="表情补全">
+          {completion.items.map((emoji) => (
+            <Button key={emoji.name} type="button" variant="ghost" size="icon-sm"
+              title={emoji.name} aria-label={emoji.name}
+              onClick={() => chooseCompletion(completion.start, `:${emoji.name}:`)}>
+              <img src={emoji.url} alt="" />
+            </Button>
+          ))}
+        </div>
+      ) : null}
       <Textarea
         id="article-comment-input"
         ref={textareaRef}
         rows={3}
+        style={{ height }}
         value={draft}
         disabled={locked}
         placeholder={placeholder}
         onChange={(event) => {
           setDraft(event.target.value);
+          setDismissed(null);
+          setCaret(event.target.selectionStart);
           lastCursorRef.current = event.target.selectionStart ?? event.target.value.length;
         }}
         onSelect={(event) => {
           lastCursorRef.current = event.currentTarget.selectionStart ?? lastCursorRef.current;
+          setCaret(event.currentTarget.selectionStart);
         }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         aria-label="评论内容"
       />
       <div className="article-composer-bar">
-        <p className="article-composer-hint">
-          评论发出后会刷新详情，不会在本地假装成功。
-        </p>
         <Button
           type="submit"
           size="sm"
-          disabled={locked || sending || draft.trim().length === 0}
+          disabled={locked || sending || uploadBusy || draft.trim().length === 0}
         >
-          {sending ? <Spinner /> : null}
+          {sending ? <Spinner /> : <Send aria-hidden="true" />}
           {sending ? "发送中" : "发送"}
         </Button>
       </div>

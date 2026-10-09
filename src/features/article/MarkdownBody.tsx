@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { RichHtml } from "../../lib/RichHtml";
+import { ContentHtml } from "./ContentHtml";
 import { looksLikeHtml } from "../../lib/safeHtml";
 import {
   markdownUrlTransform,
@@ -125,7 +125,7 @@ export function MarkdownBody({ source, html, className }: MarkdownBodyProps) {
   const mdSource = source?.trim() ?? "";
   const classNames = className ?? "article-md";
   if (htmlSource || looksLikeHtml(mdSource)) {
-    return <RichHtml source={htmlSource || mdSource} className={classNames} />;
+    return <ContentHtml source={htmlSource || mdSource} className={classNames} />;
   }
   if (!mdSource) {
     return null;
@@ -133,6 +133,7 @@ export function MarkdownBody({ source, html, className }: MarkdownBodyProps) {
   return (
     <div className={classNames} onClick={onMarkdownClick}>
       <ReactMarkdown
+        skipHtml
         unwrapDisallowed
         allowedElements={ALLOWED_ELEMENTS}
         urlTransform={markdownUrlTransform}

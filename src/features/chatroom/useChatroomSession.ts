@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { ChatMessageDto, ChatroomListenEvent, OnlineEvent, RedpacketWhoDto } from "../../lib/types";
 import {
   invokeAuthMe,
@@ -13,7 +14,6 @@ import {
   BEFORE_PAGE_SIZE,
   HISTORY_FIRST_PAGE,
   INITIAL_CONNECTION_STATUS,
-  MAX_BEFORE_PAGES,
 } from "./constants";
 import {
   generationsFrom,
@@ -45,9 +45,12 @@ import {
 } from "../extension/hooks";
 import { isOutcomeUnknown, toUserErrorMessage } from "./toUserError";
 import { rememberOnlineUsers } from "./onlineUsers";
+import { shouldRefreshAfterReconnect, type ChatroomReconnectReport } from "./reconnectReport";
+import { createRefreshQueue } from "./refreshQueue";
 
 type Phase = "boot" | "await-history" | "live";
 type OnlineUser = OnlineEvent["users"][number];
+
 
 function readStatus(value: unknown): string | null {
   if (value == null || typeof value !== "object") {
@@ -71,7 +74,6 @@ export function useChatroomSession() {
   const gensRef = useRef<GenerationPair | null>(null);
   const phaseRef = useRef<Phase>("boot");
   const bufferRef = useRef<ChatroomListenEvent[]>([]);
-  const beforePagesRef = useRef(0);
   const loadingMoreRef = useRef(false);
   const resyncingRef = useRef(false);
   const activeRef = useRef(false);
@@ -85,6 +87,9 @@ export function useChatroomSession() {
   const acceptConnectionRef = useRef<(result: unknown) => void>(() => undefined);
   const runInitialSyncRef = useRef<() => Promise<void>>(async () => undefined);
   const loadOfflineSeedRef = useRef<() => Promise<void>>(async () => undefined);
+  const refreshRef = useRef<() => Promise<void>>(async () => undefined);
+  const refreshQueueRef = useRef(createRefreshQueue());
+  const drainRefreshRef = useRef<() => void>(() => undefined);
 
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [topic, setTopic] = useState("");
@@ -100,6 +105,7 @@ export function useChatroomSession() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -280,20 +286,21 @@ export function useChatroomSession() {
   );
 
   const loadLatestHistory = useCallback(async (): Promise<void> => {
-    const result = await invokeChatroomHistory({ page: HISTORY_FIRST_PAGE });
-    if (!activeRef.current) {
-      return;
+    const generation = gensRef.current;
+    let hasOlder = false;
+    for (const page of [HISTORY_FIRST_PAGE, HISTORY_FIRST_PAGE + 1]) {
+      const result = await invokeChatroomHistory({ page });
+      if (!activeRef.current || generation !== gensRef.current ||
+          !matchesGeneration(result, generation)) return;
+      applyHistory(windowRef.current, result.messages ?? []);
+      hasOlder = (result.messages?.length ?? 0) > 0 && result.exhausted !== true;
+      if (!hasOlder) break;
     }
-    if (!matchesGeneration(result, gensRef.current)) {
-      return;
-    }
-    applyHistory(windowRef.current, result.messages ?? []);
     if (isWindowOverflow(windowRef.current)) {
       trimOldestToLimit(windowRef.current);
       setHistoryIncomplete(true);
     }
-    setHasMore((result.messages?.length ?? 0) > 0 && result.exhausted !== true);
-    beforePagesRef.current = 0;
+    setHasMore(hasOlder);
     publish();
   }, [publish]);
 
@@ -322,8 +329,15 @@ export function useChatroomSession() {
           publish();
         }
         phaseRef.current = "live";
+      } catch (err) {
+        if (activeRef.current) setError(toUserErrorMessage(err));
       } finally {
         resyncingRef.current = false;
+        if (activeRef.current) {
+          replayBufferedMessages();
+          phaseRef.current = "live";
+          drainRefreshRef.current();
+        }
       }
     },
     [loadLatestHistory, publish, replayBufferedMessages, seedFromOffline],
@@ -362,6 +376,8 @@ export function useChatroomSession() {
       phaseRef.current = "live";
     } finally {
       if (activeRef.current) {
+        replayBufferedMessages();
+        phaseRef.current = "live";
         setLoading(false);
       }
     }
@@ -384,15 +400,14 @@ export function useChatroomSession() {
       // 离线库与 listen/connect 并行；不阻塞建连，seed 在 loadOfflineSeed 内完成。
       void loadOfflineSeedRef.current();
       // 必须先 listen 再 connect，否则连接响应前的事件会无人接收。
-      unlisten = await listenChatroom((event) => {
-        handleEventRef.current(event);
-      });
-      if (cancelled) {
-        unlisten();
-        return;
-      }
-
       try {
+        unlisten = await listenChatroom((event) => {
+          if (!cancelled) handleEventRef.current(event);
+        });
+        if (cancelled) {
+          unlisten();
+          return;
+        }
         const connected = await invokeChatroomConnect();
         if (cancelled) {
           return;
@@ -406,6 +421,8 @@ export function useChatroomSession() {
         setError(toUserErrorMessage(err));
         setConnectionStatus(INITIAL_CONNECTION_STATUS);
         setLoading(false);
+      } finally {
+        if (!cancelled) drainRefreshRef.current();
       }
 
       try {
@@ -433,8 +450,7 @@ export function useChatroomSession() {
       activeRef.current = false;
       phaseRef.current = "boot";
       unlisten?.();
-      // 卸载时断开；StrictMode 双挂载靠 cancelled / activeRef 丢弃上一次异步结果。
-      void invokeChatroomDisconnect();
+      // Shared sockets belong to auth; StrictMode cleanup must not close a newer mount.
     };
   // 挂载一次。回调经 ref 更新，避免依赖变化导致重复 listen/connect。
   }, []);
@@ -477,11 +493,9 @@ export function useChatroomSession() {
         return;
       }
       const { added } = applyHistory(windowRef.current, result.messages ?? []);
-      beforePagesRef.current += 1;
       if (
         result.exhausted === true ||
-        added === 0 ||
-        beforePagesRef.current >= MAX_BEFORE_PAGES
+        added === 0
       ) {
         setHasMore(false);
       }
@@ -496,10 +510,13 @@ export function useChatroomSession() {
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
+      drainRefreshRef.current();
     }
   }, [hasMore, publish, resyncLatest]);
 
   const send = useCallback(async (content: string): Promise<boolean> => {
+    if (!activeRef.current || sendingRef.current) return false;
+    sendingRef.current = true;
     setSending(true);
     setError(null);
     try {
@@ -535,29 +552,32 @@ export function useChatroomSession() {
       setError(toUserErrorMessage(err));
       return false;
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   }, []);
 
-  const revoke = useCallback(async (messageId: string): Promise<void> => {
+  const revoke = useCallback(async (messageId: string): Promise<boolean> => {
     const id = messageId.trim();
     if (!activeRef.current || id.length === 0) {
-      return;
+      return false;
     }
     setError(null);
     try {
       await invokeChatroomRevoke({ messageId: id });
       if (!activeRef.current) {
-        return;
+        return false;
       }
       applyRevoke(windowRef.current, id);
       publish();
+      return true;
     } catch (err) {
       if (isOutcomeUnknown(err)) {
         setNotice("撤回结果待确认。请等待回显，不要重复提交。");
-        return;
+        return false;
       }
       setError(toUserErrorMessage(err));
+      return false;
     }
   }, [publish]);
 
@@ -573,7 +593,8 @@ export function useChatroomSession() {
     bufferRef.current = [];
     setConnectionStatus("connecting");
     try {
-      await invokeChatroomDisconnect();
+      await invokeChatroomDisconnect(gensRef.current ?? undefined);
+      if (!activeRef.current) return;
       const connected = await invokeChatroomConnect();
       if (!activeRef.current) {
         return;
@@ -590,11 +611,17 @@ export function useChatroomSession() {
     } finally {
       busyRef.current = false;
       setBusy(false);
+      drainRefreshRef.current();
     }
   }, [acceptConnection, publish, runInitialSync, seedFromOffline]);
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (!activeRef.current || busyRef.current) {
+    if (!activeRef.current) return;
+    if (busyRef.current || resyncingRef.current || loadingMoreRef.current ||
+        phaseRef.current !== "live") {
+      if (gensRef.current != null) {
+        refreshQueueRef.current.request(gensRef.current.sessionGeneration);
+      }
       return;
     }
     busyRef.current = true;
@@ -613,8 +640,51 @@ export function useChatroomSession() {
     } finally {
       busyRef.current = false;
       setBusy(false);
+      drainRefreshRef.current();
     }
   }, [publish, runInitialSync, seedFromOffline]);
+
+  refreshRef.current = refresh;
+  drainRefreshRef.current = () => {
+    if (!activeRef.current) return;
+    if (refreshQueueRef.current.take(
+      gensRef.current?.sessionGeneration,
+      phaseRef.current === "live" && !busyRef.current &&
+        !resyncingRef.current && !loadingMoreRef.current,
+    )) {
+      void refreshRef.current();
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void listen<ChatroomReconnectReport>("desktop://reconnect", (event) => {
+      const report = event.payload;
+      if (
+        cancelled ||
+        !activeRef.current ||
+        !shouldRefreshAfterReconnect(report, gensRef.current?.sessionGeneration)
+      ) {
+        return;
+      }
+      // reconnect_now / Windows recovery already relinked the kept SDK handle.
+      // Only reload the local window; never start a second reconnect here.
+      void refreshRef.current();
+    }).then((unlisten) => {
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+      stop = unlisten;
+    }).catch(() => {
+      // The desktop event is optional; the regular chatroom listener still works.
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, []);
 
   return {
     messages,

@@ -2,13 +2,14 @@
 //!
 //! # 为何 connection 不是 SDK 生命周期直通
 //!
-//! SDK 1.1.0 的 `ChatRoomConnection` **没有**公开 `on_open` / `on_close` / `on_error`。
+//! SDK 1.1.1 的 `ChatRoomConnection` **没有**公开 `on_open` / `on_close` / `on_error`。
 //! 底层 `WebSocketClient` 虽有这些钩子，但没有从连接句柄暴露出来。
 //! `set_log_hook` 只是字符串日志，**不能**当成正式连接协议去解析 “connected / disconnected”。
 //!
 //! 因此 `chatroom://connection` 只发 Bridge **已经证实**的状态：
 //! - `connect()` 返回成功 → 可以发 `Connected`（命令本身证明刚建连成功）
 //! - 本进程调用 `disconnect()` → 可以发 `Disconnected`
+//! - 本进程调用 `reconnect()` → 发 `Reconnecting`；结果成功发 `Connected`，失败发 `Unknown`
 //! - 运行中掉线、SDK 内部重连成功/失败 → **观测不到**，保持 `Unknown`，不要装
 //!
 //! # 首包窗口
@@ -78,13 +79,7 @@ pub async fn spawn_chatroom_forwarders(
     session_generation: u64,
     connection_generation: u64,
 ) {
-    attach_chatroom_forwarder(
-        &app,
-        connection,
-        session_generation,
-        connection_generation,
-    )
-    .await;
+    attach_chatroom_forwarder(&app, connection, session_generation, connection_generation).await;
 }
 
 /// 发出一条 Bridge 已证实的连接状态。调用方必须保证这个状态确实被证实过。
@@ -96,6 +91,30 @@ pub fn emit_connection_status(
 ) {
     let payload = ConnectionEvent::new(session_generation, connection_generation, status);
     let _ = app.emit(EVENT_CONNECTION, payload);
+}
+
+/// 重放真实服务端帧，不把缓存当成在线探测。
+pub(crate) fn emit_cached_chatroom_presence(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let (online, discuss) = state.chatroom_presence_snapshot();
+    if let Some(payload) = online {
+        if generations_are_current(
+            app,
+            payload.session_generation,
+            payload.connection_generation,
+        ) {
+            let _ = app.emit(EVENT_ONLINE, payload);
+        }
+    }
+    if let Some(payload) = discuss {
+        if generations_are_current(
+            app,
+            payload.session_generation,
+            payload.connection_generation,
+        ) {
+            let _ = app.emit(EVENT_DISCUSS, payload);
+        }
+    }
 }
 
 fn forward_chatroom_event(
@@ -146,11 +165,15 @@ fn dispatch_chatroom_event(
                 discussing,
                 online_chat_cnt,
             );
-            let _ = app.emit(EVENT_ONLINE, payload);
+            if app.state::<AppState>().remember_chatroom_online(&payload) {
+                let _ = app.emit(EVENT_ONLINE, payload);
+            }
         }
         ChatRoomEvent::DiscussChanged(discussing) => {
             let payload = DiscussEvent::new(session_generation, connection_generation, discussing);
-            let _ = app.emit(EVENT_DISCUSS, payload);
+            if app.state::<AppState>().remember_chatroom_discuss(&payload) {
+                let _ = app.emit(EVENT_DISCUSS, payload);
+            }
         }
         ChatRoomEvent::Revoke(message_id) => {
             let payload = RevokeEvent::new(session_generation, connection_generation, message_id);
@@ -164,7 +187,9 @@ fn dispatch_chatroom_event(
             );
             let _ = app.emit(EVENT_REDPACKET_STATUS, payload);
         }
-        ChatRoomEvent::Msg(msg) => emit_message(app, session_generation, connection_generation, msg),
+        ChatRoomEvent::Msg(msg) => {
+            emit_message(app, session_generation, connection_generation, msg)
+        }
         ChatRoomEvent::Music(msg) => {
             emit_message(app, session_generation, connection_generation, msg)
         }
@@ -232,7 +257,12 @@ pub async fn attach_chat_forwarder(
     let app_notice = app.clone();
     connection
         .on_notice(move |notice| {
-            forward_chat_notice(&app_notice, session_generation, connection_generation, notice);
+            forward_chat_notice(
+                &app_notice,
+                session_generation,
+                connection_generation,
+                notice,
+            );
         })
         .await;
 
@@ -346,7 +376,8 @@ fn forward_chat_notice(
     }
     let app = app.clone();
     let _ = panic::catch_unwind(AssertUnwindSafe(move || {
-        let payload = ChatNoticeEvent::from_chat_notice(session_generation, connection_generation, notice);
+        let payload =
+            ChatNoticeEvent::from_chat_notice(session_generation, connection_generation, notice);
         let _ = app.emit(EVENT_CHAT_NOTICE, payload);
     }));
 }
@@ -368,7 +399,12 @@ fn forward_chat_revoke(
     }
     let app = app.clone();
     let _ = panic::catch_unwind(AssertUnwindSafe(move || {
-        let payload = ChatRevokeEvent::new(session_generation, connection_generation, revoke.id, peer_user);
+        let payload = ChatRevokeEvent::new(
+            session_generation,
+            connection_generation,
+            revoke.id,
+            peer_user,
+        );
         let _ = app.emit(EVENT_CHAT_REVOKE, payload);
     }));
 }

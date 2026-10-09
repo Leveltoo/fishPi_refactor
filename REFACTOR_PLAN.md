@@ -1,5 +1,7 @@
 # 摸鱼派桌面端 Tauri 重构计划
 
+> 历史架构规划，保留设计背景。2026-10-09 的执行目标已改为优先复刻旧版全部实际功能；不再按下文“首发非目标”排除原版音乐/配置等能力。当前发布 SDK 固定 1.1.1，实际进度与剩余差异见 [docs/migration/README.md](docs/migration/README.md)。
+
 状态：评审修订稿，可开始 P0 接入验证；验证通过后进入业务实现。  
 修订日期：2026-09-20。  
 范围：把 `fishpi-desktop`（Electron + Vue 2）迁到 `fishpi-desktop-refactor-tauri`（Tauri 2 + React）。  

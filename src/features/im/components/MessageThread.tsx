@@ -11,8 +11,6 @@ import type { PrivateMessageDto } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
 const TOP_LOAD_PX = 48;
-const JUMP_RETRY_MS = 300;
-const JUMP_RETRY_MAX = 15;
 
 type MessageThreadProps = {
   peerUserName: string;
@@ -58,9 +56,10 @@ export function MessageThread({
 }: MessageThreadProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
-  const previousCountRef = useRef(0);
+  const previousIdsRef = useRef(new Set<string>());
+  const previousLastRef = useRef<string | null>(null);
   const restoreRef = useRef<{ height: number; top: number } | null>(null);
-  const pendingJumpRef = useRef<string | null>(null);
+  const [pendingJump, setPendingJump] = useState<string | null>(null);
   const [unseen, setUnseen] = useState(0);
 
   function viewport(): HTMLElement | null {
@@ -80,24 +79,29 @@ export function MessageThread({
 
   useEffect(() => {
     stickToBottomRef.current = true;
-    previousCountRef.current = 0;
+    previousIdsRef.current = new Set();
+    previousLastRef.current = null;
     setUnseen(0);
-    pendingJumpRef.current = null;
+    setPendingJump(null);
+    restoreRef.current = null;
   }, [peerUserName]);
 
   useEffect(() => {
-    const previous = previousCountRef.current;
-    const delta = messages.length - previous;
-    previousCountRef.current = messages.length;
-    if (delta > 0 && !stickToBottomRef.current && restoreRef.current == null) {
-      setUnseen((count) => count + delta);
+    const previousLast = previousLastRef.current;
+    const index = previousLast ? messages.findIndex((message) => message.id === previousLast) : -1;
+    const added = index < 0 ? 0 : messages.slice(index + 1).filter((message) =>
+      !message.revoked && !previousIdsRef.current.has(message.id)).length;
+    previousIdsRef.current = new Set(messages.map((message) => message.id));
+    previousLastRef.current = messages[messages.length - 1]?.id ?? null;
+    if (added > 0 && !stickToBottomRef.current && restoreRef.current == null) {
+      setUnseen((count) => count + added);
     }
-  }, [messages.length]);
+  }, [messages]);
 
   useLayoutEffect(() => {
     const root = viewport();
     const restore = restoreRef.current;
-    if (root != null && restore != null) {
+    if (root != null && restore != null && !loadingMore) {
       root.scrollTop = restore.top + (root.scrollHeight - restore.height);
       restoreRef.current = null;
       return;
@@ -106,7 +110,7 @@ export function MessageThread({
       return;
     }
     root.scrollTop = root.scrollHeight;
-  }, [messages, loading]);
+  }, [messages, loading, loadingMore]);
 
   useEffect(() => {
     const root = viewport();
@@ -134,44 +138,19 @@ export function MessageThread({
   }, [loading, loadingMore, hasMore, onLoadMore]);
 
   useEffect(() => {
-    const target = pendingJumpRef.current;
-    if (target == null) {
-      return;
-    }
-    if (jumpTo(target)) {
-      pendingJumpRef.current = null;
-    }
-  }, [messages]);
+    if (!pendingJump || loading || loadingMore) return;
+    if (jumpTo(pendingJump) || !hasMore) { setPendingJump(null); return; }
+    onLoadMore();
+  }, [pendingJump, messages, loading, loadingMore, hasMore, onLoadMore]);
 
   function handleJump(messageId: string): void {
-    if (jumpTo(messageId)) {
-      pendingJumpRef.current = null;
-      return;
-    }
-    pendingJumpRef.current = messageId;
-    if (hasMore && !loadingMore) {
-      onLoadMore();
-    }
-    let attempts = 0;
-    const tick = (): void => {
-      if (pendingJumpRef.current !== messageId) {
-        return;
-      }
-      if (jumpTo(messageId)) {
-        pendingJumpRef.current = null;
-        return;
-      }
-      attempts += 1;
-      if (attempts <= JUMP_RETRY_MAX) {
-        if (hasMore && !loadingMore) {
-          onLoadMore();
-        }
-        window.setTimeout(tick, JUMP_RETRY_MS);
-      } else {
-        pendingJumpRef.current = null;
-      }
-    };
-    window.setTimeout(tick, JUMP_RETRY_MS);
+    if (!jumpTo(messageId)) setPendingJump(messageId);
+  }
+
+  function loadOlder(): void {
+    const root = viewport();
+    if (root) restoreRef.current = { height: root.scrollHeight, top: root.scrollTop };
+    onLoadMore();
   }
 
   function jumpLatest(): void {
@@ -186,7 +165,7 @@ export function MessageThread({
   return (
     <div className="im-thread-stream" ref={rootRef}>
       <ScrollArea className="im-thread-scroll">
-        {loading ? (
+        {loading && messages.length === 0 ? (
           <MessageSkeleton />
         ) : (
           <div className="im-thread-inner">
@@ -197,7 +176,7 @@ export function MessageThread({
                 size="sm"
                 className="im-load-more"
                 disabled={loadingMore}
-                onClick={onLoadMore}
+                onClick={loadOlder}
               >
                 {loadingMore ? <Spinner /> : null}
                 {loadingMore ? "加载中" : "加载更早消息"}
@@ -209,7 +188,7 @@ export function MessageThread({
             {messages.length === 0 ? (
               <p className="im-thread-empty">暂无消息</p>
             ) : (
-              messages.map((message) => (
+              messages.filter((message) => !message.revoked).map((message) => (
                 <MessageBubble
                   key={message.id}
                   message={message}

@@ -11,7 +11,7 @@ import {
   isDisconnectedStatus,
   isUnknownStatus,
 } from "../labels";
-import { isShielded, mergeDoubleMessages, plusOneMessageId } from "../messageView";
+import { displayMessageIds, isShielded, mergeDoubleMessages, plusOneMessageId } from "../messageView";
 import { MessageItem } from "./MessageItem";
 
 let highlightEl: HTMLElement | null = null;
@@ -39,10 +39,11 @@ const HIGHLIGHT_STYLE = `
  * 找不到（未渲染 / 被屏蔽）返回 false，调用方决定回落。
  */
 export function jumpToMessage(messageId: string): boolean {
-  const el = document.querySelector<HTMLElement>(
+  const target = document.querySelector<HTMLElement>(
     `[data-msg-id="${CSS.escape(messageId)}"]`,
   );
-  if (el == null || el.hidden) {
+  const el = target?.closest<HTMLElement>("article[data-msg-id]") ?? target;
+  if (el == null || el.hidden || el.closest("[hidden]") != null) {
     return false;
   }
   el.scrollIntoView({ block: "center" });
@@ -75,7 +76,7 @@ type MessageListProps = {
   windowEpoch: number;
   onLoadMore: () => void;
   onReply: (message: ChatMessageDto) => void;
-  onRevoke: (messageId: string) => Promise<void>;
+  onRevoke: (messageId: string) => Promise<boolean>;
   onPlusOne: (message: ChatMessageDto) => void;
   onMention: (userName: string) => void;
   onInsertToken?: (token: string) => void;
@@ -156,37 +157,22 @@ export function MessageList({
   const stickToBottomRef = useRef(true);
   const restoreRef = useRef<{ id: string; top: number } | null>(null);
   const initializedRef = useRef(false);
-  const previousCountRef = useRef(0);
+  const previousIdsRef = useRef<Set<string> | null>(null);
+  const visibleAnchorRef = useRef<{ id: string; top: number } | null>(null);
   const firstUnseenIdRef = useRef<string | null>(null);
   const lastIdRef = useRef<string | null>(null);
   const [unseen, setUnseen] = useState(0);
+  const rows = useMemo(() => mergeDoubleMessages(messages), [messages]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     initializedRef.current = false;
     stickToBottomRef.current = true;
-    previousCountRef.current = 0;
+    previousIdsRef.current = null;
+    visibleAnchorRef.current = null;
     firstUnseenIdRef.current = null;
     lastIdRef.current = null;
     setUnseen(0);
   }, [windowEpoch]);
-
-  useEffect(() => {
-    const previous = previousCountRef.current;
-    const delta = messages.length - previous;
-    previousCountRef.current = messages.length;
-    if (
-      delta > 0 &&
-      !stickToBottomRef.current &&
-      restoreRef.current == null &&
-      initializedRef.current
-    ) {
-      if (firstUnseenIdRef.current == null && messages.length > 0) {
-        // 旧 gotoMsg：跳到第一条未读，不是最后一条
-        firstUnseenIdRef.current = messages[previous]?.id ?? messages[0].id;
-      }
-      setUnseen((count) => count + delta);
-    }
-  }, [messages.length]);
 
   useLayoutEffect(() => {
     const root = viewportOf(areaRef.current);
@@ -194,7 +180,13 @@ export function MessageList({
       return;
     }
 
-    const restore = restoreRef.current;
+    const previousIds = previousIdsRef.current;
+    previousIdsRef.current = new Set(messages.map((message) => message.id));
+    const appended = previousIds == null ? [] : rows.filter((row) =>
+      displayMessageIds(row).every((id) => !previousIds.has(id)),
+    );
+    const historyPrepend = restoreRef.current != null;
+    const restore = restoreRef.current ?? visibleAnchorRef.current;
     if (restore != null && !loadingMore) {
       const anchor = root.querySelector<HTMLElement>(
         `[data-msg-id="${CSS.escape(restore.id)}"]`,
@@ -204,7 +196,6 @@ export function MessageList({
         root.scrollTop += nextTop - restore.top;
       }
       restoreRef.current = null;
-      return;
     }
 
     const last = messages[messages.length - 1];
@@ -230,23 +221,47 @@ export function MessageList({
 
     if (stickToBottomRef.current) {
       root.scrollTop = root.scrollHeight;
+      firstUnseenIdRef.current = null;
       setUnseen(0);
+    } else if (!historyPrepend && initializedRef.current && appended.length > 0) {
+      firstUnseenIdRef.current ??= appended[0].id;
+      setUnseen((count) => count + appended.length);
     }
-  }, [messages, loading, loadingMore, selfUserName]);
+  }, [messages, rows, loading, loadingMore, selfUserName, windowEpoch]);
+
+  useEffect(() => {
+    const root = viewportOf(areaRef.current);
+    const content = root?.querySelector(".chat-stream-inner");
+    if (root == null || content == null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) {
+        root.scrollTop = root.scrollHeight;
+        return;
+      }
+      const anchor = visibleAnchorRef.current;
+      if (anchor == null) return;
+      const element = root.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(anchor.id)}"]`);
+      if (element != null) root.scrollTop += element.getBoundingClientRect().top - anchor.top;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [windowEpoch]);
+
+  function rememberVisibleAnchor(): void {
+    const root = viewportOf(areaRef.current);
+    if (root == null) return;
+    const top = root.getBoundingClientRect().top;
+    const anchor = Array.from(root.querySelectorAll<HTMLElement>("article[data-msg-id]"))
+      .find((item) => !item.hidden && item.getBoundingClientRect().bottom > top);
+    visibleAnchorRef.current = anchor == null ? null : {
+      id: anchor.dataset.msgId ?? "",
+      top: anchor.getBoundingClientRect().top,
+    };
+  }
 
   function captureRestoreAnchor(): void {
-    const root = viewportOf(areaRef.current);
-    const first = messages[0];
-    if (root == null || first == null) {
-      return;
-    }
-    restoreRef.current = {
-      id: first.id,
-      top:
-        root
-          .querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(first.id)}"]`)
-          ?.getBoundingClientRect().top ?? 0,
-    };
+    rememberVisibleAnchor();
+    restoreRef.current = visibleAnchorRef.current;
   }
 
   function onScroll(): void {
@@ -257,6 +272,7 @@ export function MessageList({
     const distance = root.scrollHeight - root.scrollTop - root.clientHeight;
     const atBottom = distance <= NEAR_BOTTOM_PX;
     stickToBottomRef.current = atBottom;
+    rememberVisibleAnchor();
     if (atBottom) {
       firstUnseenIdRef.current = null;
       // 未读数本来就是 0 时跳过 setState，滚动时少一轮调度
@@ -296,9 +312,8 @@ export function MessageList({
     setUnseen(0);
   }
 
-  const showEmpty = !loading && messages.length === 0;
+  const showEmpty = !loading && rows.length === 0;
   /** 合并/+1/关心集合只在消息或筛选真变时重算，避免每次渲染 O(n) + 新引用打穿 memo。 */
-  const rows = useMemo(() => mergeDoubleMessages(messages), [messages]);
   const plusOneId = useMemo(() => plusOneMessageId(rows), [rows]);
   const careUsers = useMemo(
     () => new Set(filters.careUsers),

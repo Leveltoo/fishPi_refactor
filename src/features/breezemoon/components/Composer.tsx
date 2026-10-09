@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Send } from "lucide-react";
 
 type ComposerProps = {
   disabled: boolean;
@@ -44,7 +45,8 @@ export function Composer({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
       void submit();
     }
@@ -54,7 +56,7 @@ export function Composer({
     ? "发送接口尚未接入，不会伪装发出"
     : disabled
       ? "当前无法发送"
-      : "写一句清风明月，Enter 发送，Shift+Enter 换行";
+      : "清风明月";
 
   return (
     <form className="bm-composer" onSubmit={onSubmit}>
@@ -80,15 +82,12 @@ export function Composer({
           onKeyDown={onKeyDown}
         />
         <InputGroupAddon align="block-end" className="bm-composer-addon">
-          <p className="bm-composer-hint">
-            发送成功只表示已接受，不会立刻插入本地条目。
-          </p>
           <InputGroupButton
             type="submit"
             size="sm"
             disabled={disabled || sending || draft.trim().length === 0}
           >
-            {sending ? <Spinner /> : null}
+            {sending ? <Spinner /> : <Send aria-hidden="true" />}
             {sending ? "发送中" : "发送"}
           </InputGroupButton>
         </InputGroupAddon>

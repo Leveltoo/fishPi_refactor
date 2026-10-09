@@ -27,6 +27,16 @@
   margin-left: auto;
 }
 
+.ov-image-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ov-image-error {
+  padding: 1rem;
+  color: var(--color-danger);
+}
+
 .ov-image-stage {
   position: relative;
   overflow: hidden;
