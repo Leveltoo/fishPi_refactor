@@ -530,6 +530,38 @@ mod tests {
         assert!(cross_field.is_err(), "article must reject url field");
     }
 
+    /// 跨层锁（组规「三层一致」）：把前端 `noticeTarget.ts` 实际会 emit 的 oId /
+    /// commentId 字面量喂进本层 parse，断言 `is_ok && is_valid`。FE 产出形状与本层
+    /// 接受面由同一条用例钉住；FE 若放宽字符集，这条先红，而不是运行时通知不弹。
+    #[test]
+    fn article_literals_emitted_by_frontend_are_accepted() {
+        for (o_id, comment_id) in [
+            ("123456", None),
+            ("123456", Some("456")),
+            ("9000000000000000001", Some("1")),
+            ("1".repeat(64).as_str(), Some("1".repeat(32).as_str())),
+        ] {
+            let mut map = serde_json::Map::new();
+            map.insert("page".into(), serde_json::Value::String("article".into()));
+            map.insert("oId".into(), serde_json::Value::String(o_id.into()));
+            if let Some(id) = comment_id {
+                map.insert("commentId".into(), serde_json::Value::String(id.into()));
+            }
+            let target: NotificationTarget = serde_json::from_value(serde_json::Value::Object(map))
+                .unwrap_or_else(|error| panic!("oId {o_id} must parse: {error}"));
+            assert!(target.is_valid(), "oId {o_id} rejected by is_valid");
+        }
+        // FE 侧 ARTICLE_PATH 只收 \d{1,64}：非数字或超长一律归 external，不产出以下形状，
+        // 因此本层拒绝它们是正确行为（两侧集合相等的另一半证据）。
+        for rejected in ["abc", "1".repeat(65).as_str()] {
+            let target: NotificationTarget = serde_json::from_value(json!({
+                "page": "article", "oId": rejected
+            }))
+            .expect("shape is known, only value is invalid");
+            assert!(!target.is_valid(), "{rejected} must stay rejected");
+        }
+    }
+
     #[test]
     fn settings_camel_case() {
         let settings = AppSettings::default();

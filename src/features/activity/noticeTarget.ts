@@ -2,10 +2,15 @@ import { communityNoticeUrl, type NoticeTarget } from "../shell/navigation";
 import type { NoticeItemDto } from "./types";
 
 /**
- * oId 与 commentId 的字符集必须与 Rust `NotificationTarget::is_valid` 的
- * `numeric_id`（fix/notify-target-article @ 1c92b7d）逐字一致：只允许数字。
- * 前端若放宽，产出的 target 会在 `notify_show` 的严格校验里被整体拒绝，
- * 表现是「通知根本不弹」而不是「丢深链」——跨层不对称在这里必须是集合相等。
+ * oId 收紧为纯数字，与 Rust `numeric_id`（`fix/notify-target-article @ 1c92b7d`）同集。
+ *
+ * 判据 (i)：不拿未证实的事实当依据，也不为此放宽后端边界。收紧后两种形状都不静默
+ * 失败——数字 oId 走应用内深链；非数字归 out 走 external，等于 FE-02 之前的原有行为，
+ * 通知照弹。反之若前端产出 Rust 必拒的形状，后果是整条通知不弹（跨层契约断裂）。
+ *
+ * 服务端 oId 是否恒为数字**未经取证证实**（本仓 `article/api.ts:594` 把 oId 当不透明
+ * 字符串从 id/oId/articleId 里取，全仓无数字解析），所以这里只锁两侧集合一致、不下
+ * 事实结论；非数字 oId 的实际占比留给验证性取证再评。
  */
 const ARTICLE_PATH = /^\/article\/(\d{1,64})$/;
 const COMMENT_HASH = /^#comment(\d{1,32})$/;
