@@ -1,8 +1,8 @@
 # 扩展、旧主题与旧配置迁移
 
-更新：2026-10-09。此模块仅负责指定独占文件，不改 Cargo/lock、中心注册、
+更新：2026-10-12。此模块仅负责指定独占文件，不改 Cargo/lock、中心注册、
 AppShell、shared lib、auth 或 offline。共用目录直接编辑，无 worktree、无提交、
-无新增依赖。本页不是“旧 JS / 任意 CSS 完全兼容”的声明。
+目录选择所需 Rust 依赖由父级接入。本页不是“旧 JS / 任意 CSS 完全兼容”的声明。
 
 ## 实际源码核对
 
@@ -46,6 +46,14 @@ AppShell、shared lib、auth 或 offline。共用目录直接编辑，无 worktr
   点击后经 opener 打开 http(s)。不执行 HTML、不自动加载远程或本地资源。
 - [x] 目录编辑、主题发现/持久化/切换/重扫、返回内置主题、失败撤销主题；
   异步代次检查防止旧扫描/README 响应覆盖新选择，卸载清理样式与监听。
+- [x] 原生单目录选择：显式点击 FolderOpen 按钮打开带父窗口的系统对话框；
+  取消不保存、不重扫、不改变当前目录或主题。确认目录使用与手动输入相同的
+  `desktop_prefs_set({extensionRoot})` 和刷新流程，保留主题键。
+  点击时避免失焦误保存输入草稿；等待期间禁止重复选择和目录/主题修改。
+  导入导致偏好刷新或卸载后，旧选择/错误不再写设置或修改界面。
+  后端复用 extension_host 使用的 `config_import::valid_extension_root`，
+  拒绝 UNC/网络根、相对路径、控制字符、非 UTF-8 路径和非目录。
+  新命令只返回路径或 null，不读文件内容、不保存设置、不调用外网。
 - [x] 偏好变化事件让已挂载 ExtensionMount 在导入后重读根目录和主题；
   默认 `Default` 不注入样式、不改 `html[data-theme]`，保留现有四套内置视觉。
 - [x] 原 `hooks` JS 原文扫描字段已删除；不 require、eval、Function、
@@ -173,7 +181,7 @@ Vue/iView selector、任意全局 CSS。红红包/Markdown/音乐等旧专用变
 ## 中心注册与设置契约
 
 - 原 `lib.rs` 已注册 extension_scan、extension_load_theme、extension_call、
-  config_import、desktop_prefs_get/set；**没有新增 command 名称**，无需本模块改 lib/mod。
+  config_import、desktop_prefs_get/set；目录选择新增命令由父级注册，详见下文。
 - config_import 增 State 注入，无前端参数新增；父级负责 AppState manage 与 auth helper。
 - extension_call 现仅支持 `{api:"readme",key,root:null|string}`，返回
   `{key,readme,message}`；任意旧执行 API 明确错误。其 TS wrapper 与唯一调用者已同步。
@@ -187,10 +195,38 @@ Vue/iView selector、任意全局 CSS。红红包/Markdown/音乐等旧专用变
   **当前 settings/chatroom 已挂载缓存尚未在本模块内改动**，仅持久化正确不代表
   这些内存状态立即同步。不得让旧设置页缓存随后覆写新导入设置。
 - 父级已负责 LoginPage 明确的旧配置导入入口；这里不修改登录 UI。
-- 旧设置的系统目录选择 dialog 尚无新端 picker：目前本地绝对路径输入 +
-  重扫可用，不加 dialog 依赖/中心注册。精确旧 folder-picker 操作不声称完成。
+- 系统目录选择实现已交付；父级接入 Rust 依赖和中心注册后才能在 Tauri 中调用。
 - AppShell 的 ExtensionMount 必须常驻或至少需要主题时保持挂载；
   本模块卸载会撤销主题。不在禁止修改的 AppShell 中补生命周期。
+
+### 目录选择的精确父级接入
+
+当前依赖/源码没有原生 dialog 或 picker；已有 windows-sys 功能不包括 COM
+文件对话框。使用 rfd 的异步原生选择器，复用现有 Tokio：
+
+```toml
+# src-tauri/Cargo.toml [dependencies]
+rfd = { version = "0.15.4", default-features = false, features = ["xdg-portal", "tokio"] }
+```
+
+```rust
+// src-tauri/src/commands/mod.rs
+pub mod extension_directory;
+pub use extension_directory::extension_choose_directory;
+
+// src-tauri/src/lib.rs: add to the existing commands import and generate_handler!
+// commands import:
+extension_choose_directory,
+// tauri::generate_handler!:
+extension_choose_directory,
+```
+
+命令 `extension_choose_directory({root: string | null}) -> string | null`；
+AppHandle 和调用窗口由 Tauri 注入，不是前端参数。root 是初始目录提示，
+空值使用已保存目录，无效提示不传给原生 dialog；返回目录再次校验。
+取消返回 null。没有 JS dialog 插件、插件初始化或新增 capabilities 权限，
+不需要修改 App。Linux 使用系统 XDG portal，Windows/macOS 使用原生对话框。
+不改变现有路径校验边界：映射盘、挂载点和本机并发换链仍由宿主既有策略约束。
 
 ## 测试与剩余验证
 
@@ -202,6 +238,13 @@ Vue/iView selector、任意全局 CSS。红红包/Markdown/音乐等旧专用变
 - [x] 本机 Edge React 集成夹具通过：主题选择/撤销、README HTML/图片不加载、
   网络请求无外部资源、1280px/350px 截图、异步新请求覆盖旧请求、卸载清理。
   仅模拟 Tauri IPC，不能替代真实 Rust/WebView 联调。
+- 新增 `src/features/extension/directory.test.mjs`，通过既有 TS loader 执行真实
+  ExtensionMount 和 api：取消/草稿/主题保留、重复点击、无障碍名称与 tooltip、
+  保存/重扫、不变目录、选择/保存错误、导入与卸载迟到结果、手动输入。
+  执行：`node --test src/features/extension/*.test.mjs`。
+- 新命令 Rust 测试覆盖宿主共用校验、现有本地目录、非目录、缺失目录、
+  相对路径、UNC/网络根、URL、控制字符；父级注册依赖/模块后运行。
+- [ ] 目录选择真机 Tauri/Rust 联调待父级接入完成；TS mock 不验证原生 dialog。
 - [x] Rust 已添加断言：目录分流/重复键、不读取 hooks、跨平台 traversal/ADS、
   精确主题键/缺失回退、文本限制、README 惰性、主页/作者/Base64/SVG拒绝；
   Unix-only 链接逃逸测试（Windows 不执行此条）。
@@ -219,6 +262,7 @@ Vue/iView selector、任意全局 CSS。红红包/Markdown/音乐等旧专用变
 ## 改动文件
 
 - `src-tauri/src/commands/extension_host.rs`
+- `src-tauri/src/commands/extension_directory.rs`
 - `src-tauri/src/commands/config_import.rs`
 - `src/features/extension/api.ts`
 - `src/features/extension/hooks.ts`
@@ -226,6 +270,7 @@ Vue/iView selector、任意全局 CSS。红红包/Markdown/音乐等旧专用变
 - `src/features/extension/theme.ts`
 - `src/features/extension/extension.css`
 - `src/features/extension/selfcheck.ts`
+- `src/features/extension/directory.test.mjs`
 - `docs/migration/extensions.md`
 
 临时 Python 验证脚本执行后删除，不作为交付代码；截图只保存在可视化输出目录。
