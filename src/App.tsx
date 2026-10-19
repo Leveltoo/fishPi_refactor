@@ -63,6 +63,7 @@ export default function App() {
         <AppShell
           key={auth.phase.session.sessionGeneration}
           user={auth.phase.session.user}
+          sessionGeneration={auth.phase.session.sessionGeneration}
           persistWarning={persistNotice(auth.phase.session)}
           loggingOut={auth.busy}
           onLogout={auth.logout}

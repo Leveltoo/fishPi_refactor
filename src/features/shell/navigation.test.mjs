@@ -50,6 +50,7 @@ test("the extension rail button opens its single persistent host outside setting
     "./useAutoReward": { useAutoReward: empty },
     "./useMessageNotices": { useMessageNotices: () => ({ broadcast: null, dismissBroadcast: empty }) },
     "./useStartupUpdateCheck": { useStartupUpdateCheck: empty },
+    "./useNativeNotificationClicks": { useNativeNotificationClicks: empty },
     "./WarnBroadcast": { WarnBroadcastDialog: "WarnBroadcastDialog" },
     "./windowActions": {},
   });

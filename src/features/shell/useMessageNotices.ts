@@ -36,10 +36,10 @@ type Cue = {
 
 /**
  * 新消息按类别开关走声音和系统通知。
- * 系统通知没有点击载荷，这里不假装打开窗口或切页。
+ * 系统通知与应用内通知共用目标，账号代次隔离迟到点击。
  * 紧急公告只交给可关闭的文本模态。
  */
-export function useMessageNotices(selfUserName: string): {
+export function useMessageNotices(selfUserName: string, sessionGeneration: number): {
   broadcast: WarnBroadcast | null;
   dismissBroadcast: () => void;
 } {
@@ -75,7 +75,7 @@ export function useMessageNotices(selfUserName: string): {
         if (!alive || seq !== refreshSeq.current || fresh == null) {
           return;
         }
-        deliver(fresh, settingsRef.current);
+        deliver(fresh, settingsRef.current, sessionGeneration);
       });
     }
 
@@ -137,7 +137,7 @@ export function useMessageNotices(selfUserName: string): {
               (user) => user.userName,
             );
             if (cues.length > 0) {
-              deliver(cues, settingsRef.current);
+              deliver(cues, settingsRef.current, sessionGeneration);
             }
           })
           .catch(() => {
@@ -157,7 +157,7 @@ export function useMessageNotices(selfUserName: string): {
         warnedPatterns.current,
       );
       if (cue) {
-        deliver([cue], settingsRef.current);
+        deliver([cue], settingsRef.current, sessionGeneration);
       }
     }).then((stop) => {
       if (!alive) {
@@ -185,7 +185,7 @@ export function useMessageNotices(selfUserName: string): {
         settingsRef.current,
       );
       if (cue) {
-        deliver([cue], settingsRef.current);
+        deliver([cue], settingsRef.current, sessionGeneration);
       }
     }).then((stop) => {
       if (!alive) {
@@ -356,7 +356,7 @@ function categoryEnabled(type: NoticeType, settings: DesktopSettings): boolean {
   return false;
 }
 
-function deliver(cues: Cue[], settings: DesktopSettings): void {
+function deliver(cues: Cue[], settings: DesktopSettings, sessionGeneration: number): void {
   if (cues.length === 0) {
     return;
   }
@@ -380,7 +380,9 @@ function deliver(cues: Cue[], settings: DesktopSettings): void {
         },
       } : undefined,
     });
-    void invokeNotifyShow(item).then((result) => {
+    void invokeNotifyShow({
+      title: item.title, body: item.body, target: item.target, sessionGeneration,
+    }).then((result) => {
       if (result.status === "error") {
         toast.error(result.message);
       }

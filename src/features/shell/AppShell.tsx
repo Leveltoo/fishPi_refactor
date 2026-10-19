@@ -70,6 +70,7 @@ import { avatarInitial, displayName, type ShellUser } from "./session-snapshot";
 import { useAutoReward } from "./useAutoReward";
 import { useMessageNotices } from "./useMessageNotices";
 import { useStartupUpdateCheck } from "./useStartupUpdateCheck";
+import { useNativeNotificationClicks } from "./useNativeNotificationClicks";
 import { WarnBroadcastDialog } from "./WarnBroadcast";
 import {
   closeMainWindow,
@@ -82,6 +83,7 @@ import "./AppShell.css";
 
 type AppShellProps = {
   user: ShellUser;
+  sessionGeneration: number;
   persistWarning?: string;
   loggingOut?: boolean;
   onLogout: () => void;
@@ -205,6 +207,7 @@ function WinCtrlButton({
 
 export function AppShell({
   user,
+  sessionGeneration,
   persistWarning,
   loggingOut = false,
   onLogout,
@@ -220,9 +223,10 @@ export function AppShell({
   );
   const unread = useImUnreadTotal();
   const liveness = useWindowLiveness();
-  const { broadcast, dismissBroadcast } = useMessageNotices(user.userName);
+  const { broadcast, dismissBroadcast } = useMessageNotices(user.userName, sessionGeneration);
   useAutoReward();
-  useStartupUpdateCheck();
+  useStartupUpdateCheck(sessionGeneration);
+  useNativeNotificationClicks(sessionGeneration);
   const name = displayName(user);
   const avatarSrc = user.userAvatarUrl || undefined;
   const [titleOverride, setTitleOverride] = useState<HeaderTitleDetail | null>(

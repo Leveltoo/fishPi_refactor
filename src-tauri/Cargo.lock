@@ -1144,6 +1144,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-store",
+ "tauri-winrt-notification",
  "thiserror 2.0.20",
  "tokio",
  "windows-sys 0.59.0",

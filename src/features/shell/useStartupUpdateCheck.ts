@@ -7,9 +7,9 @@ import { OPEN_SETTINGS_EVENT } from "@/lib/nav";
 
 /**
  * 启动后自动检查更新。失败安静。有更新时应用内提示，系统通知仍受设置开关约束。
- * 系统通知点击无法跳页（插件 2.4 无回调），提示里的按钮才切到设置。
+ * Windows 系统通知和提示里的按钮都切到设置。
  */
-export function useStartupUpdateCheck(): void {
+export function useStartupUpdateCheck(sessionGeneration: number): void {
   useEffect(() => {
     let alive = true;
     void updateCheck()
@@ -30,7 +30,7 @@ export function useStartupUpdateCheck(): void {
         });
         const settings = currentDesktopSettings()?.settings;
         if (settings?.notifySystem && settings.notifyEnabled) {
-          void invokeNotifyShow({ title, body });
+          void invokeNotifyShow({ title, body, target: { page: "settings" }, sessionGeneration });
         }
       })
       .catch(() => undefined);

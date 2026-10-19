@@ -50,6 +50,8 @@ rusty-leveldb = "4"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# Reuse the notification plugin's WinRT dependency to retain activation callbacks.
+tauri-winrt-notification = "=0.7.3"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_NetworkManagement_IpHelper",

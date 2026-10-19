@@ -279,6 +279,132 @@ pub struct OpacityRequest {
 pub struct NotifyShowRequest {
     pub title: String,
     pub body: String,
+    #[serde(default)]
+    pub target: Option<NotificationTarget>,
+    #[serde(default)]
+    pub session_generation: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "page", rename_all = "lowercase")]
+pub enum NotificationTarget {
+    Chatroom {
+        message_id: Option<String>,
+    },
+    Im {
+        user_name: String,
+    },
+    Settings,
+    External { url: String },
+}
+
+/// BUG-01：serde 对 internally-tagged enum 的多余字段一律静默吞
+/// （`deny_unknown_fields` 不能用于 tag 枚举），而本类型是 notify_show 与
+/// FE-02 点击链路的输入面边界，必须显式拒绝未知键与跨 variant 字段。
+/// 实现方式：经 `serde_json::Value` 中介做严格形状校验（Value 自带
+/// Deserializer，不再依赖 map access）。
+impl<'de> Deserialize<'de> for NotificationTarget {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<serde_json::Value> for NotificationTarget {
+    type Error = String;
+
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        let mut map = match value {
+            serde_json::Value::Object(map) => map,
+            other => return Err(format!("target must be an object, got {other}")),
+        };
+        let mut field = |key: &str| -> Option<serde_json::Value> {
+            let taken = map.remove(key);
+            match taken {
+                Some(serde_json::Value::Null) => None,
+                other => other,
+            }
+        };
+        let page = match field("page") {
+            Some(serde_json::Value::String(page)) => page,
+            Some(other) => return Err(format!("`page` must be a string, got {other}")),
+            None => return Err("missing field `page`".to_string()),
+        };
+        let message_id = field("messageId");
+        let user_name = field("userName");
+        let url = field("url");
+        if let Some((extra_key, _)) = map.into_iter().next() {
+            return Err(format!("unknown field `{extra_key}` in target"));
+        }
+        let reject = |present: bool, field_name: &str| -> Result<(), String> {
+            if present {
+                return Err(format!("`{field_name}` does not belong to page `{page}`"));
+            }
+            Ok(())
+        };
+        match page.as_str() {
+            "settings" => {
+                reject(message_id.is_some(), "messageId")?;
+                reject(user_name.is_some(), "userName")?;
+                reject(url.is_some(), "url")?;
+                Ok(NotificationTarget::Settings)
+            }
+            "chatroom" => {
+                reject(user_name.is_some(), "userName")?;
+                reject(url.is_some(), "url")?;
+                let message_id = match message_id {
+                    None => None,
+                    Some(serde_json::Value::String(text)) => Some(text),
+                    Some(other) => return Err(format!("`messageId` must be a string, got {other}")),
+                };
+                Ok(NotificationTarget::Chatroom { message_id })
+            }
+            "im" => {
+                reject(message_id.is_some(), "messageId")?;
+                reject(url.is_some(), "url")?;
+                let Some(serde_json::Value::String(user_name)) = user_name else {
+                    return Err("missing or non-string `userName`".to_string());
+                };
+                Ok(NotificationTarget::Im { user_name })
+            }
+            "external" => {
+                reject(message_id.is_some(), "messageId")?;
+                reject(user_name.is_some(), "userName")?;
+                let Some(serde_json::Value::String(url)) = url else {
+                    return Err("missing or non-string `url`".to_string());
+                };
+                Ok(NotificationTarget::External { url })
+            }
+            other => Err(format!("unknown page `{other}`")),
+        }
+    }
+}
+
+impl NotificationTarget {
+    pub fn is_valid(&self) -> bool {
+        fn bounded(value: &str, limit: usize) -> bool {
+            !value.trim().is_empty()
+                && value.len() <= limit
+                && !value.chars().any(char::is_control)
+        }
+        match self {
+            Self::Chatroom { message_id } => message_id
+                .as_deref()
+                .is_none_or(|id| bounded(id, 128)),
+            Self::Im { user_name } => bounded(user_name, 64),
+            Self::Settings => true,
+            Self::External { url } => {
+                bounded(url, 4096)
+                    && reqwest::Url::parse(url).is_ok_and(|parsed| {
+                        parsed.scheme() == "https"
+                            && parsed.host_str() == Some("fishpi.cn")
+                            && parsed.port_or_known_default() == Some(443)
+                            && parsed.username().is_empty()
+                            && parsed.password().is_none()
+                    })
+            }
+        }
+    }
 }
 
 fn clip_pattern(value: &str) -> String {
@@ -310,6 +436,39 @@ fn first_nonempty(left: &str, right: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn notification_targets_are_bounded_and_cannot_open_arbitrary_urls() {
+        for value in [
+            json!({"page":"settings"}),
+            json!({"page":"im","userName":"peer"}),
+            json!({"page":"chatroom","messageId":"9000000000000000001"}),
+            json!({"page":"external","url":"https://fishpi.cn/article/123#456"}),
+        ] {
+            let target: NotificationTarget = serde_json::from_value(value).unwrap();
+            assert!(target.is_valid());
+        }
+        for value in [
+            json!({"page":"im","userName":""}),
+            json!({"page":"im","userName":"peer\n"}),
+            json!({"page":"chatroom","messageId":"x".repeat(129)}),
+            json!({"page":"external","url":"https://evil.example/a"}),
+            json!({"page":"external","url":"https://user:pass@fishpi.cn/a"}),
+            json!({"page":"external","url":"http://fishpi.cn/a"}),
+            json!({"page":"external","url":"https://fishpi.cn:444/a"}),
+        ] {
+            let target: NotificationTarget = serde_json::from_value(value).unwrap();
+            assert!(!target.is_valid());
+        }
+        assert!(serde_json::from_value::<NotificationTarget>(
+            json!({"page":"settings","command":"auth_logout"})
+        ).is_err());
+        let old: NotifyShowRequest = serde_json::from_value(
+            json!({"title":"test","body":"test"})
+        ).unwrap();
+        assert!(old.target.is_none());
+        assert!(old.session_generation.is_none());
+    }
 
     #[test]
     fn settings_camel_case() {
