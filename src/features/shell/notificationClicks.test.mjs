@@ -38,11 +38,18 @@ test("native clicks validate destinations and navigate only in their owning sess
     { page: "external", url: "https://u:p@fishpi.cn" },
     { page: "external", url: "https://fishpi.cn:444/a" },
     { page: "chatroom", messageId: "x".repeat(129) },
+    { page: "article" },
+    { page: "article", oId: "" },
+    { page: "article", oId: "x".repeat(65) },
+    { page: "article", oId: "a", commentId: "x".repeat(33) },
+    { page: "article", oId: "a", commentId: "" },
   ]) assert.equal(parseNotificationTarget(value), undefined);
   const targets = [
     { page: "settings" }, { page: "im", userName: "peer" },
     { page: "chatroom", messageId: "9000000000000000001" },
     { page: "external", url: "https://fishpi.cn/article/123#456" },
+    { page: "article", oId: "abc123" },
+    { page: "article", oId: "abc123", commentId: "456" },
   ];
   useNativeNotificationClicks(7);
   hooks.start();
@@ -58,18 +65,18 @@ test("native clicks validate destinations and navigate only in their owning sess
   session = { status: "loggedOut", sessionGeneration: 7 };
   click({ payload: { sessionGeneration: 7, target: targets[0] } });
   await flush();
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, targets.length);
   wait = true;
   click({ payload: { sessionGeneration: 7, target: targets[0] } });
   pending.resolve({ status: "loggedIn", sessionGeneration: 8 });
   await flush();
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, targets.length);
   hooks.stop();
   await flush();
   assert.equal(listeners.size, 0);
   click({ payload: { sessionGeneration: 7, target: targets[0] } });
   await flush();
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, targets.length);
 });
 
 test("unmount prevents a native click's late authentication lookup from navigating", async () => {

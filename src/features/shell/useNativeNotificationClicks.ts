@@ -18,10 +18,11 @@ export function parseNotificationTarget(value: unknown): NoticeTarget | undefine
       (item.messageId === undefined || item.messageId === null || bounded(item.messageId, 128))) {
     return { page: "chatroom", messageId: typeof item.messageId === "string" ? item.messageId : undefined };
   }
-  if (item.page === "article" && bounded(item.oId, 64)) {
-    return bounded(item.commentId, 32)
-      ? { page: "article", oId: item.oId, commentId: item.commentId }
-      : { page: "article", oId: item.oId };
+  if (item.page === "article" && bounded(item.oId, 64) &&
+      (item.commentId === undefined || item.commentId === null || bounded(item.commentId, 32))) {
+    return item.commentId == null
+      ? { page: "article", oId: item.oId }
+      : { page: "article", oId: item.oId, commentId: item.commentId };
   }
   if (item.page === "external" && bounded(item.url, 4096)) {
     const url = communityNoticeUrl(item.url);

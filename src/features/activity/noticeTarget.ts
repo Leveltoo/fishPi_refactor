@@ -5,33 +5,46 @@ const ARTICLE_PATH = /^\/article\/([A-Za-z0-9_-]{1,64})$/;
 const COMMENT_HASH = /^#comment(\d{1,32})$/;
 
 /**
- * 站内文章深链识别：`https://fishpi.cn/article/{oId}` 或带 `#comment{id}` 锚点。
+ * 站内文章链接的三态判定。
  *
- * 查询式 `/article?id=` 不认（服务端 302 形态，M1 显式走 external）；
- * 任何非 fishpi.cn origin、含凭据的 url 都不站内化。
+ * `in` 站内文章深链（`#top` 这类非评论锚算「无锚可丢」，不属降级）；
+ * `out` 不是站内文章；
+ * `invalid` 是站内文章、但评论锚形状不合规（`#commentABC`、>32 位等）——
+ * **整体拒绝**，既不静默退化成无锚跳转，也不退化成 external 开浏览器。
  */
-export function articleDeepLink(
-  raw: string | undefined,
-): { oId: string; commentId?: string } | undefined {
+export type ArticleLink =
+  | { state: "in"; oId: string; commentId?: string }
+  | { state: "out" }
+  | { state: "invalid"; oId: string };
+
+export function articleDeepLink(raw: string | undefined): ArticleLink {
   const href = communityNoticeUrl(raw);
   if (!href) {
-    return undefined;
+    return { state: "out" };
   }
   let url: URL;
   try {
     url = new URL(href);
   } catch {
-    return undefined;
+    return { state: "out" };
   }
   if (url.search) {
-    return undefined;
+    return { state: "out" };
   }
   const path = ARTICLE_PATH.exec(url.pathname);
   if (!path) {
-    return undefined;
+    return { state: "out" };
   }
-  const hash = url.hash ? COMMENT_HASH.exec(url.hash) : null;
-  return hash ? { oId: path[1], commentId: hash[1] } : { oId: path[1] };
+  if (!url.hash) {
+    return { state: "in", oId: path[1] };
+  }
+  if (!url.hash.startsWith("#comment")) {
+    return { state: "in", oId: path[1] };
+  }
+  const hash = COMMENT_HASH.exec(url.hash);
+  return hash
+    ? { state: "in", oId: path[1], commentId: hash[1] }
+    : { state: "invalid", oId: path[1] };
 }
 
 export function noticeTarget(item: NoticeItemDto): NoticeTarget | undefined {
@@ -41,11 +54,14 @@ export function noticeTarget(item: NoticeItemDto): NoticeTarget | undefined {
   if (item.type === "at" && item.dataType === 38 && item.dataId) {
     return { page: "chatroom", messageId: item.dataId };
   }
-  const deep = articleDeepLink(item.url);
-  if (deep) {
-    return deep.commentId
-      ? { page: "article", oId: deep.oId, commentId: deep.commentId }
-      : { page: "article", oId: deep.oId };
+  const link = articleDeepLink(item.url);
+  if (link.state === "invalid") {
+    return undefined;
+  }
+  if (link.state === "in") {
+    return link.commentId
+      ? { page: "article", oId: link.oId, commentId: link.commentId }
+      : { page: "article", oId: link.oId };
   }
   const url = communityNoticeUrl(item.url);
   return url ? { page: "external", url } : undefined;

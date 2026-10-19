@@ -71,7 +71,7 @@ test("notification categories target standard message IDs, suppress self/deleted
   assert.equal(noticeTarget({ ...at, deleted: true }), undefined);
   assert.equal(noticeTarget({ ...at, type: "reply", url: "https://evil.test" }), undefined);
   // FE-02 契约变更：站内文章链接由 external 改为应用内深链
-  // （依据 shared/fe-02-notice-target-behavior-points.md v1.2 行 A2/A3，PM 放行）
+  // （依据 shared/fe-02-notice-target-behavior-points.md v1.4 行 A2/A3，PM 放行）
   assert.deepEqual(plain(noticeTarget({ ...at, type: "reply", url: "/article/a" })),
     { page: "article", oId: "a" });
   assert.deepEqual(plain(noticeTarget({ ...at, type: "commented", url: "/article/a#comment77" })),
