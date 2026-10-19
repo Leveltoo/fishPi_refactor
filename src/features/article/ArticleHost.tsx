@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -21,6 +21,7 @@ import {
 
 import { sanitizeHttpUrl } from "../../lib/markdown";
 import { setHeaderTitle } from "../../lib/headerTitle";
+import { listenArticleJump } from "./articleJump";
 import { CommentComposer } from "./CommentComposer";
 import { dispatchPreviewImage, dispatchUserCard } from "./events";
 import { ArticleRichBody } from "./MarkdownBody";
@@ -54,9 +55,24 @@ import "./article.css";
  */
 export function ArticleHost() {
   const articles = useArticles();
+  const articlesRef = useRef(articles);
+  articlesRef.current = articles;
+  const [pendingJump, setPendingJump] = useState<string | null>(null);
   const showingDetail = articles.activeId != null;
   const bridgeMissing = !articles.loadingList && !articles.capabilities.list;
   const detailTitle = articles.detail?.title ?? null;
+
+  // 通知点击 / 站内深链：打开详情，评论锚点交给详情面板定位
+  useEffect(
+    () =>
+      listenArticleJump((oId, commentId) => {
+        void articlesRef.current.openArticle(oId);
+        if (commentId) {
+          setPendingJump(commentId);
+        }
+      }),
+    [],
+  );
 
   // 对齐旧版：详情页标题用文章名，列表恢复「帖子」
   useEffect(() => {
@@ -140,6 +156,8 @@ export function ArticleHost() {
           onReward={() => {
             void articles.rewardArticle();
           }}
+          pendingCommentJump={pendingJump}
+          onCommentJumped={() => setPendingJump(null)}
         />
       ) : null}
       <div className="article-list-preserved" style={showingDetail ? { display: "none" } : undefined}>
@@ -336,6 +354,8 @@ type ArticleDetailPaneProps = {
   onThank: () => void;
   onVote: (direction: ArticleVoteDirection) => void;
   onReward: () => void;
+  pendingCommentJump: string | null;
+  onCommentJumped: () => void;
 };
 
 function ArticleDetailPane({
@@ -372,9 +392,20 @@ function ArticleDetailPane({
   onThank,
   onVote,
   onReward,
+  pendingCommentJump,
+  onCommentJumped,
 }: ArticleDetailPaneProps) {
   const [reply, setReply] = useState<CommentReplyTarget | null>(null);
   const [jumpMiss, setJumpMiss] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pendingCommentJump == null || detail == null) {
+      return;
+    }
+    jumpToComment(pendingCommentJump);
+    onCommentJumped();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCommentJump, detail]);
 
   function jumpToComments(): void {
     document.getElementById("article-composer")?.scrollIntoView({

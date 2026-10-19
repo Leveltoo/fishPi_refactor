@@ -56,7 +56,7 @@ import {
 } from "@/features/settings/settingsStore";
 import { FishMark } from "./FishMark";
 import { listen } from "@tauri-apps/api/event";
-import { OPEN_CHATROOM_EVENT } from "./navigation";
+import { OPEN_ARTICLE_EVENT, OPEN_CHATROOM_EVENT } from "./navigation";
 import { showUserCardWindow } from "../usercard/window";
 import { REDPACKET_SEND_EVENT } from "../redpacket/events";
 import { HeaderMusic } from "./HeaderMusic";
@@ -261,9 +261,13 @@ export function AppShell({
     function onOpenChatroom(): void {
       setPage("chatroom");
     }
+    function onOpenArticle(): void {
+      setPage("article");
+    }
     window.addEventListener(OPEN_IM_EVENT, onOpenIm);
     window.addEventListener(OPEN_SETTINGS_EVENT, onOpenSettings);
     window.addEventListener(OPEN_CHATROOM_EVENT, onOpenChatroom);
+    window.addEventListener(OPEN_ARTICLE_EVENT, onOpenArticle);
     const stops = [
       listen<{ userName: string }>(OPEN_IM_EVENT, (event) => {
         window.dispatchEvent(new CustomEvent(OPEN_IM_EVENT, { detail: event.payload }));
@@ -276,6 +280,7 @@ export function AppShell({
       window.removeEventListener(OPEN_IM_EVENT, onOpenIm);
       window.removeEventListener(OPEN_SETTINGS_EVENT, onOpenSettings);
       window.removeEventListener(OPEN_CHATROOM_EVENT, onOpenChatroom);
+      window.removeEventListener(OPEN_ARTICLE_EVENT, onOpenArticle);
       stops.forEach((stop) => { void stop.then((fn) => fn()).catch(() => undefined); });
     };
   }, []);
