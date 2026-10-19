@@ -296,6 +296,12 @@ pub enum NotificationTarget {
     },
     Settings,
     External { url: String },
+    Article {
+        #[serde(rename = "oId")]
+        o_id: String,
+        #[serde(default, rename = "commentId")]
+        comment_id: Option<String>,
+    },
 }
 
 /// BUG-01：serde 对 internally-tagged enum 的多余字段一律静默吞
@@ -333,6 +339,8 @@ impl TryFrom<serde_json::Value> for NotificationTarget {
         let message_id = field("messageId");
         let user_name = field("userName");
         let url = field("url");
+        let o_id = field("oId");
+        let comment_id = field("commentId");
         if let Some((extra_key, _)) = map.into_iter().next() {
             return Err(format!("unknown field `{extra_key}` in target"));
         }
@@ -347,11 +355,15 @@ impl TryFrom<serde_json::Value> for NotificationTarget {
                 reject(message_id.is_some(), "messageId")?;
                 reject(user_name.is_some(), "userName")?;
                 reject(url.is_some(), "url")?;
+                reject(o_id.is_some(), "oId")?;
+                reject(comment_id.is_some(), "commentId")?;
                 Ok(NotificationTarget::Settings)
             }
             "chatroom" => {
                 reject(user_name.is_some(), "userName")?;
                 reject(url.is_some(), "url")?;
+                reject(o_id.is_some(), "oId")?;
+                reject(comment_id.is_some(), "commentId")?;
                 let message_id = match message_id {
                     None => None,
                     Some(serde_json::Value::String(text)) => Some(text),
@@ -362,6 +374,8 @@ impl TryFrom<serde_json::Value> for NotificationTarget {
             "im" => {
                 reject(message_id.is_some(), "messageId")?;
                 reject(url.is_some(), "url")?;
+                reject(o_id.is_some(), "oId")?;
+                reject(comment_id.is_some(), "commentId")?;
                 let Some(serde_json::Value::String(user_name)) = user_name else {
                     return Err("missing or non-string `userName`".to_string());
                 };
@@ -370,10 +384,26 @@ impl TryFrom<serde_json::Value> for NotificationTarget {
             "external" => {
                 reject(message_id.is_some(), "messageId")?;
                 reject(user_name.is_some(), "userName")?;
+                reject(o_id.is_some(), "oId")?;
+                reject(comment_id.is_some(), "commentId")?;
                 let Some(serde_json::Value::String(url)) = url else {
                     return Err("missing or non-string `url`".to_string());
                 };
                 Ok(NotificationTarget::External { url })
+            }
+            "article" => {
+                reject(message_id.is_some(), "messageId")?;
+                reject(user_name.is_some(), "userName")?;
+                reject(url.is_some(), "url")?;
+                let Some(serde_json::Value::String(o_id)) = o_id else {
+                    return Err("missing or non-string `oId`".to_string());
+                };
+                let comment_id = match comment_id {
+                    None => None,
+                    Some(serde_json::Value::String(text)) => Some(text),
+                    Some(other) => return Err(format!("`commentId` must be a string, got {other}")),
+                };
+                Ok(NotificationTarget::Article { o_id, comment_id })
             }
             other => Err(format!("unknown page `{other}`")),
         }
@@ -386,6 +416,9 @@ impl NotificationTarget {
             !value.trim().is_empty()
                 && value.len() <= limit
                 && !value.chars().any(char::is_control)
+        }
+        fn numeric_id(value: &str, limit: usize) -> bool {
+            bounded(value, limit) && value.chars().all(|ch| ch.is_ascii_digit())
         }
         match self {
             Self::Chatroom { message_id } => message_id
@@ -402,6 +435,10 @@ impl NotificationTarget {
                             && parsed.username().is_empty()
                             && parsed.password().is_none()
                     })
+            }
+            Self::Article { o_id, comment_id } => {
+                numeric_id(o_id, 64)
+                    && comment_id.as_deref().is_none_or(|id| numeric_id(id, 32))
             }
         }
     }
@@ -468,6 +505,29 @@ mod tests {
         ).unwrap();
         assert!(old.target.is_none());
         assert!(old.session_generation.is_none());
+    }
+
+    #[test]
+    fn article_deeplink_target_is_accepted() {
+        // FE-02 深链契约（noticeTarget.ts 产出 article 变体）此前会被本层
+        // 严格校验以 unknown page 拒绝 → 整个 notify_show 失败、通知不弹。
+        let ok: NotificationTarget = serde_json::from_value(json!({
+            "page": "article", "oId": "1234567890", "commentId": "42"
+        }))
+        .expect("article target must parse");
+        assert!(ok.is_valid());
+        let missing_oid: Result<NotificationTarget, _> =
+            serde_json::from_value(json!({"page": "article"}));
+        assert!(missing_oid.is_err());
+        let non_numeric: NotificationTarget = serde_json::from_value(json!({
+            "page": "article", "oId": "abc"
+        }))
+        .unwrap();
+        assert!(!non_numeric.is_valid());
+        let cross_field: Result<NotificationTarget, _> = serde_json::from_value(json!({
+            "page": "article", "oId": "1", "url": "https://fishpi.cn/a"
+        }));
+        assert!(cross_field.is_err(), "article must reject url field");
     }
 
     #[test]
