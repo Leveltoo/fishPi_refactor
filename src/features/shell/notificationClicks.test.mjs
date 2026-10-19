@@ -41,15 +41,15 @@ test("native clicks validate destinations and navigate only in their owning sess
     { page: "article" },
     { page: "article", oId: "" },
     { page: "article", oId: "x".repeat(65) },
-    { page: "article", oId: "a", commentId: "x".repeat(33) },
-    { page: "article", oId: "a", commentId: "" },
+    { page: "article", oId: "123", commentId: "x".repeat(33) },
+    { page: "article", oId: "123", commentId: "" },
   ]) assert.equal(parseNotificationTarget(value), undefined);
   const targets = [
     { page: "settings" }, { page: "im", userName: "peer" },
     { page: "chatroom", messageId: "9000000000000000001" },
     { page: "external", url: "https://fishpi.cn/article/123#456" },
-    { page: "article", oId: "abc123" },
-    { page: "article", oId: "abc123", commentId: "456" },
+    { page: "article", oId: "123456" },
+    { page: "article", oId: "123456", commentId: "456" },
   ];
   useNativeNotificationClicks(7);
   hooks.start();

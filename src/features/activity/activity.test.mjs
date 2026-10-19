@@ -72,10 +72,10 @@ test("notification categories target standard message IDs, suppress self/deleted
   assert.equal(noticeTarget({ ...at, type: "reply", url: "https://evil.test" }), undefined);
   // FE-02 契约变更：站内文章链接由 external 改为应用内深链
   // （依据 shared/fe-02-notice-target-behavior-points.md v1.4 行 A2/A3，PM 放行）
-  assert.deepEqual(plain(noticeTarget({ ...at, type: "reply", url: "/article/a" })),
-    { page: "article", oId: "a" });
-  assert.deepEqual(plain(noticeTarget({ ...at, type: "commented", url: "/article/a#comment77" })),
-    { page: "article", oId: "a", commentId: "77" });
+  assert.deepEqual(plain(noticeTarget({ ...at, type: "reply", url: "/article/123" })),
+    { page: "article", oId: "123" });
+  assert.deepEqual(plain(noticeTarget({ ...at, type: "commented", url: "/article/123#comment77" })),
+    { page: "article", oId: "123", commentId: "77" });
   // 非文章站内路径与查询式文章链接仍走 external（A4/B1 未变）
   assert.deepEqual(plain(noticeTarget({ ...at, type: "reply", url: "/breezemoon" })),
     { page: "external", url: "https://fishpi.cn/breezemoon" });
