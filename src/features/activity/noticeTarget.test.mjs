@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLoader } from "../shell/testLoader.mjs";
+import { createLoader, plain } from "../shell/testLoader.mjs";
 
 const load = createLoader({
   "@tauri-apps/plugin-opener": { openUrl: async () => {} },
@@ -28,30 +28,30 @@ test("A1 at + dataType 38 wins over url dispatch", () => {
     dataId: "9000000000000000001",
     url: "https://fishpi.cn/article/abc#comment123",
   }));
-  assert.deepEqual(target, { page: "chatroom", messageId: "9000000000000000001" });
+  assert.deepEqual(plain(target), { page: "chatroom", messageId: "9000000000000000001" });
 });
 
 test("A2/A3 in-site article url becomes an in-app deep link", () => {
   assert.deepEqual(
-    noticeTarget(item({ url: "https://fishpi.cn/article/abc123" })),
+    plain(noticeTarget(item({ url: "https://fishpi.cn/article/abc123" }))),
     { page: "article", oId: "abc123" },
   );
   assert.deepEqual(
-    noticeTarget(item({ url: "https://fishpi.cn/article/abc123#comment456" })),
+    plain(noticeTarget(item({ url: "https://fishpi.cn/article/abc123#comment456" }))),
     { page: "article", oId: "abc123", commentId: "456" },
   );
 });
 
 test("A4 query-style article url is not internalised", () => {
   assert.deepEqual(
-    noticeTarget(item({ url: "https://fishpi.cn/article?id=123" })),
+    plain(noticeTarget(item({ url: "https://fishpi.cn/article?id=123" }))),
     { page: "external", url: "https://fishpi.cn/article?id=123" },
   );
 });
 
 test("B1 other community paths stay external", () => {
   assert.deepEqual(
-    noticeTarget(item({ url: "https://fishpi.cn/breezemoon" })),
+    plain(noticeTarget(item({ url: "https://fishpi.cn/breezemoon" }))),
     { page: "external", url: "https://fishpi.cn/breezemoon" },
   );
 });
@@ -78,16 +78,13 @@ test("D2 deleted short-circuits everything", () => {
 test("E1/E2 reply and commented dispatch on url, never on dataId", () => {
   for (const type of ["reply", "commented"]) {
     assert.deepEqual(
-      noticeTarget(item({ type, dataId: undefined, dataType: undefined, url: "https://fishpi.cn/article/x9#comment7" })),
-      { page: "article", oId: "x9", commentId: "7" },
-    );
+    plain(noticeTarget(item({ type, dataId: undefined, dataType: undefined, url: "https://fishpi.cn/article/x9#comment7" }))),
+    { page: "article", oId: "x9", commentId: "7" },
+  );
   }
 });
 
 test("articleDeepLink bounds the oId and comment id shapes", () => {
   assert.equal(articleDeepLink("https://fishpi.cn/article/" + "a".repeat(65)), undefined);
-  assert.deepEqual(
-    articleDeepLink("https://fishpi.cn/article/abc#comment" + "1".repeat(33)),
-    { oId: "abc" },
-  );
+  assert.deepEqual(plain(articleDeepLink("https://fishpi.cn/article/abc#comment" + "1".repeat(33))), { oId: "abc" });
 });

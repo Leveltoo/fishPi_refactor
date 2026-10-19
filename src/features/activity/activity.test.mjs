@@ -70,8 +70,15 @@ test("notification categories target standard message IDs, suppress self/deleted
   assert.equal(noticeCue("at", { ...at, deleted: true }), null);
   assert.equal(noticeTarget({ ...at, deleted: true }), undefined);
   assert.equal(noticeTarget({ ...at, type: "reply", url: "https://evil.test" }), undefined);
-  assert.equal(noticeTarget({ ...at, type: "reply", url: "/article/a" }).url,
-    "https://fishpi.cn/article/a");
+  // FE-02 契约变更：站内文章链接由 external 改为应用内深链
+  // （依据 shared/fe-02-notice-target-behavior-points.md v1.2 行 A2/A3，PM 放行）
+  assert.deepEqual(plain(noticeTarget({ ...at, type: "reply", url: "/article/a" })),
+    { page: "article", oId: "a" });
+  assert.deepEqual(plain(noticeTarget({ ...at, type: "commented", url: "/article/a#comment77" })),
+    { page: "article", oId: "a", commentId: "77" });
+  // 非文章站内路径与查询式文章链接仍走 external（A4/B1 未变）
+  assert.deepEqual(plain(noticeTarget({ ...at, type: "reply", url: "/breezemoon" })),
+    { page: "external", url: "https://fishpi.cn/breezemoon" });
 });
 
 test("switching notice categories discards late lists and marks only the requested category", async () => {
