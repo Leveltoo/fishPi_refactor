@@ -1,5 +1,4 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -65,12 +64,14 @@ export function OpenRedPacketDialog({
       <DialogContent className="rp-dialog p-0 sm:max-w-[22rem]" showCloseButton>
         <div className="rp-lantern" aria-hidden="true" />
         <DialogHeader className="rp-header">
-          <SenderFace
-            name={titleName}
-            src={data?.info.userAvatarUrl || session.preview.userAvatarUrl}
-          />
-          <DialogTitle className="rp-title">{titleName} 的红包</DialogTitle>
-          <DialogDescription className="rp-blessing">
+          <div className="rp-title-row">
+            <SenderFace
+              name={titleName}
+              src={data?.info.userAvatarUrl || session.preview.userAvatarUrl}
+            />
+            <DialogTitle className="rp-title">{titleName} 的红包</DialogTitle>
+          </div>
+          <DialogDescription className="rp-msg">
             {data?.info.message || session.preview.message || "恭喜发财"}
           </DialogDescription>
           <PacketMeta session={session} data={data} />
@@ -92,14 +93,11 @@ export function OpenRedPacketDialog({
           ) : null}
 
           {!loading && outcome && outcome.status !== "ok" ? (
-            <Alert variant={outcome.status === "error" ? "destructive" : "default"}>
-              <AlertTitle>
-                {outcome.status === "unavailable"
-                  ? "尚未接入"
-                  : outcome.status === "outcome_unknown"
-                    ? "结果待确认"
-                    : "领取失败"}
-              </AlertTitle>
+            <Alert
+              className="rp-notice"
+              variant={outcome.status === "error" ? "destructive" : "default"}
+            >
+              <AlertTitle>领取失败</AlertTitle>
               <AlertDescription>{outcome.message}</AlertDescription>
             </Alert>
           ) : null}
@@ -173,29 +171,27 @@ function OpenResult({
 
   return (
     <div className="rp-result">
-      <p className="rp-headline">{headline}</p>
+      <p className="rp-current">{headline}</p>
       {data.who.length === 0 ? (
         <p className="rp-empty">还没有领取记录</p>
       ) : (
-        <ul className="rp-who">
+        <ul className="rp-list">
           {data.who.map((item) => (
             <li
               key={`${item.userId}-${item.userName}-${item.time}`}
               style={{ fontWeight: maxMoney === item.userMoney ? "bold" : "normal" }}
             >
-              <span className="rp-who-user">
+              <span className="rp-user">
                 <SenderFace name={item.userName} src={item.avatar} size="sm" />
                 <span>{item.userName}</span>
               </span>
-              <span className="rp-who-money">{item.userMoney} 积分</span>
               {isLuckyKing(item, data, maxMoney) ? (
-                <Badge className="rp-tip rp-tip-max">来自老王的认可</Badge>
+                <span className="rp-tip rp-tip-max">来自老王的认可</span>
               ) : null}
               {item.userMoney === 0 ? (
-                <Badge variant="outline" className="rp-tip rp-tip-zero">
-                  0 溢事件
-                </Badge>
+                <span className="rp-tip rp-tip-zero">0 溢事件</span>
               ) : null}
+              <span className="rp-money">{item.userMoney} 积分</span>
             </li>
           ))}
         </ul>

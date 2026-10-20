@@ -43,3 +43,28 @@ test("user-card creation waits for the real event, serializes duplicate opens an
   await assert.rejects(failed);
   assert.equal(handlers.size, 0);
 });
+
+test("hover prewarm creates the singleton hidden before it is shown", async () => {
+  const handlers = new Map();
+  let options = null;
+  class WebviewWindow {
+    constructor(_label, nextOptions) { options = nextOptions; }
+    once(event, fn) { handlers.set(event, fn); return Promise.resolve(() => handlers.delete(event)); }
+    static async getByLabel() { return null; }
+  }
+  const load = createLoader({
+    "@tauri-apps/api/dpi": { LogicalPosition: class { constructor(x, y) { this.x = x; this.y = y; } } },
+    "@tauri-apps/api/window": { getCurrentWindow: () => ({
+      outerPosition: async () => ({ x: 100, y: 100 }),
+      scaleFactor: async () => 1,
+    }) },
+    "@tauri-apps/api/webviewWindow": { WebviewWindow },
+  }, { window: { screen: { width: 1920, height: 1080 }, setTimeout, clearTimeout } });
+  const card = load(new URL("./window.ts", import.meta.url));
+  const warm = card.prewarmUserCardWindow("warm");
+  await flush();
+  assert.equal(options.visible, false);
+  handlers.get("tauri://created")({ payload: null });
+  await warm;
+  assert.equal(handlers.size, 0);
+});

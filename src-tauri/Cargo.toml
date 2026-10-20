@@ -45,11 +45,15 @@ keyring = "3"
 
 # 检查更新与网易云公开歌曲信息。只访问固定主机，不执行下载下来的文件。
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# Native folder picker for the legacy extension directory setting.
+rfd = { version = "0.15.4", default-features = false, features = ["xdg-portal", "tokio"] }
 # 只读一份复制出来的 Electron Local Storage。禁止对用户原目录调用 open（该库 open 会改文件）。
 rusty-leveldb = "4"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# Reuse the notification plugin's WinRT dependency to retain activation callbacks.
+tauri-winrt-notification = "=0.7.3"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_NetworkManagement_IpHelper",

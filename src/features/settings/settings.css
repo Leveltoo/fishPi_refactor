@@ -337,16 +337,37 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.legacy-checkbox input {
+.legacy-checkbox:hover {
+  background: transparent;
+}
+
+.legacy-checkbox__box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 14px;
   height: 14px;
-  margin: 0;
-  accent-color: var(--global-active-color, #d23f31);
+  border: 1px solid var(--global-control-border-color, #393e40);
+  background: var(--global-control-background-color, #181a1b);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.legacy-checkbox__box.is-checked {
+  border-color: var(--global-active-color, #d23f31);
+  background: var(--global-active-color, #d23f31);
 }
 
 .talk-pattern {

@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Composer } from "./components/Composer";
-import { Pencil } from "lucide-react";
 import { jumpToMessage, MessageList } from "./components/MessageList";
 import { OnlineSidebar } from "./components/OnlineBar";
 import {
@@ -36,7 +35,6 @@ export function ChatRoomPage() {
   const session = useChatroomSession();
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [filters, setFilters] = useState<ChatroomFilters>(EMPTY_FILTERS);
-  const [filtersReady, setFiltersReady] = useState(false);
   const [editingTopic, setEditingTopic] = useState(false);
   const [topicDraft, setTopicDraft] = useState("");
   const [topicError, setTopicError] = useState<string | null>(null);
@@ -54,18 +52,13 @@ export function ChatRoomPage() {
         const loaded = await loadChatroomFilters();
         if (!cancelled && current === request) {
           setFilters(loaded);
-          setFiltersReady(true);
         }
       } catch {
-        if (!cancelled && current === request) {
-          setFiltersReady(false);
-        }
+        // Keep the last known rules when the local store is temporarily unavailable.
       }
     }
     void listen("desktop://config-imported", () => {
       if (!cancelled) {
-        // Unmount the editor immediately so its old debounce cannot run while IPC reloads.
-        setFiltersReady(false);
         void reloadFilters();
       }
     }).then((unlisten) => {
@@ -328,7 +321,7 @@ export function ChatRoomPage() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="chatroom" id="chatroom">
+      <div className="chatroom layout" id="chatroom">
         <div className="chatroom-main">
           {session.error && (
             <Alert variant="destructive" className="chat-banner">
@@ -364,82 +357,73 @@ export function ChatRoomPage() {
             userAvatarMap={userAvatarMap}
           />
 
-          {/* 旧版 .discusse：消息与输入之间的话题行，不进窗口标题栏 */}
-          <section className="chat-discusse">
-            {editingTopic ? (
-              <form
-                className="chat-topic-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  submitTopic();
-                }}
-              >
-                <span className="chat-topic-cost">修改话题需要 16 积分</span>
-                <Input
-                  className="chat-topic-input"
-                  maxLength={TOPIC_MAX_LENGTH}
-                  value={topicDraft}
-                  placeholder="话题，最长 16 字"
-                  onChange={(event) => setTopicDraft(event.target.value)}
-                />
-                <Button type="submit" size="xs" disabled={session.busy}>
-                  确定
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => {
-                    setEditingTopic(false);
-                    setTopicError(null);
+          {topicText.length > 0 ? (
+            <section className="chat-discusse">
+              {editingTopic ? (
+                <form
+                  className="chat-topic-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    submitTopic();
                   }}
                 >
-                  取消
-                </Button>
-              </form>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="chat-discusse-text"
-                  title={
-                    topicText.length > 0
-                      ? discussedActive
-                        ? "单击跟随话题；双击立即发送话题"
-                        : "单击勾选话题（发送时附加）；双击立即发送"
-                      : "无话题"
-                  }
-                  aria-pressed={topicText.length > 0 ? discussedActive : undefined}
-                  disabled={session.busy}
-                  onClick={pickDiscussed}
-                  onDoubleClick={sendDiscussedTopic}
-                  style={
-                    discussedActive
-                      ? {
-                          textDecoration: "underline",
-                          textUnderlineOffset: 3,
-                          fontWeight: 600,
-                        }
-                      : undefined
-                  }
-                >
-                  {topicText.length > 0 ? `#${topicText}#` : "无话题"}
-                </button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  disabled={session.busy}
-                  onClick={openTopicEdit}
-                  title="编辑话题"
-                  aria-label="编辑话题"
-                >
-                  <Pencil aria-hidden="true" />
-                </Button>
-              </>
-            )}
-            {topicError ? <p className="chat-topic-error">{topicError}</p> : null}
-          </section>
+                  <span className="chat-topic-cost">
+                    修改话题需要 16 积分；最大长度 16 字符。
+                  </span>
+                  <Input
+                    className="chat-topic-input"
+                    maxLength={TOPIC_MAX_LENGTH}
+                    value={topicDraft}
+                    placeholder="话题"
+                    onChange={(event) => setTopicDraft(event.target.value)}
+                  />
+                  <Button type="submit" size="xs" disabled={session.busy}>
+                    确定
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => {
+                      setEditingTopic(false);
+                      setTopicError(null);
+                    }}
+                  >
+                    取消
+                  </Button>
+                </form>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="chat-discusse-text"
+                    title={discussedActive ? "跟随话题" : "发送时附加话题"}
+                    aria-pressed={discussedActive}
+                    disabled={session.busy}
+                    onClick={pickDiscussed}
+                    onDoubleClick={sendDiscussedTopic}
+                  >
+                    #{topicText}#
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-discusse-edit"
+                    disabled={session.busy}
+                    onClick={openTopicEdit}
+                    title="编辑话题"
+                    aria-label="编辑话题"
+                  >
+                    <i className="fa fa-pencil-square-o" aria-hidden="true" />
+                  </Button>
+                </>
+              )}
+              {topicError ? <p className="chat-topic-error">{topicError}</p> : null}
+            </section>
+          ) : null}
 
           <Composer
             disabled={session.sendDisabled}
@@ -463,18 +447,6 @@ export function ChatRoomPage() {
           onlineCount={session.onlineCount}
           users={session.users}
           selfUserName={session.selfUserName}
-          connectionStatus={session.connectionStatus}
-          busy={session.busy}
-          onRebuild={() => {
-            void session.rebuild();
-          }}
-          onRefresh={() => {
-            void session.refresh();
-          }}
-          filters={filters}
-          filtersReady={filtersReady}
-          onFilters={setFilters}
-          onEditTopic={openTopicEdit}
           onMention={(userName) => setPendingToken(insertMentionToken(userName))}
           onOpenIm={openPrivateChat}
         />

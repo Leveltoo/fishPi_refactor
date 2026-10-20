@@ -1,24 +1,21 @@
-/* 通知面板：碳黑底 + 灯笼橙，只作用于本 feature。 */
-
+/* Activity follows the 1.3.9 settings/notice density. All controls stay shadcn. */
 .activity {
-  --act-paper: var(--color-bg, #161412);
-  --act-ink: var(--color-text, #ece4d8);
-  --act-muted: var(--color-text-muted, #9a8f82);
-  --act-line: var(--color-border, #3a332c);
-  --act-accent: var(--color-accent, #d9772c);
-  --act-accent-fg: var(--color-accent-text, #1a120c);
-  --act-warn: var(--color-brass, #c4a574);
-  --act-raised: var(--color-bg-raised, #1f1c19);
-  --act-radius: var(--radius-md, 6px);
+  --activity-bg: var(--global-background-color, #232425);
+  --activity-text: var(--global-text-color, #cecac3);
+  --activity-muted: var(--global-control-text-color, #aca49a);
+  --activity-line: var(--global-control-border-color, #393e40);
+  --activity-control: var(--global-control-background-color, #181a1b);
+  --activity-accent: var(--global-active-color, #d23f31);
 
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  color: var(--act-ink);
-  background: var(--act-paper);
-  font-family: var(--font-body, "Segoe UI", "Microsoft YaHei UI", sans-serif);
+  color: var(--activity-text);
+  background: var(--activity-bg);
+  font: 16px/1.8 "Helvetica Neue", "Luxi Sans", "DejaVu Sans",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
 .activity-head,
@@ -27,179 +24,186 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2, 8px);
-  padding: var(--space-3, 12px);
+  gap: 8px;
+  padding: 6px 12px;
 }
 
 .activity-head {
-  border-bottom: 1px solid var(--act-line);
-  background: var(--act-raised);
+  border-bottom: 1px solid var(--activity-line);
 }
 
-.activity-title-row {
-  display: flex;
+.activity-head-title {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2, 8px);
-  min-width: 0;
-}
-
-.activity-title {
-  margin: 0;
-  font-size: 0.92rem;
-  font-weight: 650;
+  gap: 6px;
+  font-size: 14px;
 }
 
 .activity-unread,
 .activity-type-badge {
-  min-width: 1.1rem;
-  height: 1.1rem;
-  padding: 0 0.28rem;
-  background: var(--act-accent);
-  color: var(--act-accent-fg);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   border: 0;
+  border-radius: 8px;
+  background: var(--activity-accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
 }
 
 .activity-head-spin {
-  color: var(--act-warn);
+  width: 14px;
+  height: 14px;
+  color: var(--activity-muted);
 }
 
-.activity-alert {
-  flex: 0 0 auto;
-  margin: 0;
-  border-radius: 0;
-  border-left: 0;
-  border-right: 0;
-  border-top: 0;
-  background: color-mix(in srgb, var(--act-warn) 12%, var(--act-paper));
-  color: var(--act-ink);
-  border-color: color-mix(in srgb, var(--act-warn) 35%, var(--act-line));
+.activity-head [data-slot="button"],
+.activity-list-head [data-slot="button"] {
+  height: 24px;
+  padding: 0 5px;
+  border: 0;
+  color: var(--activity-muted);
+}
+
+.activity-head [data-slot="button"]:hover:not(:disabled),
+.activity-list-head [data-slot="button"]:hover:not(:disabled) {
+  color: #fff;
+  background: transparent;
 }
 
 .activity-daily {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3, 12px);
-  padding: var(--space-3, 12px);
-  border-bottom: 1px solid var(--act-line);
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--activity-line);
 }
 
 .activity-liveness-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2, 8px);
+  gap: 8px;
+  min-height: 24px;
 }
 
 .activity-label {
-  flex-shrink: 0;
-  font-size: 0.78rem;
-  color: var(--act-muted);
+  flex: none;
+  color: var(--activity-muted);
+  font-size: 12px;
 }
 
 .activity-meter {
-  flex: 1 1 auto;
-  height: 0.45rem;
+  flex: 1;
+  height: 3px;
   overflow: hidden;
-  background: var(--color-bg-input, #241f1b);
-  border: 1px solid var(--act-line);
-  border-radius: 999px;
+  background: var(--activity-control);
 }
 
 .activity-meter-fill {
   height: 100%;
-  background: var(--act-accent);
+  background: var(--header-btn-checked-color, #57a3f3);
 }
 
 .activity-percent {
-  flex-shrink: 0;
-  min-width: 2.6rem;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.82rem;
-  color: var(--act-accent);
+  flex: none;
+  min-width: 32px;
+  color: var(--header-btn-checked-color, #57a3f3);
+  font-size: 12px;
   text-align: right;
 }
 
 .activity-muted {
-  color: var(--act-muted);
+  color: var(--activity-muted);
 }
 
 .activity-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2, 8px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
 .activity-actions [data-slot="button"] {
-  font-weight: 600;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--activity-line);
+  border-radius: 0;
+  background: var(--activity-control);
+  color: var(--activity-muted);
+  font-size: 12px;
 }
 
-.activity-actions [data-slot="button"][data-variant="default"],
-.activity-actions [data-slot="button"]:not([data-variant]) {
-  color: var(--act-accent-fg);
-  background: var(--act-accent);
-  border-color: var(--act-accent);
+.activity-actions [data-slot="button"][data-variant="default"] {
+  border-color: var(--activity-accent);
+  background: var(--activity-accent);
+  color: #fff;
 }
 
-.activity-actions [data-slot="button"][data-variant="outline"] {
-  color: var(--act-ink);
-  background: transparent;
-  border-color: var(--color-border-strong, #5a4e42);
+.activity-actions [data-slot="button"]:hover:not(:disabled) {
+  border-color: var(--activity-accent);
+  color: var(--activity-text);
 }
 
 .activity-types {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  border-bottom: 1px solid var(--act-line);
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--activity-line);
 }
 
 .activity-type {
-  gap: 0.25rem;
+  height: 28px;
+  gap: 4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--activity-muted);
+  font-size: 12px;
+}
+
+.activity-type:hover:not(:disabled) {
+  background: var(--global-alpha-background-white, rgb(100 100 100 / 20%));
+  color: var(--activity-text);
 }
 
 .activity-type.is-active {
-  color: var(--act-accent-fg);
-  background: var(--act-accent);
-  border-color: var(--act-accent);
-}
-
-.activity-list-head {
-  padding-bottom: var(--space-1, 4px);
+  color: var(--activity-accent);
 }
 
 .activity-scroll {
-  flex: 1 1 auto;
+  flex: 1;
   min-height: 0;
 }
 
 .activity-empty {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
+  gap: 6px;
   margin: 0;
-  padding: var(--space-5, 24px) var(--space-4, 16px);
-  color: var(--act-muted);
-  font-size: 0.85rem;
+  padding: 24px 16px;
+  color: var(--activity-muted);
+  font-size: 12px;
   text-align: center;
 }
 
 .activity-items {
-  list-style: none;
   margin: 0;
-  padding: var(--space-1, 4px) var(--space-3, 12px) var(--space-4, 16px);
+  padding: 0 12px 12px;
+  list-style: none;
 }
 
 .activity-item {
-  padding: 0.65rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--act-line) 70%, transparent);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--activity-line);
 }
 
 .activity-item.is-read {
-  opacity: 0.62;
+  opacity: 0.55;
 }
 
 .activity-item-title,
@@ -209,38 +213,37 @@
 }
 
 .activity-item-title {
-  font-size: 0.86rem;
-  font-weight: 650;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .activity-item-open {
+  display: inline;
+  height: auto;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
+  line-height: inherit;
   text-align: left;
-  overflow-wrap: anywhere;
-  cursor: pointer;
+  white-space: normal;
 }
 
-.activity-item-open:hover,
-.activity-item-open:focus-visible {
-  color: var(--act-accent);
+.activity-item-open:hover {
+  color: var(--activity-accent);
   text-decoration: underline;
 }
 
 .activity-item-body {
-  margin-top: 0.2rem;
-  font-size: 0.78rem;
-  color: var(--act-muted);
   overflow: hidden;
+  color: var(--activity-muted);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .activity-item-meta {
-  margin-top: 0.25rem;
-  font-size: 0.72rem;
-  color: var(--color-text-faint, #6e655c);
+  color: #6e655c;
+  font-size: 11px;
 }

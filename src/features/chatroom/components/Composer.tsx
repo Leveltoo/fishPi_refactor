@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { toast } from "sonner";
-import { Gift, Image as ImageIcon, Megaphone, RefreshCw, Send, Smile } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
@@ -37,6 +37,7 @@ import {
 } from "../pasteImages";
 import type { ClipboardEvent } from "react";
 import { composeChatroomMessage, insertTextAtSelection, withReplyPrefix } from "../composerLogic";
+import { RedPacketIcon } from "./RedPacketIcon";
 
 type ComposerProps = {
   disabled: boolean;
@@ -700,7 +701,7 @@ export function Composer({
           onClick={() => onClear?.()}
           disabled={preparing || sending || uploadBusy}
         >
-          <RefreshCw aria-hidden="true" />
+          <i className="fa fa-refresh" aria-hidden="true" />
         </Button>
         <Button
           type="button"
@@ -712,7 +713,7 @@ export function Composer({
           disabled={disabled || uploadBusy || preparing}
           onClick={() => fileInputRef.current?.click()}
         >
-          {uploadBusy ? <Spinner /> : <ImageIcon aria-hidden="true" />}
+          {uploadBusy ? <Spinner /> : <i className="fa fa-picture-o" aria-hidden="true" />}
         </Button>
         <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
           <PopoverTrigger asChild>
@@ -725,7 +726,7 @@ export function Composer({
               aria-label="发表情"
               disabled={disabled || preparing}
             >
-              <Smile aria-hidden="true" />
+              <i className="fa fa-smile-o" aria-hidden="true" />
             </Button>
           </PopoverTrigger>
           <PopoverContent align="start" className="chat-emoji-popover">
@@ -748,7 +749,7 @@ export function Composer({
           disabled={disabled}
           onClick={() => setBarrageOpen(true)}
         >
-          <Megaphone aria-hidden="true" />
+          <i className="fa fa-bullhorn" aria-hidden="true" />
         </Button>
         {/* 对齐旧版 MessageBox：居中 Modal「发个弹幕」，32 字 + 颜色 + 说明 */}
         <Dialog open={barrageOpen} onOpenChange={setBarrageOpen}>
@@ -860,7 +861,7 @@ export function Composer({
           disabled={disabled}
           onClick={onSendRedpacket}
         >
-          <Gift aria-hidden="true" />
+          <RedPacketIcon />
         </Button>
       </div>
 
@@ -900,8 +901,10 @@ export function Composer({
                   (emojiPickIndex < emojiComplete.items.length ? emojiPickIndex : 0);
                 return (
                   <li key={item.name}>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="xs"
                       className={active ? "is-active" : undefined}
                       onMouseDown={(event) => {
                         event.preventDefault();
@@ -911,13 +914,13 @@ export function Composer({
                     >
                       <img src={item.url} alt="" />
                       <span>:{item.name}:</span>
-                    </button>
+                    </Button>
                   </li>
                 );
               })}
             </ul>
           ) : null}
-          <textarea
+          <Textarea
             ref={textareaRef}
             id="chatroom-input"
             className="chat-composer-input"
@@ -955,12 +958,14 @@ export function Composer({
           aria-label="发送"
           disabled={disabled || sending || preparing || pendingConfirm || uploadBusy || draft.trim().length === 0}
         >
-          {sending || preparing ? <Spinner /> : <Send aria-hidden="true" />}
+          {sending || preparing ? <Spinner /> : <i className="fa fa-paper-plane" aria-hidden="true" />}
         </Button>
         {discussed != null && discussed.length > 0 ? (
           <div className="chat-composer-more">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="xs"
               className="chat-composer-tag"
               title="移除话题带出"
               aria-label={`移除话题带出 ${discussed}`}
@@ -969,7 +974,7 @@ export function Composer({
             >
               #{discussed}#
               <span aria-hidden="true">×</span>
-            </button>
+            </Button>
           </div>
         ) : null}
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Play } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { sanitizeHttpUrl } from "../../../lib/markdown";
 import { playNeteaseSong } from "@/features/music";
@@ -31,14 +31,14 @@ export function MusicCard({ card, fallback }: MusicCardProps) {
   }, [songId]);
 
   return (
-    <button type="button" className="chat-music" disabled={songId == null}
+    <Button type="button" variant="ghost" className="chat-music" disabled={songId == null}
       title="点击聆听" onClick={() => {
         if (songId != null && !playNeteaseSong(songId)) toast.error("播放列表未就绪");
       }}>
       <span className="chat-music-artwork">
         {coverUrl ? <img className="chat-music-cover" src={coverUrl} alt=""
           onError={() => setCoverBroken(true)} /> : null}
-        <Play className="chat-music-play" aria-hidden="true" />
+        <i className="fa fa-play chat-music-play" aria-hidden="true" />
       </span>
       <span className="chat-music-meta">
         <span className="chat-music-title">
@@ -46,6 +46,6 @@ export function MusicCard({ card, fallback }: MusicCardProps) {
         </span>
         <span className="chat-music-state">点击聆听</span>
       </span>
-    </button>
+    </Button>
   );
 }

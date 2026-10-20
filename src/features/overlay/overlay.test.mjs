@@ -2,6 +2,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createLoader, hookMocks, plain } from "../shell/testLoader.mjs";
 
+test("user profile prefetch and fetch share one request and cache the result", async () => {
+  let calls = 0;
+  const load = createLoader({
+    "@tauri-apps/api/core": {
+      invoke: async () => {
+        calls += 1;
+        return { userName: "alice", userNickname: "Alice", userAvatarURL: "https://fishpi.cn/a.png" };
+      },
+    },
+  });
+  const api = load(new URL("./api.ts", import.meta.url));
+  assert.equal(api.cachedUserProfile("alice"), null);
+  const [prefetched, fetched] = await Promise.all([
+    api.prefetchUserProfile("alice"),
+    api.fetchUserProfile("ALICE"),
+  ]);
+  assert.equal(calls, 1);
+  assert.equal(prefetched.status, "ok");
+  assert.equal(fetched.status, "ok");
+  assert.equal(api.cachedUserProfile("alice")?.status, "ok");
+  await api.fetchUserProfile("alice");
+  assert.equal(calls, 1);
+  api.invalidateUserProfile("alice");
+  await api.fetchUserProfile("alice");
+  assert.equal(calls, 2);
+});
+
 test("image fit handles stage ratio, invalid sizes and pointer-centered zoom", () => {
   const { fitImageLayout, zoomImageLayout } = createLoader()(new URL("./imageLayout.ts", import.meta.url));
   for (const sizes of [[1200, 1000, 800, 400], [800, 2000, 600, 800], [400, 300, 300, 800]]) {
@@ -37,6 +64,7 @@ test("mention Enter selection leaves all modifier combinations and IME events to
     },
     "react/jsx-runtime": hooks.jsx,
     "@/components/ui/avatar": components,
+    "@/components/ui/button": components,
     "@/components/ui/command": components,
     "../../lib/markdown": { sanitizeHttpUrl: () => null },
     "./api": { searchUsers: async () => ({ status: "ok", users: [] }) },

@@ -1,4 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
+import { Button } from "@/components/ui/button";
 import {
   getPlayerSnapshot,
   playerClear,
@@ -39,8 +40,10 @@ export function HeaderMusic() {
       data-menu="true"
       title={`${current.artist} - ${current.name}`}
     >
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-sm"
         className={
           expanded
             ? "shell__header-icon-btn shell__header-music-toggle is-on"
@@ -52,7 +55,7 @@ export function HeaderMusic() {
         onClick={() => setExpanded((open) => !open)}
       >
         <i className="fa fa-music" aria-hidden="true" />
-      </button>
+      </Button>
       <span
         className={
           expanded
@@ -60,65 +63,79 @@ export function HeaderMusic() {
             : "shell__header-music-player"
         }
       >
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           className="shell__header-icon-btn"
           title="关闭播放器"
           aria-label="关闭播放器"
           onClick={() => playerClear()}
         >
           <i className="fa fa-times" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="shell__header-icon-btn"
-          title="上一首"
-          aria-label="上一首"
-          disabled={!multi}
-          onClick={() => playerPrev()}
-        >
-          <i className="fa fa-backward" aria-hidden="true" />
-        </button>
+        </Button>
+        {multi ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shell__header-icon-btn"
+            title="上一首"
+            aria-label="上一首"
+            onClick={() => playerPrev()}
+          >
+            <i className="fa fa-backward" aria-hidden="true" />
+          </Button>
+        ) : null}
         <span className="shell__header-music-name">
           {current.artist} - {current.name}
         </span>
-        <button
+        {multi ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shell__header-icon-btn"
+            title="下一首"
+            aria-label="下一首"
+            onClick={() => playerNext()}
+          >
+            <i className="fa fa-forward" aria-hidden="true" />
+          </Button>
+        ) : null}
+        <Button
           type="button"
-          className="shell__header-icon-btn"
-          title="下一首"
-          aria-label="下一首"
-          disabled={!multi}
-          onClick={() => playerNext()}
-        >
-          <i className="fa fa-forward" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
+          variant="ghost"
+          size="icon-sm"
           className="shell__header-icon-btn"
           title={player.playing ? "暂停" : "播放"}
           aria-label={player.playing ? "暂停" : "播放"}
           onClick={() => playerTogglePlay()}
         >
           <i className={player.playing ? "fa fa-pause" : "fa fa-play"} aria-hidden="true" />
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           className="shell__header-icon-btn"
           title={player.muted ? "取消静音" : "静音"}
           aria-label={player.muted ? "取消静音" : "静音"}
           onClick={() => playerToggleMute()}
         >
           <i className={player.muted ? "fa fa-volume-off" : "fa fa-volume-up"} aria-hidden="true" />
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           className="shell__header-icon-btn"
           title="移出播放列表"
           aria-label="移出播放列表"
           onClick={() => playerRemoveCurrent()}
         >
           <i className="fa fa-trash-o" aria-hidden="true" />
-        </button>
+        </Button>
       </span>
     </div>
   );

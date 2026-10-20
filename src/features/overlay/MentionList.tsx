@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   Command,
-  CommandEmpty,
-  CommandGroup,
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
@@ -27,34 +26,26 @@ type MentionListProps = {
  */
 export function MentionList({ query, onPick, onClose }: MentionListProps) {
   const [users, setUsers] = useState<UserSearchHit[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState(0);
 
   useEffect(() => {
     const needle = query.trim();
     if (needle.length === 0) {
       setUsers([]);
-      setLoading(false);
-      setNotice(null);
       return;
     }
     let cancelled = false;
-    setLoading(true);
     const timer = window.setTimeout(() => {
       void searchUsers(needle).then((outcome) => {
         if (cancelled) {
           return;
         }
-        setLoading(false);
         if (outcome.status === "ok") {
           setUsers(outcome.users);
-          setNotice(null);
           setSelected(0);
           return;
         }
         setUsers([]);
-        setNotice(outcome.message);
       });
     }, SEARCH_DEBOUNCE_MS);
     return () => {
@@ -104,8 +95,10 @@ export function MentionList({ query, onPick, onClose }: MentionListProps) {
     };
   }, [onClose, onPick, selected, users]);
 
-  const empty = emptyCopy(query, loading, notice, users.length);
   const selectedName = users[selected]?.userName ?? "";
+  if (users.length === 0) {
+    return null;
+  }
 
   return (
     <Command
@@ -115,42 +108,38 @@ export function MentionList({ query, onPick, onClose }: MentionListProps) {
       aria-label="@ 用户补全"
     >
       <CommandList>
-        {users.length === 0 ? (
-          <CommandEmpty>{empty}</CommandEmpty>
-        ) : (
-          <CommandGroup heading="@ 用户">
-            {users.map((user) => (
-              <CommandItem
-                key={user.userName}
-                value={user.userName}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                }}
-                onSelect={() => {
-                  onPick(user.userName);
-                }}
-              >
-                <button
-                  type="button"
-                  className="ov-mention-face"
-                  aria-label={`查看 ${user.userName} 的名片`}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    dispatchUserCard(user.userName);
-                  }}
-                >
-                  <UserFace user={user} />
-                </button>
-                <span>{user.userName}</span>
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
+        {users.map((user) => (
+          <CommandItem
+            key={user.userName}
+            value={user.userName}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onSelect={() => {
+              onPick(user.userName);
+            }}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="ov-mention-face"
+              aria-label={`查看 ${user.userName} 的名片`}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                dispatchUserCard(user.userName);
+              }}
+            >
+              <UserFace user={user} />
+            </Button>
+            <span>{user.userName}</span>
+          </CommandItem>
+        ))}
       </CommandList>
     </Command>
   );
@@ -172,25 +161,4 @@ function nextIndex(current: number, length: number, delta: number): number {
     return 0;
   }
   return (current + delta + length) % length;
-}
-
-function emptyCopy(
-  query: string,
-  loading: boolean,
-  notice: string | null,
-  count: number,
-): string {
-  if (notice) {
-    return notice;
-  }
-  if (query.trim().length === 0) {
-    return "输入用户名";
-  }
-  if (loading) {
-    return "正在搜索…";
-  }
-  if (count === 0) {
-    return "没有匹配的用户";
-  }
-  return "没有匹配的用户";
 }

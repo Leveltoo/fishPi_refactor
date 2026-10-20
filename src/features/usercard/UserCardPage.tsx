@@ -7,15 +7,18 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
 import { sanitizeHttpUrl } from "../../lib/markdown";
 import { OPEN_IM_EVENT } from "../../lib/nav";
 import { invokeAuthMe } from "../../lib/tauri";
-import { REDPACKET_SEND_EVENT } from "../redpacket/events";
 import {
+  cachedUserProfile,
   fetchUserProfile,
+  invalidateUserProfile,
   type ProfileOutcome,
 } from "../overlay/api";
 import {
@@ -42,7 +45,10 @@ function initialUser(): string {
 
 export function UserCardPage() {
   const [userName, setUserName] = useState(initialUser);
-  const [outcome, setOutcome] = useState<ProfileOutcome | null>(null);
+  const [outcome, setOutcome] = useState<ProfileOutcome | null>(() => {
+    const name = initialUser();
+    return name ? cachedUserProfile(name) : null;
+  });
   const [selfName, setSelfName] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const rootRef = useRef<HTMLElement | null>(null);
@@ -69,7 +75,7 @@ export function UserCardPage() {
     return () => {
       cancelled = true;
     };
-  }, [userName, refresh]);
+  }, []);
 
   useEffect(() => {
     if (!userName) {
@@ -77,7 +83,7 @@ export function UserCardPage() {
       return;
     }
     let cancelled = false;
-    setOutcome(null);
+    setOutcome(cachedUserProfile(userName));
     void fetchUserProfile(userName).then((next) => {
       if (!cancelled) {
         setOutcome(next);
@@ -92,6 +98,7 @@ export function UserCardPage() {
     const unlisten = listen<{ userName?: string }>(USER_CARD_UPDATE_EVENT, (event) => {
       const next = event.payload?.userName?.trim();
       if (next) {
+        invalidateUserProfile(next);
         setUserName(next);
         setRefresh((value) => value + 1);
       }
@@ -129,11 +136,6 @@ export function UserCardPage() {
     await emitTo("main", REQUEST_LOGOUT_EVENT);
   }
 
-  async function requestExclusiveRedpacket(): Promise<void> {
-    handleClose();
-    await emitTo("main", REDPACKET_SEND_EVENT, { user: account });
-  }
-
   const profile = outcome?.status === "ok" ? outcome.profile : null;
   const bg = sanitizeHttpUrl(profile?.cardBg);
   const nick = profile?.userNickname?.trim() || profile?.userName || userName;
@@ -166,27 +168,25 @@ export function UserCardPage() {
       ) : (
         <>
           <header className="ucard-header">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-lg"
               className="ucard-avatar-btn"
               aria-label="打开个人主页"
               onClick={() => {
                 void openUrl(`https://fishpi.cn/member/${encodeURIComponent(account)}`);
               }}
             >
-              <img
-                className="ucard-avatar"
-                src={sanitizeHttpUrl(profile.userAvatarUrl) ?? ""}
-                alt=""
-                onError={(event) => {
-                  event.currentTarget.style.visibility = "hidden";
-                }}
-              />
-            </button>
+              <Avatar className="ucard-avatar">
+                <AvatarImage src={sanitizeHttpUrl(profile.userAvatarUrl) ?? ""} alt="" />
+                <AvatarFallback>{nick.slice(0, 1)}</AvatarFallback>
+              </Avatar>
+            </Button>
             <div className="ucard-name">
               <div className="ucard-name-row">
                 <span className="ucard-nick">{nick}</span>
-                <span className="ucard-account">@{account}</span>
+                <span className="ucard-account">{account}</span>
               </div>
               {metals.length > 0 ? (
                 <div className="ucard-metals">
@@ -215,8 +215,10 @@ export function UserCardPage() {
                   </span>
                 ) : null}
                 {profile.points !== undefined ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="xs"
                     className="ucard-points"
                     title={`${profile.points} 积分`}
                     onClick={() => {
@@ -225,13 +227,13 @@ export function UserCardPage() {
                       );
                     }}
                   >
-                    <span aria-hidden="true">◉</span>
+                    <PointsIcon />
                     <span className="ucard-points-num">{profile.points}</span>
-                  </button>
+                  </Button>
                 ) : null}
                 {profile.city ? (
                   <span className="ucard-city" title={profile.city}>
-                    ▣ {profile.city}
+                    <i className="fa fa-map-marker" aria-hidden="true" />
                   </span>
                 ) : null}
                 {profile.userNo ? (
@@ -250,44 +252,31 @@ export function UserCardPage() {
                       void openUrl(event.currentTarget.href);
                     }}
                   >
+                    <i className="fa fa-user-o" aria-hidden="true" />
                     {profile.mbti}
                   </a>
                 ) : null}
               </div>
               <div className="ucard-state">
-                <span
-                  className={
-                    profile.online ? "ucard-tag is-online" : "ucard-tag"
-                  }
+                <Badge
+                  variant={profile.online ? "destructive" : "outline"}
+                  className={profile.online ? "ucard-tag is-online" : "ucard-tag"}
                 >
                   {profile.online ? "在线" : "离线"}
-                </span>
+                </Badge>
                 {canChat ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="ucard-chat"
-                      onClick={() => {
-                        void emitTo("main", OPEN_IM_EVENT, { userName: account })
-                          .then(handleClose);
-                      }}
-                    >
-                      私聊
-                    </Button>
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="ucard-chat"
-                      onClick={() => {
-                        void requestExclusiveRedpacket();
-                      }}
-                    >
-                      发专属红包
-                    </Button>
-                  </>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    className="ucard-chat"
+                    onClick={() => {
+                      void emitTo("main", OPEN_IM_EVENT, { userName: account })
+                        .then(handleClose);
+                    }}
+                  >
+                    私聊
+                  </Button>
                 ) : isSelf ? (
                   <Button
                     type="button"
@@ -307,5 +296,17 @@ export function UserCardPage() {
         </>
       )}
     </main>
+  );
+}
+
+function PointsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="11" fill="#FDA203" stroke="#EF7819" strokeWidth="2" />
+      <path
+        d="m12 5 1.9 4.1 4.5.5-3.3 3.1.9 4.4L12 14.9l-4 2.2.9-4.4-3.3-3.1 4.5-.5z"
+        fill="#FFF42B"
+      />
+    </svg>
   );
 }

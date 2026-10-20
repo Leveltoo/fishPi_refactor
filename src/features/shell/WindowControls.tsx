@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { DEFAULT_SETTINGS } from "@/features/settings/constants";
 import {
   subscribeDesktopSettings,
@@ -33,8 +34,10 @@ function WinBtn({
     classes.push("is-on");
   }
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon-sm"
       className={classes.join(" ")}
       title={label}
       aria-label={label}
@@ -42,7 +45,7 @@ function WinBtn({
       onClick={onClick}
     >
       {customIcon}
-    </button>
+    </Button>
   );
 }
 

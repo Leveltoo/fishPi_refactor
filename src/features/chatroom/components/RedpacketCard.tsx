@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { GiftIcon } from "@phosphor-icons/react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -20,6 +20,7 @@ import { FISHPI_REDPACKET_RESULT_EVENT } from "../redpacketEvents";
 import { readSelfSession, parseOpenPayload } from "../../redpacket/api";
 import type { RedPacketInfo } from "../../redpacket/types";
 import { GesturePicker } from "../../redpacket/parts";
+import { RedPacketIcon } from "./RedPacketIcon";
 
 const TYPE_LABEL: Record<string, string> = {
   random: "拼手气红包",
@@ -100,15 +101,16 @@ export function RedpacketCard({
 
   return (
     <div className="chat-rp-wrap">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className={done ? "chat-msg-redpacket is-done" : "chat-msg-redpacket"}
         title={title}
         onClick={openCard}
       >
         <div className="chat-rp-main">
           <span className="chat-rp-icon" aria-hidden="true">
-            <GiftIcon size={24} />
+            <RedPacketIcon />
           </span>
           <span className="chat-rp-msg">{msg}</span>
         </div>
@@ -119,7 +121,7 @@ export function RedpacketCard({
         {done ? (
           <span className="chat-rp-status">{empty ? "已领完" : "已领取"}</span>
         ) : null}
-      </button>
+      </Button>
       {gestureVisible ? (
         <div className="chat-gesture" title="猜猜我出什么呢~">
           <GesturePicker onChange={pickGesture} />

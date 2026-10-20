@@ -1,5 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import legacyIcon from "@/assets/legacy/icon.png";
 import { desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
 import { invokeAuthLogin } from "../../lib/tauri";
@@ -104,7 +106,7 @@ export function LoginPage({
             <span className="login-input-addon">
               <i className="fa fa-user" aria-hidden="true" />
             </span>
-            <input
+            <Input
               type="text"
               name="username"
               autoComplete="username"
@@ -129,7 +131,7 @@ export function LoginPage({
             <span className="login-input-addon">
               <i className="fa fa-lock" aria-hidden="true" />
             </span>
-            <input
+            <Input
               ref={passwordRef}
               type={showPassword ? "text" : "password"}
               name="password"
@@ -146,8 +148,10 @@ export function LoginPage({
                 }
               }}
             />
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               className="login-password-toggle"
               disabled={busy}
               aria-label={showPassword ? "隐藏密码" : "显示密码"}
@@ -157,14 +161,14 @@ export function LoginPage({
                 className={showPassword ? "fa fa-eye-slash" : "fa fa-eye"}
                 aria-hidden="true"
               />
-            </button>
+            </Button>
           </div>
 
           <div className="login-field">
             <span className="login-input-addon">
               <i className="fa fa-shield" aria-hidden="true" />
             </span>
-            <input
+            <Input
               ref={mfaRef}
               type="text"
               name="mfaCode"
@@ -189,18 +193,19 @@ export function LoginPage({
           {error ? <p className="login-message login-message--error">{error}</p> : null}
 
           <div className="login-footer">
-            <button type="submit" className="login-button login-button--success" disabled={busy}>
+            <Button type="submit" className="login-button login-button--success" disabled={busy}>
               {busy ? <i className="fa fa-spinner fa-spin" aria-hidden="true" /> : null}
               {busy ? "登录中" : "登录"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
               className="login-button login-button--default"
               disabled={busy}
               onClick={() => void handleRegister()}
             >
               注册
-            </button>
+            </Button>
           </div>
         </form>
       </main>

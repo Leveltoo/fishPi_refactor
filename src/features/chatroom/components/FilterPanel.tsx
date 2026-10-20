@@ -1,5 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   lookupUserName,
   saveChatroomFilters,
@@ -112,12 +120,11 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
       <ul className="chat-filter-list">
         {shield.map((rule, index) => (
           <li key={`${rule.type}-${index}`} className="chat-filter-row">
-            <select
-              className="chat-inline-input"
+            <Select
               value={rule.type}
               disabled={busy}
-              onChange={(event) => {
-                const type = event.target.value as ShieldKind;
+              onValueChange={(value) => {
+                const type = value as ShieldKind;
                 updateShield(
                   shield.map((item, itemIndex) =>
                     itemIndex === index ? { ...item, type } : item,
@@ -125,16 +132,25 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
                 );
               }}
             >
-              {SHIELD_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.text}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                className="chat-inline-input chat-filter-select"
+                size="sm"
+                aria-label="屏蔽类型"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="chat-filter-options">
+                {SHIELD_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.text}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {rule.type === "redpacket" ? (
               <span className="chat-emoji-note">全部红包</span>
             ) : (
-              <input
+              <Input
                 className="chat-inline-input"
                 value={rule.value}
                 disabled={busy}
@@ -174,9 +190,6 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
         >
           加一条屏蔽
         </Button>
-        <span className="chat-emoji-note">
-          {busy ? "正在保存" : "改完即保存"}
-        </span>
       </div>
       <p className="chat-emoji-note">特别关心</p>
       <div className="chat-care-list">
@@ -206,7 +219,7 @@ export function FilterPanel({ filters, onChange }: FilterPanelProps) {
           void addCare();
         }}
       >
-        <input
+        <Input
           className="chat-inline-input"
           value={careDraft}
           placeholder="用户名"

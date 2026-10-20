@@ -6,6 +6,16 @@ import {
   useSyncExternalStore,
 } from "react";
 import { commandError, desktopPrefsGet, desktopPrefsSet } from "../desktop/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { musicResolve } from "./api";
 import { bindPlaylist, bindPlaylistHas, bindPlaylistRemove } from "./playlist";
 import {
@@ -23,11 +33,13 @@ import {
   setPlayerIndex,
   setPlayerMode,
   setPlayerPlaying,
+  playerToggleMute,
+  playerTogglePlay,
   subscribePlayer,
   type Track,
 } from "./playerStore";
 import { MUSIC_MODE_OPTIONS } from "./modes";
-import "../desktop/panel.css";
+import "./music.css";
 
 function subscribe(next: () => void): () => void {
   return subscribePlayer(next);
@@ -133,98 +145,167 @@ export function PlaylistMount() {
   const current = tracks[index];
 
   return (
-    <section className="parity-panel" aria-label="网易云播放列表">
-      <section className="parity-section">
-        <h2>网易云</h2>
-        <label className="parity-row">
-          播放方式
-          <select
-            value={String(mode)}
-            onChange={(event) => void changeMode(Number(event.target.value))}
-          >
+    <section className="legacy-music" aria-label="网易云播放列表">
+      <header className="legacy-music-head">
+        <span><i className="fa fa-music" aria-hidden="true" /> 网易云</span>
+        <Select
+          value={String(mode)}
+          onValueChange={(value) => void changeMode(Number(value))}
+        >
+          <SelectTrigger className="legacy-music-select" size="sm" aria-label="播放方式">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="legacy-music-options">
             {MUSIC_MODE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <SelectItem key={option.value} value={String(option.value)}>
+                {option.label}
+              </SelectItem>
             ))}
-          </select>
-        </label>
-        <div className="parity-row">
-          <input
-            inputMode="numeric"
-            aria-label="歌曲编号"
-            value={songId}
-            placeholder="歌曲编号"
-            onChange={(event) =>
-              setSongId(event.target.value.replace(/\D/g, "").slice(0, 20))
-            }
-          />
-          <button
-            type="button"
-            disabled={!songId}
-            onClick={() => void enqueue(songId, mode)}
-          >
-            按当前方式播放
-          </button>
-        </div>
-        {tracks.length === 0 ? (
-          <p className="parity-note">播放列表是空的。</p>
-        ) : null}
-        {current ? (
-          <>
-            <p className="parity-note">
+          </SelectContent>
+        </Select>
+      </header>
+
+      <div className="legacy-music-add">
+        <Input
+          className="legacy-music-input"
+          inputMode="numeric"
+          aria-label="歌曲编号"
+          value={songId}
+          placeholder="歌曲编号"
+          onChange={(event) =>
+            setSongId(event.target.value.replace(/\D/g, "").slice(0, 20))
+          }
+        />
+        <Button
+          type="button"
+          size="xs"
+          disabled={!songId}
+          onClick={() => void enqueue(songId, mode)}
+        >
+          播放
+        </Button>
+      </div>
+
+      {current ? (
+        <section className="legacy-music-player">
+          <div className="legacy-music-player-row">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="关闭播放器"
+              aria-label="关闭播放器"
+              onClick={() => playerClear()}
+            >
+              <i className="fa fa-times" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="上一首"
+              aria-label="上一首"
+              disabled={tracks.length < 2}
+              onClick={() => playerPrev()}
+            >
+              <i className="fa fa-backward" aria-hidden="true" />
+            </Button>
+            <span className="legacy-music-name">
               {current.artist} - {current.name}
-            </p>
-            <div className="parity-row">
-              <button
-                type="button"
-                disabled={tracks.length < 2}
-                onClick={() => playerPrev()}
-              >
-                上一首
-              </button>
-              <button
-                type="button"
-                disabled={tracks.length < 2}
-                onClick={() => playerNext()}
-              >
-                下一首
-              </button>
-              <button type="button" onClick={() => playerRemoveCurrent()}>
-                移出
-              </button>
-              <button type="button" onClick={() => playerClear()}>
-                关闭
-              </button>
-            </div>
-            <audio
-              key={current.id}
-              ref={audioRef}
-              src={current.url}
-              controls
-              autoPlay
-              muted={player.muted}
-              playsInline
-              onPlay={() => setPlayerPlaying(true)}
-              onPause={() => setPlayerPlaying(false)}
-              onEnded={() => playerOnEnded()}
-              onError={() => setPlayerError("这一首没有播起来")}
-            />
-          </>
-        ) : null}
-        <ul className="parity-list">
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="下一首"
+              aria-label="下一首"
+              disabled={tracks.length < 2}
+              onClick={() => playerNext()}
+            >
+              <i className="fa fa-forward" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title={player.playing ? "暂停" : "播放"}
+              aria-label={player.playing ? "暂停" : "播放"}
+              onClick={() => playerTogglePlay()}
+            >
+              <i className={player.playing ? "fa fa-pause" : "fa fa-play"} aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title={player.muted ? "取消静音" : "静音"}
+              aria-label={player.muted ? "取消静音" : "静音"}
+              onClick={() => playerToggleMute()}
+            >
+              <i
+                className={player.muted ? "fa fa-volume-off" : "fa fa-volume-up"}
+                aria-hidden="true"
+              />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="移出播放列表"
+              aria-label="移出播放列表"
+              onClick={() => playerRemoveCurrent()}
+            >
+              <i className="fa fa-trash-o" aria-hidden="true" />
+            </Button>
+          </div>
+          <audio
+            className="legacy-music-audio"
+            key={current.id}
+            ref={audioRef}
+            src={current.url}
+            autoPlay
+            muted={player.muted}
+            playsInline
+            onPlay={() => setPlayerPlaying(true)}
+            onPause={() => setPlayerPlaying(false)}
+            onEnded={() => playerOnEnded()}
+            onError={() => setPlayerError("这一首没有播起来")}
+          />
+        </section>
+      ) : null}
+
+      <ScrollArea className="legacy-music-scroll">
+        <ul className="legacy-music-list">
           {tracks.map((track, itemIndex) => (
-            <li key={track.id}>
-              <button
+            <li key={track.id} className={itemIndex === index ? "is-playing" : undefined}>
+              <Button
                 type="button"
+                variant="ghost"
+                className="legacy-music-track"
                 onClick={() => setPlayerIndex(itemIndex)}
               >
-                {itemIndex === index ? "正在播放" : "播放"} {track.artist} -{" "}
-                {track.name}
-              </button>
+                <i
+                  className={itemIndex === index ? "fa fa-volume-up" : "fa fa-music"}
+                  aria-hidden="true"
+                />
+                <span>{track.artist} - {track.name}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                title="移出播放列表"
+                aria-label={`移出 ${track.name}`}
+                onClick={() => playerRemoveSong(track.id)}
+              >
+                <i className="fa fa-times" aria-hidden="true" />
+              </Button>
             </li>
           ))}
         </ul>
-      </section>
-      {error ? <p className="parity-error">{error}</p> : null}
+      </ScrollArea>
+
+      {error ? <p className="legacy-music-error">{error}</p> : null}
     </section>
   );
 }

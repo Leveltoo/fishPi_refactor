@@ -36,9 +36,14 @@ test("playlist preserves old numeric strategies, duplicate order and distinct de
 
 test("public force-add appends without changing the current song or ordinary click strategies", async () => {
   const hooks = hookMocks();
+  const components = new Proxy({}, { get: (_target, name) => name });
   const load = createLoader({
     react: hooks.react,
     "react/jsx-runtime": hooks.jsx,
+    "@/components/ui/button": components,
+    "@/components/ui/input": components,
+    "@/components/ui/scroll-area": components,
+    "@/components/ui/select": components,
     "../desktop/api": { desktopPrefsGet: async () => ({ musicMode: 0 }) },
     "./api": { musicResolve: async (id) => track(id) },
   });
@@ -78,6 +83,7 @@ test("public force-add appends without changing the current song or ordinary cli
 
 test("music resolve follows click order and clear rejects a late result", async () => {
   const hooks = hookMocks();
+  const components = new Proxy({}, { get: (_target, name) => name });
   const requests = [];
   const first = deferred();
   const third = deferred();
@@ -85,6 +91,10 @@ test("music resolve follows click order and clear rejects a late result", async 
   const load = createLoader({
     react: hooks.react,
     "react/jsx-runtime": hooks.jsx,
+    "@/components/ui/button": components,
+    "@/components/ui/input": components,
+    "@/components/ui/scroll-area": components,
+    "@/components/ui/select": components,
     "../desktop/api": {
       desktopPrefsGet: async () => ({ musicMode: 1 }),
       commandError: (error) => String(error),

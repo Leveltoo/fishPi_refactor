@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -172,8 +173,10 @@ export function MessageBubble({
                 <time className="im-msg-time">{message.time}</time>
               ) : null}
               {canRevoke ? (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="xs"
                   className="im-msg-revoke"
                   disabled={revoking}
                   onClick={() => {
@@ -181,7 +184,7 @@ export function MessageBubble({
                   }}
                 >
                   {revoking ? "撤回中" : "撤回"}
-                </button>
+                </Button>
               ) : null}
             </header>
             <div className="im-msg-content">{messageBody(message, onJump)}</div>

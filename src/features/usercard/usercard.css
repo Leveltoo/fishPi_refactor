@@ -1,5 +1,4 @@
-/* 用户资料子窗：结构对齐旧 card.vue，颜色跟全局 token。
-   头像用负 margin 上探：必须在 .ucard 顶部留够 padding，否则 overflow:hidden 会裁掉上半截。 */
+/* 用户资料子窗：结构对齐旧 card.vue。 */
 
 .ucard {
   box-sizing: border-box;
@@ -9,16 +8,16 @@
   width: 100vw;
   height: 100vh;
   margin: 0;
-  /* 头像 96px + margin-top -48 → 顶部至少 52px 才完整可见 */
-  padding-top: 52px;
+  padding-top: 0;
   overflow: hidden;
-  color: var(--color-text);
-  background-color: var(--color-bg);
+  color: var(--global-text-color);
+  background-color: transparent;
   background-size: cover;
   background-position: 50%;
-  font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 1.5;
+  font-family: "Helvetica Neue", "Luxi Sans", "DejaVu Sans",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 1em;
+  line-height: 1.8;
   user-select: none;
   -webkit-app-region: no-drag;
 }
@@ -46,18 +45,18 @@
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  /* 给头像上探留出的 padding 在父级；header 本身不再压 top */
-  padding: 4px 10px 6px;
-  background: color-mix(in srgb, var(--color-bg-raised) 82%, transparent);
-  backdrop-filter: blur(6px);
+  padding: 50px 10px 4px;
+  background: var(--global-alpha-background-color);
 }
 
 .ucard-avatar-btn {
   flex: none;
-  /* 旧版 -64px 上探；在 52px padding 下用 -48 保证 96px 头像完整落在窗内 */
-  margin-top: -48px;
+  width: 100px;
+  height: 100px;
+  margin-top: -50px;
   padding: 0;
-  border: 0;
+  border: 0 !important;
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
   line-height: 0;
@@ -67,19 +66,23 @@
 
 .ucard-avatar {
   display: block;
-  width: 96px;
-  height: 96px;
+  width: 100px;
+  height: 100px;
   object-fit: cover;
-  border: 2px solid var(--color-border-strong);
-  border-radius: 4px;
-  background: var(--color-bg-sidebar);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
+  border-radius: 4px !important;
+  overflow: hidden;
+  background: var(--global-control-background-color);
+}
+
+.ucard-avatar [data-slot="avatar-image"],
+.ucard-avatar [data-slot="avatar-fallback"] {
+  border-radius: 4px !important;
 }
 
 .ucard-name {
   min-width: 0;
   flex: 1;
-  padding-top: 6px;
+  padding-top: 0;
 }
 
 .ucard-name-row {
@@ -96,12 +99,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-text);
+  color: var(--global-text-color);
 }
 
 .ucard-account {
   font-size: 0.8em;
-  color: var(--color-text-muted);
+  padding-left: 5px;
+  color: var(--global-control-text-color);
 }
 
 .ucard-metals {
@@ -122,15 +126,14 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px 10px 8px;
-  background: color-mix(in srgb, var(--color-bg-raised) 82%, transparent);
-  backdrop-filter: blur(6px);
+  padding: 0 10px 8px;
+  background: var(--global-alpha-background-color);
 }
 
 .ucard-intro {
-  margin: 0 0 6px;
-  font-size: 0.82rem;
-  color: var(--color-text-muted);
+  margin: 0;
+  font-size: 1em;
+  color: var(--global-text-color);
   word-break: break-word;
 }
 
@@ -140,64 +143,86 @@
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
+  min-height: 2.5em;
+  padding: 0.5em 0;
 }
 
 .ucard-basic {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 0;
   min-width: 0;
 }
 
 .ucard-role {
-  height: 1.35em;
+  height: 1.5em;
   display: block;
+  margin-right: 8px;
 }
 
 .ucard-role-text {
   font-size: 0.75rem;
-  color: var(--color-brass);
+  color: var(--global-control-text-color);
 }
 
 .ucard-points {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-brass);
-  font-size: 0.85rem;
+  gap: 0;
+  width: 3em;
+  height: 1.5em;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--global-text-color);
+  font-size: 1em;
   cursor: pointer;
 }
 
+.ucard-points svg {
+  width: 1.5em;
+  height: 1.5em;
+}
+
+.ucard-points-num {
+  display: none;
+}
+
 .ucard-city {
-  color: var(--color-ok);
-  font-size: 0.85rem;
+  color: #3fd814;
+  font-size: 1.3em;
+  margin-right: 8px;
 }
 
 .ucard-no {
   line-height: 1.4;
   font-weight: 700;
   font-family: var(--font-mono);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--global-control-border-color);
   border-radius: 5px;
   padding: 0 5px;
-  background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  background: var(--global-alpha-background-color);
   font-size: 0.8rem;
+  margin-right: 8px;
 }
 
 .ucard-mbti {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   height: 22px;
-  padding: 0 5px;
+  padding: 0 3px;
   border-radius: 3px;
   color: #fff;
   font-size: 12px;
   line-height: 22px;
   text-decoration: none;
   vertical-align: middle;
+}
+
+.ucard-mbti i {
+  font-size: 13px;
 }
 
 .ucard-state {
@@ -213,17 +238,18 @@
   align-items: center;
   height: 20px;
   padding: 0 6px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--global-control-border-color);
   border-radius: 3px;
-  background: var(--color-bg-hover);
-  color: var(--color-text-muted);
-  font-size: 11px;
+  background: var(--global-alpha-background-color);
+  color: var(--global-control-text-color);
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .ucard-tag.is-online {
-  border-color: color-mix(in srgb, var(--color-danger) 55%, var(--color-border));
-  background: color-mix(in srgb, var(--color-danger) 18%, var(--color-bg-raised));
-  color: #ffb4ac;
+  border-color: #ed4014;
+  background: #ed4014;
+  color: #fff;
 }
 
 .ucard-chat {

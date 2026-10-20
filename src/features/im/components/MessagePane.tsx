@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from "react";
-import { ArrowClockwiseIcon } from "@phosphor-icons/react";
 import { userCardProps } from "../../usercard/hover";
 
 import { Button } from "@/components/ui/button";
@@ -95,7 +94,7 @@ export function MessagePane({
             aria-label="消息清屏"
             onClick={onClear}
           >
-            <ArrowClockwiseIcon />
+            <i className="fa fa-refresh" aria-hidden="true" />
           </Button>
         ) : null}
       </header>

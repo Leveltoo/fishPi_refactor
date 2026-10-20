@@ -1,14 +1,10 @@
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
-import { WarningIcon } from "@phosphor-icons/react";
 
-import { COMMAND_LABEL, NOTICE_TYPES } from "./constants";
+import { NOTICE_TYPES } from "./constants";
 import type { NoticeCountDto, NoticeType } from "./types";
-import { NOTICE_COMMAND, USER_COMMAND } from "./types";
-import { useActivity, type ActivityCapabilities } from "./useActivity";
+import { useActivity } from "./useActivity";
 import { noticeTarget } from "./noticeTarget";
 import { openNoticeTarget } from "../shell/navigation";
 import { toast } from "sonner";
@@ -20,22 +16,21 @@ import "./activity.css";
  */
 export function ActivityHost() {
   const activity = useActivity();
-  const missing = missingCapabilityLabels(activity.capabilities);
   const unread = activity.count.count;
   const percent =
     activity.liveness == null ? null : Math.round(activity.liveness);
 
   return (
-    <div className="activity dark" id="activity">
+    <div className="activity" id="activity">
       <header className="activity-head">
-        <div className="activity-title-row">
-          <h1 className="activity-title">通知</h1>
+        <span className="activity-head-title">
+          通知
           {activity.loadingCount ? (
             <Spinner className="activity-head-spin" />
           ) : unread > 0 ? (
-            <Badge className="activity-unread">{unread > 99 ? "99+" : unread}</Badge>
+            <span className="activity-unread">{unread > 99 ? "99+" : unread}</span>
           ) : null}
-        </div>
+        </span>
         <Button
           type="button"
           size="xs"
@@ -53,17 +48,7 @@ export function ActivityHost() {
         </Button>
       </header>
 
-      {missing.length > 0 ? (
-        <Alert className="activity-alert">
-          <WarningIcon />
-          <AlertTitle>部分能力尚未接入</AlertTitle>
-          <AlertDescription>
-            {missing.join("、")}尚未接入 Bridge。对应操作不会伪装成功。
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      <section className="activity-daily" aria-label="签到与活跃度">
+      <section className="activity-daily" aria-label="活跃度">
         <div className="activity-liveness-row">
           <span className="activity-label">活跃度</span>
           {percent == null ? (
@@ -94,6 +79,8 @@ export function ActivityHost() {
         <div className="activity-actions">
           <Button
             type="button"
+            size="xs"
+            variant="outline"
             disabled={
               activity.checkedIn ||
               !activity.capabilities.checkin ||
@@ -115,6 +102,7 @@ export function ActivityHost() {
           <Button
             type="button"
             variant="outline"
+            size="xs"
             disabled={
               activity.collected ||
               !activity.capabilities.reward ||
@@ -145,7 +133,7 @@ export function ActivityHost() {
               key={item.value}
               type="button"
               size="xs"
-              variant={active ? "default" : "outline"}
+              variant="ghost"
               role="tab"
               aria-selected={active}
               className={active ? "activity-type is-active" : "activity-type"}
@@ -153,9 +141,9 @@ export function ActivityHost() {
             >
               {item.label}
               {typeUnread > 0 ? (
-                <Badge className="activity-type-badge">
+                <span className="activity-type-badge">
                   {typeUnread > 99 ? "99+" : typeUnread}
-                </Badge>
+                </span>
               ) : null}
             </Button>
           );
@@ -185,10 +173,10 @@ export function ActivityHost() {
         {activity.loadingList ? (
           <div className="activity-empty" aria-busy="true">
             <Spinner />
-            <span>正在加载通知</span>
+            <span>加载中</span>
           </div>
         ) : !activity.capabilities.list ? (
-          <p className="activity-empty">通知列表命令尚未接入。</p>
+          <p className="activity-empty">通知列表不可用</p>
         ) : activity.items.length === 0 ? (
           <p className="activity-empty">暂无通知</p>
         ) : (
@@ -200,13 +188,21 @@ export function ActivityHost() {
               >
                 <p className="activity-item-title">
                   {noticeTarget(item) ? (
-                    <button className="activity-item-open" type="button" onClick={() => {
-                      const target = noticeTarget(item);
-                      if (target) {
-                        void openNoticeTarget(target).catch((error: unknown) =>
-                          toast.error(error instanceof Error ? error.message : "打开通知失败"));
-                      }
-                    }}>{item.title}</button>
+                    <Button
+                      className="activity-item-open"
+                      type="button"
+                      variant="link"
+                      size="xs"
+                      onClick={() => {
+                        const target = noticeTarget(item);
+                        if (target) {
+                          void openNoticeTarget(target).catch((error: unknown) =>
+                            toast.error(error instanceof Error ? error.message : "打开通知失败"));
+                        }
+                      }}
+                    >
+                      {item.title}
+                    </Button>
                   ) : item.title}
                 </p>
                 {item.content && item.content !== item.title ? (
@@ -223,7 +219,6 @@ export function ActivityHost() {
     </div>
   );
 }
-
 function unreadOf(count: NoticeCountDto, type: NoticeType): number {
   switch (type) {
     case "at":
@@ -239,27 +234,4 @@ function unreadOf(count: NoticeCountDto, type: NoticeType): number {
     case "sys-announce":
       return count.sysAnnounce;
   }
-}
-
-function missingCapabilityLabels(capabilities: ActivityCapabilities): string[] {
-  const labels: string[] = [];
-  if (!capabilities.count) {
-    labels.push(COMMAND_LABEL[NOTICE_COMMAND.count]);
-  }
-  if (!capabilities.list) {
-    labels.push(COMMAND_LABEL[NOTICE_COMMAND.list]);
-  }
-  if (!capabilities.liveness) {
-    labels.push(COMMAND_LABEL[USER_COMMAND.liveness]);
-  }
-  if (!capabilities.checkin) {
-    labels.push(COMMAND_LABEL[USER_COMMAND.checkin]);
-  }
-  if (!capabilities.collected) {
-    labels.push(COMMAND_LABEL[USER_COMMAND.isCollectedLiveness]);
-  }
-  if (!capabilities.reward) {
-    labels.push(COMMAND_LABEL[USER_COMMAND.rewardLiveness]);
-  }
-  return labels;
 }

@@ -1,4 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { sanitizeHttpUrl } from "../../lib/markdown";
 import { GESTURES } from "./constants";
 import type { GestureIndex } from "./types";
@@ -24,9 +25,11 @@ export function GesturePicker({
       {caption ? <p className="rp-hint">{caption}</p> : null}
       <div className="rp-gesture-row">
         {GESTURES.map((item) => (
-          <button
+          <Button
             key={item.value}
             type="button"
+            variant="ghost"
+            size="icon-lg"
             className={value === item.value ? "rp-gesture is-active" : "rp-gesture"}
             disabled={disabled}
             title={item.label}
@@ -35,7 +38,7 @@ export function GesturePicker({
             onClick={() => onChange(item.value)}
           >
             <img src={GESTURE_IMAGES[item.value]} alt="" />
-          </button>
+          </Button>
         ))}
       </div>
     </div>

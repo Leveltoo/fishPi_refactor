@@ -151,17 +151,8 @@ export function SendRedPacketDialog({
       <DialogContent className="rp-dialog rp-dialog-send p-0 sm:max-w-[22rem]" showCloseButton>
         <div className="rp-lantern" aria-hidden="true" />
         <DialogHeader className="rp-header">
-          <DialogTitle className="rp-title">发个红包</DialogTitle>
-          <DialogDescription className="rp-blessing">
-            {session.lockedUser
-              ? `给 ${session.lockedUser} 的专属红包`
-              : ""}
-          </DialogDescription>
-        </DialogHeader>
-
-        <FieldGroup className="rp-form">
-          <Field>
-            <FieldLabel htmlFor="rp-type">类型</FieldLabel>
+          <DialogTitle className="rp-title rp-send-title">
+            <span>发个</span>
             <Select
               value={type}
               onValueChange={(value) => {
@@ -171,10 +162,14 @@ export function SendRedPacketDialog({
               }}
               disabled={typeLocked || disabled}
             >
-              <SelectTrigger id="rp-type" className="rp-select">
-                <SelectValue placeholder="选择红包类型" />
+              <SelectTrigger
+                className="rp-type-select"
+                size="sm"
+                aria-label="红包类型"
+              >
+                <SelectValue placeholder="红包类型" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rp-select-options">
                 {REDPACKET_TYPES.map((item) => (
                   <SelectItem key={item.value} value={item.value}>
                     {item.label}
@@ -182,8 +177,16 @@ export function SendRedPacketDialog({
                 ))}
               </SelectContent>
             </Select>
-          </Field>
+            <span>红包</span>
+          </DialogTitle>
+          {session.lockedUser ? (
+            <DialogDescription className="rp-specify-user">
+              给 {session.lockedUser} ❤
+            </DialogDescription>
+          ) : null}
+        </DialogHeader>
 
+        <FieldGroup className="rp-form">
           {showGestures ? (
             <GesturePicker
               value={form.gesture}
@@ -202,9 +205,11 @@ export function SendRedPacketDialog({
                   {onlineUsers.map((user) => {
                     const checked = selectedSet.has(user.userName);
                     return (
-                      <button
+                      <Button
                         key={user.userName}
                         type="button"
+                        variant="ghost"
+                        size="icon"
                         className={checked ? "rp-user is-check" : "rp-user"}
                         title={user.userName}
                         aria-label={user.userName}
@@ -213,11 +218,11 @@ export function SendRedPacketDialog({
                         onClick={() => toggleReceiver(user.userName)}
                       >
                         <SenderFace name={user.userName} src={user.userAvatarUrl} size="sm" />
-                      </button>
+                    </Button>
                     );
                   })}
                 </div>
-              ) : <p className="rp-empty">暂无在线用户</p>}
+              ) : null}
               <FieldError>{errors.receivers}</FieldError>
             </Field>
           ) : null}
@@ -272,7 +277,7 @@ export function SendRedPacketDialog({
         </FieldGroup>
 
         {notice ? (
-          <Alert>
+          <Alert className="rp-notice">
             <AlertDescription>{notice}</AlertDescription>
           </Alert>
         ) : null}

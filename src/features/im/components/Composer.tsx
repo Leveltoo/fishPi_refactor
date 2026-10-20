@@ -7,8 +7,6 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { ArrowClockwiseIcon, ImageIcon, PaperPlaneTiltIcon, SmileyIcon, XIcon } from "@phosphor-icons/react";
-
 import { Button } from "@/components/ui/button";
 import {
   InputGroup,
@@ -574,31 +572,23 @@ export function Composer({
             <span>：{quote.body}</span>
           </p>
           {onClearQuote ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               className="im-composer-quote-close"
               aria-label="取消引用"
               onClick={onClearQuote}
             >
-              <XIcon aria-hidden="true" size={14} />
-            </button>
+              <i className="fa fa-times" aria-hidden="true" />
+            </Button>
           ) : null}
         </div>
       ) : null}
       <div className="im-composer-toolbar">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" title="发表情" aria-label="发表情" disabled={disabled}>
-              <SmileyIcon />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="chat-emoji-popover">
-            <EmojiPanel disabled={disabled} onInsert={insertToken} />
-          </PopoverContent>
-        </Popover>
         {onClear ? (
           <Button type="button" variant="ghost" size="icon-sm" title="消息清屏" aria-label="消息清屏" onClick={onClear}>
-            <ArrowClockwiseIcon />
+            <i className="fa fa-refresh" aria-hidden="true" />
           </Button>
         ) : null}
         <Button
@@ -610,7 +600,7 @@ export function Composer({
           disabled={disabled || uploadBusy}
           onClick={() => fileInputRef.current?.click()}
         >
-          {uploadBusy ? <Spinner /> : <ImageIcon />}
+          {uploadBusy ? <Spinner /> : <i className="fa fa-picture-o" aria-hidden="true" />}
         </Button>
         <input
           ref={fileInputRef}
@@ -624,6 +614,16 @@ export function Composer({
             void appendUploadedMarkdown(Array.from(event.target.files ?? []));
           }}
         />
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="ghost" size="icon-sm" title="发表情" aria-label="发表情" disabled={disabled}>
+              <i className="fa fa-smile-o" aria-hidden="true" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="chat-emoji-popover">
+            <EmojiPanel disabled={disabled} onInsert={insertToken} />
+          </PopoverContent>
+        </Popover>
         {pasteHint ? (
           <p className="im-composer-paste-hint" role="status">
             {pasteHint}
@@ -674,8 +674,10 @@ export function Composer({
                   (emojiPickIndex < emojiComplete.items.length ? emojiPickIndex : 0);
                 return (
                   <li key={item.name}>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="xs"
                       className={active ? "is-active" : undefined}
                       onMouseDown={(event) => {
                         event.preventDefault();
@@ -685,7 +687,7 @@ export function Composer({
                     >
                       <img src={item.url} alt="" />
                       <span>:{item.name}:</span>
-                    </button>
+                    </Button>
                   </li>
                 );
               })}
@@ -738,7 +740,7 @@ export function Composer({
             title="发送"
             disabled={disabled || sending || pendingConfirm || uploadBusy || !sendAvailable || draft.trim().length === 0}
           >
-            {sending ? <Spinner /> : <PaperPlaneTiltIcon />}
+            {sending ? <Spinner /> : <i className="fa fa-paper-plane" aria-hidden="true" />}
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>

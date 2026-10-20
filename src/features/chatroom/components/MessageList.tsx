@@ -8,7 +8,6 @@ import type { ChatroomFilters } from "../chatroomApi";
 import { NEAR_BOTTOM_PX } from "../constants";
 import {
   connectionStatusLabel,
-  isDisconnectedStatus,
   isUnknownStatus,
 } from "../labels";
 import { displayMessageIds, isShielded, mergeDoubleMessages, plusOneMessageId } from "../messageView";
@@ -85,19 +84,6 @@ type MessageListProps = {
   redpacketWho: Map<string, RedpacketWhoDto[]>;
   userAvatarMap: Map<string, string>;
 };
-
-function emptyCopy(connectionStatus: string, loading: boolean): string {
-  if (loading) {
-    return "正在加载消息";
-  }
-  if (isUnknownStatus(connectionStatus)) {
-    return "连接状态未知，无法用空列表判断是否离线。可手动断开重建或刷新。";
-  }
-  if (isDisconnectedStatus(connectionStatus)) {
-    return "已断开连接。";
-  }
-  return "暂无消息";
-}
 
 function MessageSkeleton({ mine = false }: { mine?: boolean }) {
   return (
@@ -312,7 +298,6 @@ export function MessageList({
     setUnseen(0);
   }
 
-  const showEmpty = !loading && rows.length === 0;
   /** 合并/+1/关心集合只在消息或筛选真变时重算，避免每次渲染 O(n) + 新引用打穿 memo。 */
   const plusOneId = useMemo(() => plusOneMessageId(rows), [rows]);
   const careUsers = useMemo(
@@ -344,10 +329,8 @@ export function MessageList({
                 onLoadMore();
               }}
             >
-              {loadingMore ? "正在加载更早消息" : "..."}
+              ...
             </Button>
-          ) : messages.length > 0 ? (
-            <p className="chat-history-end">没有更早的消息了</p>
           ) : null}
 
           {loadingMore && <MessageSkeletonList count={3} />}
@@ -363,12 +346,6 @@ export function MessageList({
               <p className="visually-hidden">正在加载消息</p>
               <MessageSkeletonList count={6} />
             </>
-          )}
-
-          {showEmpty && (
-            <p className="chat-stream-status" role="status">
-              {emptyCopy(connectionStatus, loading)}
-            </p>
           )}
 
           {rows.map((message) =>
@@ -403,8 +380,10 @@ export function MessageList({
 
       {unseen > 0 && (
         <div className="chat-jump-latest">
-          <button
+          <Button
             type="button"
+            variant="default"
+            size="xs"
             className="chat-jump-latest-go"
             onClick={() => {
               const targetId = firstUnseenIdRef.current;
@@ -422,9 +401,11 @@ export function MessageList({
             }}
           >
             {unseen} 条新消息
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-xs"
             className="chat-jump-latest-close"
             aria-label="关闭新消息提示"
             onClick={() => {
@@ -433,7 +414,7 @@ export function MessageList({
             }}
           >
             ×
-          </button>
+          </Button>
         </div>
       )}
 

@@ -1,97 +1,52 @@
-import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
-import {
-  ArrowBendUpLeftIcon,
-  ArrowLeftIcon,
-  ChatCircleIcon,
-  EyeIcon,
-  HeartIcon,
-  ThumbsDownIcon,
-  ThumbsUpIcon,
-  TrashIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
 import { sanitizeHttpUrl } from "../../lib/markdown";
 import { setHeaderTitle } from "../../lib/headerTitle";
 import { CommentComposer } from "./CommentComposer";
-import { dispatchPreviewImage, dispatchUserCard } from "./events";
+import { dispatchUserCard } from "./events";
 import { ArticleRichBody } from "./MarkdownBody";
 import type {
   ArticleComment,
   ArticleDetail,
-  ArticleListType,
   ArticleSummary,
   ArticleVoteDirection,
   CommentReplyTarget,
   CommentSubmit,
 } from "./types";
-import {
-  ARTICLE_LIST_TYPE_LABEL,
-  ARTICLE_LIST_TYPES,
-} from "./types";
 import { useArticles } from "./useArticles";
 import "./article.css";
 
-/**
- * 帖子宿主：列表 + 详情 + 评论。无必填 props。
- *
- * 命令缺失时界面可预览，评论不会伪装发出。
- *
- * 事件（只 `dispatchEvent`，不渲染 overlay）：
- *
- * 1. 图片点击 → `window` CustomEvent `"fishpi:preview-image"`
- *    `detail`：`{ src, alt? }`
- * 2. 用户名 / 头像点击 → `"fishpi:user-card"`
- *    `detail`：`{ userName }`
- */
 export function ArticleHost() {
   const articles = useArticles();
   const showingDetail = articles.activeId != null;
-  const bridgeMissing = !articles.loadingList && !articles.capabilities.list;
   const detailTitle = articles.detail?.title ?? null;
 
-  // 对齐旧版：详情页标题用文章名，列表恢复「帖子」
   useEffect(() => {
     setHeaderTitle("article", showingDetail ? detailTitle : null);
     return () => setHeaderTitle("article", null);
   }, [showingDetail, detailTitle]);
 
+  useEffect(() => {
+    if (articles.error) toast.error(articles.error);
+  }, [articles.error]);
+
+  useEffect(() => {
+    if (articles.notice) toast.error(articles.notice);
+  }, [articles.notice]);
+
+  useEffect(() => {
+    if (!articles.loadingList && !articles.capabilities.list) {
+      toast.error("帖子列表加载失败");
+    }
+  }, [articles.capabilities.list, articles.loadingList]);
+
   return (
-    <div className="article" id="article">
-      <h1 className="visually-hidden">帖子</h1>
-
-      {bridgeMissing ? (
-        <Alert className="article-alert">
-          <WarningIcon />
-          <AlertTitle>帖子 Bridge 尚未接入</AlertTitle>
-          <AlertDescription>
-            帖子列表暂不可用。
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {articles.error ? (
-        <Alert variant="destructive" className="article-alert">
-          <WarningIcon />
-          <AlertTitle>帖子请求失败</AlertTitle>
-          <AlertDescription>{articles.error}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {articles.notice ? (
-        <Alert className="article-alert">
-          <AlertDescription>{articles.notice}</AlertDescription>
-        </Alert>
-      ) : null}
-
+    <div
+      className={showingDetail ? "article is-detail" : "article is-list"}
+      id="article"
+    >
       {showingDetail ? (
         <ArticleDetailPane
           key={articles.activeId}
@@ -141,163 +96,103 @@ export function ArticleHost() {
             void articles.rewardArticle();
           }}
         />
-      ) : null}
-      <div className="article-list-preserved" style={showingDetail ? { display: "none" } : undefined}>
+      ) : (
         <ArticleListPane
-          listType={articles.listType}
           items={articles.items}
           loading={articles.loadingList}
           loadingMore={articles.loadingMore}
           hasMore={articles.hasMore}
-          listAvailable={articles.capabilities.list}
-          onChangeType={articles.changeType}
           onOpen={articles.openArticle}
           onLoadMore={articles.loadMore}
           onRetry={articles.retryList}
         />
-      </div>
+      )}
     </div>
   );
 }
 
-type ArticleListPaneProps = {
-  listType: ArticleListType;
-  items: ArticleSummary[];
-  loading: boolean;
-  loadingMore: boolean;
-  hasMore: boolean;
-  listAvailable: boolean;
-  onChangeType: (type: ArticleListType) => void;
-  onOpen: (id: string) => void;
-  onLoadMore: () => void;
-  onRetry: () => void;
-};
-
 function ArticleListPane({
-  listType,
   items,
   loading,
   loadingMore,
   hasMore,
-  listAvailable,
-  onChangeType,
   onOpen,
   onLoadMore,
   onRetry,
-}: ArticleListPaneProps) {
+}: {
+  items: ArticleSummary[];
+  loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  onOpen: (id: string) => void;
+  onLoadMore: () => void;
+  onRetry: () => void;
+}) {
   return (
-    <section className="article-pane" aria-label="帖子列表">
-      <header className="article-head">
-        <p className="article-kicker">帖子</p>
-        <div className="article-tabs" role="tablist" aria-label="列表类型">
-          {ARTICLE_LIST_TYPES.map((type) => {
-            const active = type === listType;
-            return (
-              <button
-                key={type}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                className={active ? "article-tab is-active" : "article-tab"}
-                onClick={() => onChangeType(type)}
-              >
-                {ARTICLE_LIST_TYPE_LABEL[type]}
-              </button>
-            );
-          })}
+    <section className="content article-scroll" aria-label="帖子列表">
+      {loading ? (
+        <div className="article-status" role="status">
+          <i className="fa fa-spinner fa-spin" aria-label="正在加载" />
         </div>
-      </header>
-
-      <ScrollArea className="article-scroll">
-        {loading ? (
-          <div className="article-skel" aria-busy="true" aria-label="正在加载帖子">
-            <Skeleton className="article-skel-row" />
-            <Skeleton className="article-skel-row" />
-            <Skeleton className="article-skel-row" />
-          </div>
-        ) : items.length === 0 ? (
-          <div className="article-empty">
-            <p>{listAvailable ? "暂无帖子" : "列表命令尚未接入，无法加载。"}</p>
-            {listAvailable ? (
-              <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-                重试
-              </Button>
-            ) : null}
-          </div>
-        ) : (
-          <ul className="article-list">
-            {items.map((item) => (
-              <li key={item.id}>
-                <ArticleRow item={item} onOpen={onOpen} />
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {hasMore && !loading ? (
-          <div className="article-more">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={loadingMore}
-              onClick={onLoadMore}
-            >
-              {loadingMore ? <Spinner /> : null}
-              {loadingMore ? "加载中" : "加载更多"}
-            </Button>
-          </div>
-        ) : null}
-      </ScrollArea>
+      ) : items.length === 0 ? (
+        <div className="article-status">
+          <Button variant="ghost" type="button" title="重试" aria-label="重试" onClick={onRetry}>
+            <i className="fa fa-refresh" aria-hidden="true" />
+          </Button>
+        </div>
+      ) : (
+        <ul className="article-list">
+          {items.map((item) => (
+            <li key={item.id}>
+              <ArticleRow item={item} onOpen={onOpen} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {!loading && items.length > 0 ? (
+        <section className="more">
+          <Button variant="ghost"
+            type="button"
+            title="加载更多"
+            aria-label="加载更多"
+            disabled={!hasMore || loadingMore}
+            onClick={onLoadMore}
+          >
+            <i
+              className={loadingMore ? "fa fa-spinner fa-spin" : "fa fa-caret-down"}
+              aria-hidden="true"
+            />
+          </Button>
+        </section>
+      ) : null}
     </section>
   );
 }
 
-type ArticleRowProps = {
+function ArticleRow({
+  item,
+  onOpen,
+}: {
   item: ArticleSummary;
   onOpen: (id: string) => void;
-};
-
-function ArticleRow({ item, onOpen }: ArticleRowProps) {
-  const thumb = sanitizeHttpUrl(item.thumbnailUrl);
+}) {
   return (
-    <article className="article-row">
-      <div className="article-row-main">
-        <button
-          type="button"
-          className="article-row-open"
-          onClick={() => onOpen(item.id)}
-        >
-          <span className="article-row-title">
-            {item.sticky ? <Badge className="article-flag">置顶</Badge> : null}
-            {item.perfect ? <Badge className="article-flag">优选</Badge> : null}
-            {item.title}
-          </span>
-          {item.preview ? (
-            <span className="article-row-preview">{item.preview}</span>
-          ) : null}
-        </button>
-        <div className="article-row-meta">
-          <AuthorChip
-            userName={item.authorUserName}
-            displayName={item.authorNickname}
-            avatarUrl={item.avatarUrl}
-          />
-          <span>{item.time}</span>
-          <span>{item.commentCount} 评</span>
-          <span className="article-views">{item.viewCountDisplay || item.viewCount} 阅</span>
-        </div>
-      </div>
-      {thumb ? (
-        <button
-          type="button"
-          className="article-thumb"
-          aria-label="预览封面"
-          onClick={() => dispatchPreviewImage(thumb, item.title)}
-        >
-          <img src={thumb} alt="" />
-        </button>
-      ) : null}
+    <article className="item article-row">
+      <UserAvatar
+        className="msg-avatar"
+        userName={item.authorUserName}
+        displayName={item.authorNickname}
+        avatarUrl={item.avatarUrl}
+        size={25}
+      />
+      <Button variant="ghost"
+        type="button"
+        className="content article-row-open"
+        onClick={() => onOpen(item.id)}
+      >
+        {item.title}
+      </Button>
+      <span className="views">{item.viewCountDisplay || item.viewCount}</span>
     </article>
   );
 }
@@ -374,27 +269,27 @@ function ArticleDetailPane({
   onReward,
 }: ArticleDetailPaneProps) {
   const [reply, setReply] = useState<CommentReplyTarget | null>(null);
-  const [jumpMiss, setJumpMiss] = useState<string | null>(null);
 
-  function jumpToComments(): void {
+  useEffect(() => {
+    if (commentLiveNote) toast.error(commentLiveNote);
+  }, [commentLiveNote]);
+
+  function jumpToComposer(): void {
     document.getElementById("article-composer")?.scrollIntoView({
       behavior: "smooth",
-      block: "start",
+      block: "nearest",
     });
   }
 
   function jumpToComment(commentId: string): void {
     const node = document.getElementById(`comment-item-${commentId}`);
     if (node == null) {
-      setJumpMiss("该评论不在当前已加载范围，可先点「加载更早评论」。");
+      toast.error("该评论不在当前加载范围");
       return;
     }
-    setJumpMiss(null);
     node.scrollIntoView({ behavior: "smooth", block: "center" });
     node.classList.add("is-flash");
-    window.setTimeout(() => {
-      node.classList.remove("is-flash");
-    }, 1200);
+    window.setTimeout(() => node.classList.remove("is-flash"), 1200);
   }
 
   function startReply(comment: ArticleComment): void {
@@ -403,299 +298,198 @@ function ArticleDetailPane({
       userName: comment.userName,
       content: comment.markdown || comment.html,
     });
-    document.getElementById("article-composer")?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-    });
+    jumpToComposer();
   }
 
-  return (
-    <section className="article-pane" aria-label="帖子详情">
-      <header className="article-head article-head-detail">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onBack}
-          aria-label="返回列表"
-        >
-          <ArrowLeftIcon />
-          返回
-        </Button>
-        <Button type="button" variant="ghost" size="icon-sm" title="刷新详情"
-          aria-label="刷新详情" disabled={loading || loadingMore} onClick={onRetry}>
-          <RefreshCw />
-        </Button>
-      </header>
+  if (loading && !detail) {
+    return (
+      <div className="article-status" role="status">
+        <i className="fa fa-spinner fa-spin" aria-label="正在加载" />
+      </div>
+    );
+  }
 
-      <ScrollArea className="article-scroll">
-        {loading && !detail ? (
-          <div className="article-skel" aria-busy="true" aria-label="正在加载详情">
-            <Skeleton className="article-skel-title" />
-            <Skeleton className="article-skel-row" />
-            <Skeleton className="article-skel-row" />
-          </div>
-        ) : !detail ? (
-          <div className="article-empty">
-            <p>{detailAvailable ? "详情加载失败" : "详情命令尚未接入，无法打开。"}</p>
-            {detailAvailable ? (
-              <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-                重试
-              </Button>
-            ) : null}
-          </div>
-        ) : (
-          <div className="article-detail">
-            <div className="article-detail-head">
-              <h2 className="article-title">{detail.title}</h2>
-              <div className="article-byline">
-                <AuthorChip
-                  userName={detail.authorUserName}
-                  displayName={detail.authorNickname}
-                  avatarUrl={detail.avatarUrl}
-                  size="default"
-                />
-                <span>{detail.time}</span>
-                {detail.viewCount > 0 ? (
-                  <span className="article-views" title="浏览数">
-                    <EyeIcon />
-                    {detail.viewCount}
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  className="article-jump-comments"
-                  title="跳到评论区"
-                  onClick={jumpToComments}
-                >
-                  <ChatCircleIcon />
-                  {detail.commentCount} 评
-                </button>
-                {detail.tags ? (
-                  <span className="article-tags">{detail.tags}</span>
-                ) : null}
-              </div>
-              <ArticleActions
-                detail={detail}
-                heatCount={heatCount}
-                heatLive={heatLive}
-                heatNote={heatNote}
-                thankAvailable={thankAvailable}
-                voteAvailable={voteAvailable}
-                thanking={thanking}
-                voting={voting}
-                isOwn={selfUserName != null && selfUserName === detail.authorUserName}
-                onThank={onThank}
-                onVote={onVote}
-              />
-            </div>
-            <ArticleRichBody
-              markdown={detail.markdown}
-              html={detail.html}
-              empty="这篇帖子没有正文。"
-            />
-            {detail.updatedTime || detail.createdTime ? (
-              <p className="article-time">
-                {detail.updated ? "更新于 " : "发表于 "}
-                <time>{detail.updated ? detail.updatedTime : detail.createdTime}</time>
-              </p>
-            ) : null}
-            {detail.rewardPoint > 0 ? (
-              <ArticleReward
-                detail={detail}
-                available={rewardAvailable}
-                rewarding={rewarding}
-                onReward={onReward}
-              />
-            ) : null}
+  if (!detail) {
+    return (
+      <div className="article-status">
+        {detailAvailable ? (
+          <Button variant="ghost" type="button" title="重试" aria-label="重试" onClick={onRetry}>
+            <i className="fa fa-refresh" aria-hidden="true" />
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
 
-            <CommentComposer
-              disabled={!detail.commentable || sending || pendingConfirm}
-              sending={sending}
-              pendingConfirm={pendingConfirm}
-              commentAvailable={commentAvailable}
-              commentable={detail.commentable}
-              reply={reply}
-              onClearReply={() => setReply(null)}
-              onSend={onSend}
-            />
-            <h3 className="article-comments-title" id="article-comments">
-              评论
-              {detail.commentCount > 0 ? (
-                <span> {detail.commentCount}</span>
-              ) : null}
-            </h3>
-            {commentLiveNote ? (
-              <p className="article-heat-note">{commentLiveNote}</p>
-            ) : null}
-            {jumpMiss ? (
-              <p className="article-heat-note">{jumpMiss}</p>
-            ) : null}
-
-            {detail.commentHasEarlier ? (
-              <div className="article-more">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={loadingMore}
-                  onClick={onLoadEarlier}
-                >
-                  {loadingMore ? <Spinner /> : null}
-                  {loadingMore ? "加载中" : "加载更早评论"}
-                </Button>
-              </div>
-            ) : null}
-
-            {detail.comments.length === 0 ? (
-              <p className="article-empty-copy">还没有评论。</p>
-            ) : (
-              <ul className="article-comments">
-                {[...detail.comments].reverse().map((comment) => (
-                  <li key={comment.id} id={`comment-item-${comment.id}`}>
-                    <CommentItem
-                      comment={comment}
-                      original={
-                        comment.replyId
-                          ? detail.comments.find((item) => item.id === comment.replyId) ??
-                            null
-                          : null
-                      }
-                      selfUserName={selfUserName}
-                      action={commentAction}
-                      deleteAvailable={commentDeleteAvailable}
-                      thankAvailable={commentThankAvailable}
-                      voteAvailable={commentVoteAvailable}
-                      onDelete={onDeleteComment}
-                      onThank={onThankComment}
-                      onVote={onVoteComment}
-                      onReply={() => startReply(comment)}
-                      onJumpReply={
-                        comment.replyId
-                          ? () => jumpToComment(comment.replyId)
-                          : undefined
-                      }
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {detail.commentHasMore ? (
-              <div className="article-more">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={loadingMore}
-                  onClick={onLoadLater}
-                >
-                  {loadingMore ? <Spinner /> : null}
-                  {loadingMore ? "加载中" : "更多评论"}
-                </Button>
-              </div>
-            ) : null}
-
-          </div>
-        )}
-      </ScrollArea>
-    </section>
-  );
-}
-
-function ArticleActions({
-  detail,
-  heatCount,
-  heatLive,
-  heatNote,
-  thankAvailable,
-  voteAvailable,
-  thanking,
-  voting,
-  isOwn,
-  onThank,
-  onVote,
-}: {
-  detail: ArticleDetail;
-  heatCount: number | null;
-  heatLive: boolean;
-  heatNote: string | null;
-  thankAvailable: boolean;
-  voteAvailable: boolean;
-  thanking: boolean;
-  voting: ArticleVoteDirection | null;
-  isOwn: boolean;
-  onThank: () => void;
-  onVote: (direction: ArticleVoteDirection) => void;
-}) {
-  const thankTitle = !thankAvailable
-    ? "感谢命令尚未接入"
+  const self = selfUserName?.trim() ?? "";
+  const isOwn = self.length > 0 && self === detail.authorUserName;
+  const heat = heatCount ?? 0;
+  const thankIcon = detail.thanked ? "fa-solid fa-heart" : "fa-regular fa-heart";
+  const thankTitle = detail.thanked
+    ? "已感谢"
     : isOwn
       ? "不能感谢自己的帖子"
-    : detail.thanked
-      ? "已感谢"
-      : "确认赠送 20 积分给该帖作者以表感谢";
-  const voteTitle = voteAvailable ? undefined : "点赞点踩命令尚未接入";
-
-  function thank() {
-    if (!thankAvailable || detail.thanked || thanking || isOwn) {
-      return;
-    }
-    if (!window.confirm("确认赠送 20 积分给该帖作者以表感谢？")) {
-      return;
-    }
-    onThank();
-  }
+      : "确认赠送 20 积分给该帖作者以表感谢？";
 
   return (
-    <div className="article-actions">
-      <p
-        className="article-heat"
-        title={heatLive ? "在看人数随频道加减" : "拉取到的在看人数"}
-      >
-        {heatCount == null ? (heatNote ?? "正在获取在看人数") : `${heatCount} 人在看`}
-      </p>
-      {heatCount != null && heatNote ? (
-        <p className="article-heat-note">{heatNote}</p>
-      ) : null}
-      <Button
-        type="button"
-        variant={detail.thanked ? "secondary" : "outline"}
-        size="sm"
-        disabled={!thankAvailable || detail.thanked || thanking || isOwn}
-        title={thankTitle}
-        onClick={thank}
-      >
-        {thanking ? <Spinner /> : <HeartIcon />}
-        {detail.thanked ? "已感谢" : "感谢"} {detail.thankCount}
-      </Button>
-      <Button
-        type="button"
-        variant={detail.vote === "up" ? "secondary" : "outline"}
-        size="sm"
-        aria-pressed={detail.vote === "up"}
-        aria-label={`点赞 ${detail.goodCount}`}
-        disabled={!voteAvailable || voting != null}
-        title={voteTitle ?? "点赞"}
-        onClick={() => onVote("up")}
-      >
-        {voting === "up" ? <Spinner /> : <ThumbsUpIcon />}
-        {detail.goodCount}
-      </Button>
-      <Button
-        type="button"
-        variant={detail.vote === "down" ? "secondary" : "outline"}
-        size="sm"
-        aria-pressed={detail.vote === "down"}
-        aria-label={`点踩 ${detail.badCount}`}
-        disabled={!voteAvailable || voting != null}
-        title={voteTitle ?? "点踩"}
-        onClick={() => onVote("down")}
-      >
-        {voting === "down" ? <Spinner /> : <ThumbsDownIcon />}
-        {detail.badCount}
-      </Button>
-    </div>
+    <>
+      <header>
+        <div
+          className="view-list"
+          title={heatNote ?? `有 ${heat} 个人和你一起在看`}
+          aria-label={`${heat} 个人和你一起在看`}
+        >
+          <div
+            className={heatLive ? "view-item is-live" : "view-item"}
+            style={{ width: `${Math.max(0, heat) * 3}px` }}
+          />
+        </div>
+        <Button variant="ghost"
+          type="button"
+          title="返回"
+          className="back-btn"
+          aria-label="返回列表"
+          onClick={onBack}
+        >
+          <i className="fa-solid fa-caret-left" aria-hidden="true" />
+        </Button>
+        <h1 className="article-title">{detail.title}</h1>
+        <p className="article-meta">
+          <UserAvatar
+            className="article-author-avatar"
+            userName={detail.authorUserName}
+            displayName={detail.authorNickname}
+            avatarUrl={detail.avatarUrl}
+            size={18}
+          />
+          <span>{detail.authorNickname || detail.authorUserName}</span>
+          <span className="info-item">|</span>
+          <span className="info-item" title="发布时间">
+            <i className="fa-solid fa-eye" aria-hidden="true" /> {detail.time}
+          </span>
+          <span className="info-item" title="感谢">
+            <LegacyConfirm
+              title={thankTitle}
+              label={`感谢 ${detail.thankCount}`}
+              disabled={isOwn || !thankAvailable || detail.thanked || thanking}
+              onConfirm={onThank}
+            >
+              <i
+                className={thanking ? "fa fa-spinner fa-spin" : thankIcon}
+                aria-hidden="true"
+              />
+              <span> {detail.thankCount}</span>
+            </LegacyConfirm>
+          </span>
+          <Button variant="ghost"
+            type="button"
+            className="info-item click"
+            title="点赞"
+            aria-label={`点赞 ${detail.goodCount}`}
+            disabled={!voteAvailable || voting != null}
+            onClick={() => onVote("up")}
+          >
+            <i
+              className={
+                voting === "up"
+                  ? "fa fa-spinner fa-spin"
+                  : detail.vote === "up"
+                    ? "fa-solid fa-thumbs-up"
+                    : "fa-regular fa-thumbs-up"
+              }
+              aria-hidden="true"
+            />
+            <span> {detail.goodCount}</span>
+          </Button>
+          <Button variant="ghost"
+            type="button"
+            className="info-item click"
+            title="点踩"
+            aria-label={`点踩 ${detail.badCount}`}
+            disabled={!voteAvailable || voting != null}
+            onClick={() => onVote("down")}
+          >
+            <i
+              className={
+                voting === "down"
+                  ? "fa fa-spinner fa-spin"
+                  : detail.vote === "down"
+                    ? "fa-solid fa-thumbs-up fa-rotate-180"
+                    : "fa-regular fa-thumbs-up fa-rotate-180"
+              }
+              aria-hidden="true"
+            />
+            <span> {detail.badCount}</span>
+          </Button>
+          <Button variant="ghost"
+            type="button"
+            className="info-item click"
+            title="评论"
+            aria-label="跳到评论区"
+            onClick={jumpToComposer}
+          >
+            <i className="fa-solid fa-message" aria-hidden="true" />
+            <span> {detail.commentCount}</span>
+          </Button>
+        </p>
+      </header>
+
+      <section className="container article-detail-scroll">
+        <main className="article-detail">
+          <ArticleRichBody
+            markdown={detail.markdown}
+            html={detail.html}
+            className="article-content article-md"
+          />
+          {detail.updatedTime || detail.createdTime ? (
+            <section className="article-time">
+              {detail.updated ? "更新于 " : "发表于 "}
+              <time>{detail.updated ? detail.updatedTime : detail.createdTime}</time>
+            </section>
+          ) : null}
+        </main>
+
+        {detail.rewardPoint > 0 ? (
+          <ArticleReward
+            detail={detail}
+            available={rewardAvailable}
+            rewarding={rewarding}
+            onReward={onReward}
+          />
+        ) : null}
+
+        <footer>
+          <CommentComposer
+            disabled={!detail.commentable || sending || pendingConfirm}
+            sending={sending}
+            pendingConfirm={pendingConfirm}
+            commentAvailable={commentAvailable}
+            commentable={detail.commentable}
+            reply={reply}
+            onClearReply={() => setReply(null)}
+            onSend={onSend}
+          />
+          <CommentList
+            comments={detail.comments}
+            selfUserName={selfUserName}
+            loadingMore={loadingMore}
+            hasEarlier={detail.commentHasEarlier}
+            hasMore={detail.commentHasMore}
+            action={commentAction}
+            deleteAvailable={commentDeleteAvailable}
+            thankAvailable={commentThankAvailable}
+            voteAvailable={commentVoteAvailable}
+            onLoadEarlier={onLoadEarlier}
+            onLoadLater={onLoadLater}
+            onDelete={onDeleteComment}
+            onThank={onThankComment}
+            onVote={onVoteComment}
+            onReply={startReply}
+            onJumpReply={jumpToComment}
+          />
+        </footer>
+      </section>
+    </>
   );
 }
 
@@ -712,50 +506,141 @@ function ArticleReward({
 }) {
   if (detail.rewarded) {
     return (
-      <section className="article-reward">
-        {detail.rewardContent ? (
-          <ArticleRichBody
-            markdown={detail.rewardContent}
-            empty="已打赏，没有可显示的隐藏正文。"
-          />
-        ) : (
-          <p className="article-empty-copy">已打赏，没有可显示的隐藏正文。</p>
-        )}
-        <p className="article-reward-count">{detail.rewardedCount} 打赏</p>
+      <section className="rewarded">
+        <section className="rewarded-content">
+          {detail.rewardContent ? (
+            <ArticleRichBody
+              markdown={detail.rewardContent}
+              className="article-md"
+            />
+          ) : null}
+          <span className="rewarded-count">{detail.rewardedCount} 打赏</span>
+        </section>
       </section>
     );
   }
 
-  const title = available
-    ? `确定要打赏 ${detail.rewardPoint} 积分给该帖子作者？`
-    : "打赏命令尚未接入，隐藏正文不会放开";
-
-  function reward() {
-    if (!available || rewarding) {
-      return;
-    }
-    if (!window.confirm(`确定要打赏 ${detail.rewardPoint} 积分给该帖子作者？`)) {
-      return;
-    }
-    onReward();
-  }
-
   return (
-    <section className="article-reward">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
+    <section className="rewarded">
+      <LegacyConfirm
+        className="rewarded-click"
+        title={`确定要打赏 ${detail.rewardPoint} 积分给该帖子作者？`}
+        label="打赏"
         disabled={!available || rewarding}
-        title={title}
-        onClick={reward}
+        onConfirm={onReward}
       >
-        {rewarding ? <Spinner /> : null}
-        打赏 {detail.rewardPoint} 积分后可见
-      </Button>
-      <p className="article-reward-count">{detail.rewardedCount} 打赏</p>
-      {!available ? (
-        <p className="article-heat-note">打赏命令尚未接入，隐藏正文不会放开。</p>
+        <span className="rewarded-text">
+          {rewarding ? <i className="fa fa-spinner fa-spin" /> : <a>打赏</a>}{" "}
+          {detail.rewardPoint} 积分后可见
+        </span>
+        <span className="rewarded-count">{detail.rewardedCount} 打赏</span>
+      </LegacyConfirm>
+    </section>
+  );
+}
+
+function CommentList({
+  comments,
+  selfUserName,
+  loadingMore,
+  hasEarlier,
+  hasMore,
+  action,
+  deleteAvailable,
+  thankAvailable,
+  voteAvailable,
+  onLoadEarlier,
+  onLoadLater,
+  onDelete,
+  onThank,
+  onVote,
+  onReply,
+  onJumpReply,
+}: {
+  comments: ArticleComment[];
+  selfUserName: string | null;
+  loadingMore: boolean;
+  hasEarlier: boolean;
+  hasMore: boolean;
+  action: { id: string; kind: "delete" | "thank" | "vote" } | null;
+  deleteAvailable: boolean;
+  thankAvailable: boolean;
+  voteAvailable: boolean;
+  onLoadEarlier: () => void;
+  onLoadLater: () => void;
+  onDelete: (commentId: string) => void;
+  onThank: (commentId: string) => void;
+  onVote: (commentId: string, direction: ArticleVoteDirection) => void;
+  onReply: (comment: ArticleComment) => void;
+  onJumpReply: (commentId: string) => void;
+}) {
+  const ordered = [...comments].reverse();
+  return (
+    <section id="comments">
+      {hasEarlier ? (
+        <section className="comment-more">
+          <Button variant="ghost"
+            type="button"
+            title="更多评论"
+            aria-label="加载更早评论"
+            disabled={loadingMore}
+            onClick={onLoadEarlier}
+          >
+            <i
+              className={loadingMore ? "fa fa-spinner fa-spin" : "fa fa-caret-up"}
+              aria-hidden="true"
+            />
+          </Button>
+        </section>
+      ) : null}
+      <ul className="article-comments">
+        {ordered.map((comment) => (
+          <li
+            key={comment.id}
+            id={`comment-item-${comment.id}`}
+            className="comment-item"
+            data-id={comment.id}
+          >
+            <CommentItem
+              comment={comment}
+              original={
+                comment.replyId
+                  ? comments.find((item) => item.id === comment.replyId) ?? null
+                  : null
+              }
+              selfUserName={selfUserName}
+              action={action}
+              deleteAvailable={deleteAvailable}
+              thankAvailable={thankAvailable}
+              voteAvailable={voteAvailable}
+              onDelete={onDelete}
+              onThank={onThank}
+              onVote={onVote}
+              onReply={() => onReply(comment)}
+              onJumpReply={
+                comment.replyId
+                  ? () => onJumpReply(comment.replyId)
+                  : undefined
+              }
+            />
+          </li>
+        ))}
+      </ul>
+      {hasMore ? (
+        <section className="comment-more">
+          <Button variant="ghost"
+            type="button"
+            title="更多评论"
+            aria-label="加载更多评论"
+            disabled={loadingMore}
+            onClick={onLoadLater}
+          >
+            <i
+              className={loadingMore ? "fa fa-spinner fa-spin" : "fa fa-caret-down"}
+              aria-hidden="true"
+            />
+          </Button>
+        </section>
       ) : null}
     </section>
   );
@@ -789,213 +674,264 @@ function CommentItem({
   onJumpReply?: () => void;
 }) {
   const self = selfUserName?.trim() ?? "";
-  const author = comment.userName.trim();
-  const isOwn = self.length > 0 && author === self;
+  const isOwn = self.length > 0 && self === comment.userName;
   const busy = action?.id === comment.id;
   const busyKind = busy ? action?.kind : null;
-
-  const deleteTitle = !deleteAvailable
-    ? "删除评论命令尚未接入"
-    : "删除这条评论";
-  const thankTitle = !thankAvailable
-    ? "感谢评论命令尚未接入"
-    : comment.thanked
-      ? "已感谢"
-      : isOwn
-        ? "不能感谢自己的评论"
-        : `确认赠送 15 积分给 ${comment.userName} 以表感谢？`;
-  const voteTitle = voteAvailable ? undefined : "评论赞踩命令尚未接入";
-  const replyLabel = original
-    ? original.displayName.trim() || original.userName.trim()
-    : "";
+  const name = comment.displayName || comment.userName;
+  const replyLabel = original?.displayName || original?.userName || "";
   const replyAvatar = sanitizeHttpUrl(
     original?.avatarUrl || comment.replyAvatarUrl,
   );
 
-  function remove() {
-    if (!deleteAvailable || busy) {
-      return;
-    }
-    if (!window.confirm("你确定要删除这条评论吗？")) {
-      return;
-    }
-    onDelete(comment.id);
-  }
-
-  function thank() {
-    if (!thankAvailable || comment.thanked || isOwn || busy) {
-      return;
-    }
-    if (
-      !window.confirm(
-        `确认赠送 15 积分给 ${comment.userName} 以表感谢？`,
-      )
-    ) {
-      return;
-    }
-    onThank(comment.id);
-  }
-
   return (
     <article className="article-comment">
-      <AuthorChip
+      <UserAvatar
+        className="comment-avatar"
         userName={comment.userName}
         displayName={comment.displayName}
         avatarUrl={comment.avatarUrl}
-        showName={false}
+        size={32}
       />
-      <div className="article-comment-body">
-        <p className="article-comment-meta">
-          <button
-            type="button"
-            className="article-name"
-            onClick={() => dispatchUserCard(comment.userName)}
-          >
-            {comment.displayName || comment.userName}
-          </button>
-          {comment.replyId ? (
-            <button
+      <div className="comment-main">
+        <div className="comment-header">
+          <div className="comment-user">
+            <Button variant="ghost"
               type="button"
-              className="article-comment-reply"
-              title="跳转回复"
-              onClick={onJumpReply}
+              className="comment-user-name"
+              onClick={() => dispatchUserCard(comment.userName)}
             >
-              <ArrowBendUpLeftIcon />
-              {replyAvatar ? (
-                <Avatar size="sm" className="article-reply-avatar">
-                  <AvatarImage src={replyAvatar} alt="" />
-                  <AvatarFallback>
-                    {replyLabel.slice(0, 1)}
-                  </AvatarFallback>
-                </Avatar>
-              ) : null}
-              <span>
-                {original
-                  ? `回复 ${replyLabel}`
-                  : "回复"}
-              </span>
-            </button>
-          ) : null}
-          <span>{comment.time}</span>
-        </p>
+              {name}
+            </Button>
+            {comment.replyId ? (
+              <Button variant="ghost"
+                type="button"
+                className="comment-reply"
+                title="跳转回复"
+                aria-label={replyLabel ? `跳转到 ${replyLabel}` : "跳转回复"}
+                onClick={onJumpReply}
+              >
+                <i className="fa-solid fa-reply fa-flip-horizontal" />
+                {replyAvatar ? (
+                  <AvatarMark
+                    src={replyAvatar}
+                    label={replyLabel || name}
+                    size={15}
+                  />
+                ) : null}
+              </Button>
+            ) : null}
+          </div>
+          <div className="comment-time">{comment.time}</div>
+        </div>
         <ArticleRichBody
           markdown={comment.markdown}
           html={comment.html}
-          className="article-md article-md-comment"
-          empty="（空评论）"
+          className="comment-content article-md"
         />
-        <div className="article-comment-footer">
+        <div className="comment-footer">
           {isOwn ? (
-            <button
-              type="button"
-              className="article-comment-action"
-              title={deleteTitle}
+            <LegacyConfirm
+              className="info-item click"
+              title="你确定要删除这条评论吗？"
+              label="删除"
               disabled={!deleteAvailable || busy}
-              onClick={remove}
+              onConfirm={() => onDelete(comment.id)}
             >
-              {busyKind === "delete" ? <Spinner /> : <TrashIcon />}
-              <span>删除</span>
-            </button>
+              <i
+                className={busyKind === "delete" ? "fa fa-spinner fa-spin" : "fa-solid fa-trash"}
+                aria-hidden="true"
+              />
+            </LegacyConfirm>
           ) : null}
-          <button
+          <span className="info-item" title="感谢">
+            {isOwn ? (
+              <span>
+                <i
+                  className={
+                    comment.thanked ? "fa-solid fa-heart" : "fa-regular fa-heart"
+                  }
+                />
+                <span> {comment.thankCount}</span>
+              </span>
+            ) : (
+              <LegacyConfirm
+                title={`确认赠送 15 积分给 ${name} 以表感谢？`}
+                label={`感谢 ${comment.thankCount}`}
+                disabled={!thankAvailable || comment.thanked || busy}
+                onConfirm={() => onThank(comment.id)}
+              >
+                <i
+                  className={
+                    busyKind === "thank"
+                      ? "fa fa-spinner fa-spin"
+                      : comment.thanked
+                        ? "fa-solid fa-heart"
+                        : "fa-regular fa-heart"
+                  }
+                />
+                <span> {comment.thankCount}</span>
+              </LegacyConfirm>
+            )}
+          </span>
+          <Button variant="ghost"
             type="button"
-            className={
-              comment.thanked
-                ? "article-comment-action is-on"
-                : "article-comment-action"
-            }
-            title={thankTitle}
-            aria-label={`感谢 ${comment.thankCount}`}
-            disabled={!thankAvailable || comment.thanked || isOwn || busy}
-            onClick={thank}
-          >
-            {busyKind === "thank" ? <Spinner /> : <HeartIcon />}
-            <span>{comment.thankCount}</span>
-          </button>
-          <button
-            type="button"
-            className={
-              comment.vote === "up"
-                ? "article-comment-action is-on"
-                : "article-comment-action"
-            }
-            title={voteTitle ?? "点赞"}
+            className="info-item click"
+            title="点赞"
             aria-label={`点赞 ${comment.goodCount}`}
-            aria-pressed={comment.vote === "up"}
             disabled={!voteAvailable || busy}
             onClick={() => onVote(comment.id, "up")}
           >
-            {busyKind === "vote" ? <Spinner /> : <ThumbsUpIcon />}
-            <span>{comment.goodCount}</span>
-          </button>
-          <button
+            <i
+              className={
+                busyKind === "vote"
+                  ? "fa fa-spinner fa-spin"
+                  : comment.vote === "up"
+                    ? "fa-solid fa-thumbs-up"
+                    : "fa-regular fa-thumbs-up"
+              }
+            />
+            <span> {comment.goodCount}</span>
+          </Button>
+          <Button variant="ghost"
             type="button"
-            className={
-              comment.vote === "down"
-                ? "article-comment-action is-on"
-                : "article-comment-action"
-            }
-            title={voteTitle ?? "点踩"}
+            className="info-item click"
+            title="点踩"
             aria-label={`点踩 ${comment.badCount}`}
-            aria-pressed={comment.vote === "down"}
             disabled={!voteAvailable || busy}
             onClick={() => onVote(comment.id, "down")}
           >
-            {busyKind === "vote" ? <Spinner /> : <ThumbsDownIcon />}
-            <span>{comment.badCount}</span>
-          </button>
-          <button
+            <i
+              className={
+                busyKind === "vote"
+                  ? "fa fa-spinner fa-spin"
+                  : comment.vote === "down"
+                    ? "fa-solid fa-thumbs-up fa-rotate-180"
+                    : "fa-regular fa-thumbs-up fa-rotate-180"
+              }
+            />
+            <span> {comment.badCount}</span>
+          </Button>
+          <Button variant="ghost"
             type="button"
-            className="article-comment-action"
+            className="info-item click"
             title="回复"
+            aria-label="回复"
             onClick={onReply}
           >
-            <ArrowBendUpLeftIcon />
-            <span>回复</span>
-          </button>
+            <i className="fa-solid fa-reply" />
+          </Button>
         </div>
       </div>
     </article>
   );
 }
 
-type AuthorChipProps = {
-  userName: string;
-  displayName: string;
-  avatarUrl: string;
-  size?: "default" | "sm";
-  showName?: boolean;
-};
-
-function AuthorChip({
+function UserAvatar({
   userName,
   displayName,
   avatarUrl,
-  size = "sm",
-  showName = true,
-}: AuthorChipProps) {
-  const href = sanitizeHttpUrl(avatarUrl);
+  size,
+  className,
+}: {
+  userName: string;
+  displayName: string;
+  avatarUrl: string;
+  size: number;
+  className?: string;
+}) {
   const label = displayName.trim() || userName.trim() || "?";
-  const letter = label.slice(0, 1);
-
   return (
-    <button
+    <Button variant="ghost"
       type="button"
-      className="article-author"
-      aria-label={label}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        dispatchUserCard(userName || displayName);
-      }}
+      className={className ? `user-avatar-button ${className}` : "user-avatar-button"}
+      title={label}
+      aria-label={`${label} 的名片`}
+      onClick={() => dispatchUserCard(userName)}
     >
-      <Avatar size={size} className="article-avatar">
-        {href ? <AvatarImage src={href} alt="" /> : null}
-        <AvatarFallback>{letter}</AvatarFallback>
-      </Avatar>
-      {showName ? <span className="article-author-name">{label}</span> : null}
-    </button>
+      <AvatarMark src={sanitizeHttpUrl(avatarUrl)} label={label} size={size} />
+    </Button>
   );
 }
 
+function AvatarMark({
+  src,
+  label,
+  size,
+}: {
+  src: string | null;
+  label: string;
+  size: number;
+}) {
+  return (
+    <span
+      className="legacy-avatar"
+      style={{ width: size, height: size, minWidth: size }}
+      aria-hidden="true"
+    >
+      {src ? <img src={src} alt="" /> : <span>{label.slice(0, 1)}</span>}
+    </span>
+  );
+}
 
+function LegacyConfirm({
+  title,
+  label,
+  disabled = false,
+  className,
+  onConfirm,
+  children,
+}: {
+  title: string;
+  label: string;
+  disabled?: boolean;
+  className?: string;
+  onConfirm: () => void;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  return (
+    <span className={className ? `legacy-confirm ${className}` : "legacy-confirm"}>
+      <Button variant="ghost"
+        type="button"
+        title={title}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {children}
+      </Button>
+      {open ? (
+        <span
+          className="legacy-confirm-pop"
+          role="dialog"
+          aria-label={title}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+          }}
+        >
+          <span className="legacy-confirm-title">{title}</span>
+          <span className="legacy-confirm-actions">
+            <Button variant="ghost" type="button" onClick={() => setOpen(false)}>
+              取消
+            </Button>
+            <Button variant="ghost"
+              type="button"
+              className="primary"
+              onClick={() => {
+                setOpen(false);
+                onConfirm();
+              }}
+            >
+              确定
+            </Button>
+          </span>
+        </span>
+      ) : null}
+    </span>
+  );
+}

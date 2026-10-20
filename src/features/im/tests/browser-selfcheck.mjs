@@ -113,24 +113,32 @@ try {
           React.createElement(Toaster))));
     });
     await page.getByRole("button", { name: "alice", exact: true }).waitFor();
+    await page.getByRole("button", { name: "想和谁聊聊？", exact: true }).click();
+    await page.locator(".im-user-form input").waitFor();
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".im-user-form").count(), 0);
     for (const [index, peer] of ["alice", "carol", "alice", "carol", "alice"].entries()) {
       await page.getByRole("button", { name: peer, exact: true }).click();
       await page.waitForFunction((peer) =>
-        document.querySelector(".im-pane-name")?.textContent === peer &&
         !document.querySelector("#im-input")?.disabled &&
-        document.querySelector(".im-msg-name") != null, peer);
+        document.querySelector(".im-msg") != null, peer);
       assert.equal(await page.locator(".im-thread-stream").count(), 1,
         `${viewport.width}px switch ${index + 1}: only the current thread may remain; ${errors.join("\n")}`);
       assert.equal(await page.locator(".im-composer").count(), 1);
-      assert.deepEqual([...new Set(await page.locator(".im-msg-name").allTextContents())], [peer]);
+      assert.equal(await page.locator(".im-msg-meta").evaluateAll((nodes) =>
+        nodes.every((node) => getComputedStyle(node).display === "none")), true);
+      assert.deepEqual([...new Set((await page.locator(".im-msg-content").allTextContents())
+        .map((text) => text.split(" history ")[0]).filter(Boolean))], [peer]);
       assert.equal(await page.locator(".im-msg").count(), 25);
       assert.equal(await page.locator("#im-input").inputValue(),
         index > 1 ? `${peer} draft` : "");
       await page.locator("#im-input").fill(`${peer} draft`);
     }
-    await page.getByRole("button", { name: "加载更早消息", exact: true }).click();
+    await page.getByRole("button", { name: "加载更早消息", exact: true })
+      .evaluate((button) => button.click());
     await page.waitForFunction(() => document.querySelectorAll(".im-msg").length === 26);
-    assert.deepEqual([...new Set(await page.locator(".im-msg-name").allTextContents())], ["alice"]);
+    assert.deepEqual([...new Set((await page.locator(".im-msg-content").allTextContents())
+      .map((text) => text.split(" history ")[0]).filter(Boolean))], ["alice"]);
     await page.evaluate(() => window.imTest.emit("chat://msg", {
       sessionGeneration: 7, userName: "carol", connectionGeneration: 999,
       message: { id: "100", userName: "carol", receiverUserName: "self", md: "other peer live", userAvatarUrl: "", time: "", revoked: false },
@@ -140,7 +148,8 @@ try {
       message: { id: "101", userName: "alice", receiverUserName: "self", md: "current peer live", userAvatarUrl: "", time: "", revoked: false },
     }));
     await page.waitForFunction(() => document.querySelectorAll(".im-msg").length === 27);
-    assert.deepEqual([...new Set(await page.locator(".im-msg-name").allTextContents())], ["alice"]);
+    assert.equal(await page.locator(".im-msg-meta").evaluateAll((nodes) =>
+      nodes.every((node) => getComputedStyle(node).display === "none")), true);
     assert.equal(await page.locator('[data-msg-id="100"]').count(), 0);
     assert.equal(await page.locator('[data-msg-id="101"]').count(), 1);
     assert.equal(await page.locator(".im-thread-stream").count(), 1);

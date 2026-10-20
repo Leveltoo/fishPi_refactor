@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import "./message-scrollbar.css";
 
 type MessageScrollbarProps = {
@@ -110,8 +111,10 @@ export function MessageScrollbar({
 
   return (
     <div className="msg-scrollbar" aria-hidden="true">
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-xs"
         className="msg-scrollbar__btn"
         title="跳到最早"
         onMouseDown={(event) => {
@@ -119,8 +122,8 @@ export function MessageScrollbar({
           jumpTo(0);
         }}
       >
-        ▲
-      </button>
+        <i className="fa fa-eject" aria-hidden="true" />
+      </Button>
       <div
         ref={barRef}
         className="msg-scrollbar__track"
@@ -129,8 +132,10 @@ export function MessageScrollbar({
           jumpByClientY(event.clientY);
         }}
       >
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-xs"
           className="msg-scrollbar__thumb"
           style={{ top: thumb }}
           onMouseDown={(event) => {
@@ -140,8 +145,10 @@ export function MessageScrollbar({
           }}
         />
       </div>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-xs"
         className="msg-scrollbar__btn msg-scrollbar__btn--down"
         title="跳到最新"
         onMouseDown={(event) => {
@@ -149,8 +156,8 @@ export function MessageScrollbar({
           jumpTo(metrics.max);
         }}
       >
-        ▼
-      </button>
+        <i className="fa fa-eject fa-rotate-180" aria-hidden="true" />
+      </Button>
     </div>
   );
 }

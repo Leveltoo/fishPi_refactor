@@ -95,6 +95,83 @@ export async function resizeUserCardWindow(contentHeight: number): Promise<void>
   }
 }
 
+async function createUserCardWindow(
+  name: string,
+  logical: Point,
+  visible: boolean,
+): Promise<void> {
+  const search = new URLSearchParams({
+    window: "user-card",
+    user: name,
+  });
+  const win = new WebviewWindow(USER_CARD_LABEL, {
+    url: `index.html?${search.toString()}`,
+    title: "",
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT_MIN,
+    x: logical.x,
+    y: logical.y,
+    visible,
+    decorations: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    focus: false,
+    transparent: true,
+  });
+  await new Promise<void>((resolve, reject) => {
+    const stops: Array<() => void> = [];
+    let settled = false;
+    function finish(error?: unknown): void {
+      if (settled) return;
+      settled = true;
+      stops.forEach((stop) => stop());
+      if (error === undefined) resolve();
+      else reject(error);
+    }
+    const timer = window.setTimeout(
+      () => finish(new Error("User card creation timed out")),
+      10000,
+    );
+    function register(
+      event: string,
+      handler: (event: { payload: unknown }) => void,
+    ): void {
+      void win.once(event, handler).then((stop) => {
+        if (settled) stop();
+        else stops.push(stop);
+      }).catch(finish);
+    }
+    stops.push(() => window.clearTimeout(timer));
+    register("tauri://created", () => finish());
+    register("tauri://error", (event) => finish(event.payload));
+  });
+}
+
+/** 悬停开始时隐藏创建，把 WebView 与资料请求耗时藏进等待时间。 */
+export async function prewarmUserCardWindow(userName: string): Promise<void> {
+  const name = userName.trim();
+  if (!name) {
+    return;
+  }
+  try {
+    const existing = await WebviewWindow.getByLabel(USER_CARD_LABEL);
+    if (existing || createLock) {
+      await createLock;
+      return;
+    }
+    const logical = await clientToLogical(lastMouse.x, lastMouse.y);
+    createLock = createUserCardWindow(name, logical, false).finally(() => {
+      createLock = null;
+    });
+    await createLock;
+  } catch {
+    // 预热失败不影响正常打开。
+  }
+}
+
 /**
  * 打开 / 更新名片窗。
  * @param x 相对主 WebView 的 clientX；省略则用最近一次鼠标位置。
@@ -132,49 +209,7 @@ export async function showUserCardWindow(
     return showUserCardWindow(name, clientX, clientY);
   }
 
-  createLock = (async () => {
-    const search = new URLSearchParams({
-      window: "user-card",
-      user: name,
-    });
-    const win = new WebviewWindow(USER_CARD_LABEL, {
-      url: `index.html?${search.toString()}`,
-      title: "",
-      width: CARD_WIDTH,
-      height: CARD_HEIGHT_MIN,
-      x: logical.x,
-      y: logical.y,
-      decorations: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      maximizable: false,
-      minimizable: false,
-      focus: false,
-      transparent: true,
-    });
-    await new Promise<void>((resolve, reject) => {
-      const stops: Array<() => void> = [];
-      let settled = false;
-      function finish(error?: unknown): void {
-        if (settled) return;
-        settled = true;
-        stops.forEach((stop) => stop());
-        if (error === undefined) resolve();
-        else reject(error);
-      }
-      const timer = window.setTimeout(() => finish(new Error("User card creation timed out")), 10000);
-      function register(event: string, handler: (event: { payload: unknown }) => void): void {
-        void win.once(event, handler).then((stop) => {
-          if (settled) stop();
-          else stops.push(stop);
-        }).catch(finish);
-      }
-      stops.push(() => window.clearTimeout(timer));
-      register("tauri://created", () => finish());
-      register("tauri://error", (event) => finish(event.payload));
-    });
-  })().finally(() => {
+  createLock = createUserCardWindow(name, logical, true).finally(() => {
     createLock = null;
   });
 

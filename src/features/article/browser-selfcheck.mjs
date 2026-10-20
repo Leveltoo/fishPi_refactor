@@ -126,7 +126,13 @@ try {
     window.testRoot.render(React.createElement(ArticleHost));
   });
   await page.locator(".article-row").first().waitFor();
-  await page.locator(".article-scroll [data-slot='scroll-area-viewport']").evaluate((node) => { node.scrollTop = 180; });
+  if (process.env.CONTENT_SCREENSHOT_DIR) {
+    await page.screenshot({ path: `${process.env.CONTENT_SCREENSHOT_DIR}/article-list-desktop.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: `${process.env.CONTENT_SCREENSHOT_DIR}/article-list-mobile.png` });
+    await page.setViewportSize({ width: 1100, height: 760 });
+  }
+  await page.locator(".article-scroll").evaluate((node) => { node.scrollTop = 180; });
   await page.locator(".article-row-open").first().click();
   await page.locator(".article-title").waitFor();
   await page.waitForFunction(() => window.testCalls.includes("article_heat_watch"));

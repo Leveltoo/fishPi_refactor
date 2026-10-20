@@ -2,6 +2,15 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import packageJson from "../../../package.json";
 import {
   loadChatroomFilters,
@@ -255,20 +264,21 @@ export function SettingsHost() {
             <span>{APP_VERSION}</span>
           </p>
           <p>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               className="legacy-btn legacy-btn--success legacy-btn--small"
               disabled={checkingUpdate || updating || update?.upToDate === true}
               onClick={updateButton}
             >
               {updateLabel}
-            </button>
+            </Button>
           </p>
         </section>
 
         <p className="app-version">
           <label htmlFor="update-mirror">更新镜像：</label>
-          <input
+          <Input
             id="update-mirror"
             className="legacy-input"
             value={mirror}
@@ -316,17 +326,21 @@ export function SettingsHost() {
             />
           </FormRow>
           <FormRow label="网易音乐">
-            <select
-              className="legacy-select"
+            <Select
               value={String(clampMusicMode(musicMode))}
-              onChange={(event) => void changeMusicMode(Number(event.target.value))}
+              onValueChange={(value) => void changeMusicMode(Number(value))}
             >
-              {MUSIC_MODE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="legacy-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MUSIC_MODE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FormRow>
         </SettingsSection>
 
@@ -370,7 +384,7 @@ export function SettingsHost() {
                 checked={settings.notifyTalk}
                 onChange={(notifyTalk) => desktop.update({ notifyTalk })}
               />
-              <input
+              <Input
                 className="legacy-input legacy-input--small talk-pattern"
                 value={settings.notifyTalkPattern}
                 placeholder="内容正则"
@@ -410,7 +424,7 @@ export function SettingsHost() {
         <SettingsSection title="扩展">
           <FormRow label="扩展目录">
             <div className="legacy-input-group">
-              <input
+              <Input
                 className="legacy-input"
                 value={extensionRoot}
                 placeholder="扩展加载根目录"
@@ -418,34 +432,40 @@ export function SettingsHost() {
                 onChange={(event) => setExtensionRoot(event.target.value)}
                 onBlur={() => void saveExtensionRoot()}
               />
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 className="legacy-input-group__append"
                 title="选择扩展目录"
                 aria-label="选择扩展目录"
                 onClick={() => void chooseExtensionRoot()}
               >
                 <i className="fa fa-folder-open" aria-hidden="true" />
-              </button>
+              </Button>
             </div>
           </FormRow>
           <FormRow label="主题">
-            <select
-              className="legacy-select"
+            <Select
               value={theme}
-              onChange={(event) => void selectTheme(event.target.value)}
+              onValueChange={(value) => void selectTheme(value)}
             >
-              <option value="Default">默认</option>
-              {theme !== "Default" &&
-              !themes.some((item) => item.key === theme) ? (
-                <option value={theme}>{theme}</option>
-              ) : null}
-              {themes.map((item) => (
-                <option key={item.key} value={item.key}>
-                  {item.description || item.displayName || item.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="legacy-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Default">默认</SelectItem>
+                {theme !== "Default" &&
+                !themes.some((item) => item.key === theme) ? (
+                  <SelectItem value={theme}>{theme}</SelectItem>
+                ) : null}
+                {themes.map((item) => (
+                  <SelectItem key={item.key} value={item.key}>
+                    {item.description || item.displayName || item.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FormRow>
         </SettingsSection>
 
@@ -464,25 +484,27 @@ export function SettingsHost() {
           </section>
           <section className="update-note">{update.body}</section>
           <footer>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               className="legacy-btn legacy-btn--success update-button"
               disabled={updating}
               onClick={() => void applyUpdate()}
             >
               {updating ? "下载中..." : "更新"}
-            </button>
+            </Button>
             {applyResult ? (
               <p className="update-result">{applyResult.message}</p>
             ) : null}
             {applyResult && !applyResult.downloaded && !applyResult.installed ? (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 className="legacy-btn legacy-btn--default"
                 onClick={() => void openRelease()}
               >
                 打开发布页
-              </button>
+              </Button>
             ) : null}
           </footer>
         </section>
@@ -602,12 +624,10 @@ function ChatroomFiltersSection({
         <div className="shield-list">
           {filters.shield.map((rule, index) => (
             <section className="shield-item" key={`${rule.type}-${index}`}>
-              <select
-                className="legacy-select shield-type"
-                aria-label="屏蔽类型"
+              <Select
                 value={rule.type}
-                onChange={(event) => {
-                  const type = event.target.value as ShieldKind;
+                onValueChange={(value) => {
+                  const type = value as ShieldKind;
                   schedule({
                     ...filters,
                     shield: filters.shield.map((item, itemIndex) =>
@@ -618,14 +638,19 @@ function ChatroomFiltersSection({
                   });
                 }}
               >
-                {SHIELD_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.text}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="legacy-select shield-type" aria-label="屏蔽类型">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SHIELD_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.text}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {rule.type !== "redpacket" ? (
-                <input
+                <Input
                   className="legacy-input shield-value"
                   value={rule.value}
                   placeholder={rule.type === "username" ? "用户名" : "正则"}
@@ -641,8 +666,10 @@ function ChatroomFiltersSection({
                   }
                 />
               ) : null}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 className="legacy-text-btn"
                 title="删除"
                 aria-label="删除屏蔽规则"
@@ -654,11 +681,12 @@ function ChatroomFiltersSection({
                 }
               >
                 <i className="fa fa-trash-o" aria-hidden="true" />
-              </button>
+              </Button>
             </section>
           ))}
-          <button
+          <Button
             type="button"
+            variant="ghost"
             className="shield-add"
             title="添加屏蔽"
             aria-label="添加屏蔽"
@@ -670,7 +698,7 @@ function ChatroomFiltersSection({
             }
           >
             <i className="fa fa-plus" aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       </FormRow>
       <FormRow label="特别关心">
@@ -678,19 +706,23 @@ function ChatroomFiltersSection({
           {filters.careUsers.map((name) => (
             <span className="legacy-tag" key={name}>
               {name}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 title="移除"
                 aria-label={`移除特别关心 ${name}`}
                 onClick={() => void removeCareUser(name)}
               >
                 <i className="ivu-icon ivu-icon-ios-close" aria-hidden="true" />
-              </button>
+              </Button>
             </span>
           ))}
           <div className="care-add">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               className="care-add__button"
               title="添加特别关心"
               aria-label="添加特别关心"
@@ -698,8 +730,8 @@ function ChatroomFiltersSection({
               onClick={() => void addCareUser()}
             >
               <i className="ivu-icon ivu-icon-ios-add" aria-hidden="true" />
-            </button>
-            <input
+            </Button>
+            <Input
               className="care-add__input"
               value={careDraft}
               placeholder="用户名"
@@ -768,8 +800,9 @@ function LegacySwitch({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       role="switch"
       aria-checked={checked}
       title={title}
@@ -778,7 +811,7 @@ function LegacySwitch({
       onClick={() => onChange(!checked)}
     >
       <span />
-    </button>
+    </Button>
   );
 }
 
@@ -792,14 +825,20 @@ function Checkbox({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="legacy-checkbox">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      role="checkbox"
+      aria-checked={checked}
+      className="legacy-checkbox"
+      onClick={() => onChange(!checked)}
+    >
+      <span className={checked ? "legacy-checkbox__box is-checked" : "legacy-checkbox__box"} aria-hidden="true">
+        {checked ? <i className="fa fa-check" /> : null}
+      </span>
       <span>{label}</span>
-    </label>
+    </Button>
   );
 }
 
@@ -831,15 +870,16 @@ function HotkeyInput({
   }, [listening, onChange]);
 
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       className={listening ? "legacy-hotkey is-listening" : "legacy-hotkey"}
       aria-pressed={listening}
       onBlur={() => setListening(false)}
       onClick={() => setListening((current) => !current)}
     >
       {listening ? "请按下组合按键" : displayHotkey(value)}
-    </button>
+    </Button>
   );
 }
 

@@ -1,5 +1,5 @@
 import DOMPurify from "dompurify";
-import { expandEmojiShortcodes } from "../features/chatroom/emojiShortcode";
+import { expandEmojiShortcodesHtml } from "../features/chatroom/emojiShortcode";
 
 const ALLOWED_TAGS = [
   "p",
@@ -75,7 +75,7 @@ const ALLOWED_URI_REGEXP = /^(?:https?:|\/\/)/i;
 
 /** 只保留白名单标签。禁止 script / 事件属性。链接只放行 http(s)。 */
 export function sanitizeRichHtml(source: string): string {
-  const withEmoji = expandEmojiShortcodes(source);
+  const withEmoji = expandEmojiShortcodesHtml(source);
   return DOMPurify.sanitize(withEmoji, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,

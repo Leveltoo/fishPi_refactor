@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -51,7 +52,6 @@ import { ChatHtmlView, looksLikeHtml, messageHtmlSource } from "./ChatHtmlView";
 import { MusicCard } from "./MusicCard";
 import { WeatherCard } from "./WeatherCard";
 import { isEmojiImage } from "../emojiShortcode";
-import { ChevronDown } from "lucide-react";
 import { fetchChatroomRaw } from "../chatroomApi";
 import { toUserErrorMessage } from "../toUserError";
 import { viaDetails } from "../via";
@@ -606,17 +606,19 @@ export const MessageItem = memo(function MessageItem({
                   );
                 })()}
                 {overflow ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="xs"
                     className={
                       expanded ? "chat-msg-more is-expanded" : "chat-msg-more"
                     }
                     title={expanded ? "合并" : "展开"}
                     onClick={() => setExpanded((value) => !value)}
                   >
-                    <ChevronDown size={12} aria-hidden="true" />
+                    <i className="fa fa-angle-down" aria-hidden="true" />
                     <span>{expanded ? "合并" : "展开"}</span>
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </ContextMenuTrigger>
@@ -762,8 +764,8 @@ export const MessageItem = memo(function MessageItem({
             </ContextMenuContent>
           </ContextMenu>
           {showPlusOne ? (
-            <button type="button" className="chat-plus-one" title="复读一下"
-              onClick={() => onPlusOne(message)}>+1</button>
+            <Button type="button" variant="default" size="icon-sm" className="chat-plus-one" title="复读一下"
+              onClick={() => onPlusOne(message)}>+1</Button>
           ) : null}
         </div>
         {redpacket && !message.revoked ? (

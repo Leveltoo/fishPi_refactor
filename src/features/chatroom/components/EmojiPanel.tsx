@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { sanitizeHttpUrl } from "../../../lib/markdown";
 import {
   addEmojiUrl,
@@ -202,11 +203,14 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
     <div className="chat-emoji">
       <div className="chat-emoji-tabs" role="tablist" aria-label="表情">
         {([
-          ["default", "默认"], ["favorites", "收藏"], ["server", "服务器"], ["recent", "最近"],
-        ] as const).map(([value, label]) => (
-          <Button key={value} type="button" role="tab" aria-selected={tab === value} size="xs"
+          ["default", "默认", "🙂"],
+          ["favorites", "收藏", "⭐"],
+          ["server", "服务器", null],
+          ["recent", "最近", null],
+        ] as const).map(([value, label, icon]) => (
+          <Button key={value} type="button" role="tab" aria-label={label} aria-selected={tab === value} size="xs"
             variant={tab === value ? "default" : "ghost"} disabled={busy} onClick={() => setTab(value)}>
-            {label}
+            {icon ?? label}
           </Button>
         ))}
       </div>
@@ -215,11 +219,11 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
       {tab === "default" ? (
         <div className="chat-emoji-grid" role="tabpanel" aria-label="默认表情">
           {DEFAULT_EMOJIS.map((emoji) => (
-            <button key={emoji.name} type="button" className="chat-emoji-item"
+            <Button key={emoji.name} type="button" variant="ghost" size="icon-sm" className="chat-emoji-item"
               title={emoji.name} disabled={disabled}
               onClick={() => void remember({ kind: "shortcode", value: emoji.name }, `:${emoji.name}:`)}>
               <img src={emoji.url} alt={emoji.name} />
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}
@@ -242,12 +246,12 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
               if (src == null) return null;
               return (
                 <span key={item.id || item.emojiId} className="chat-emoji-server">
-                  <button type="button" className="chat-emoji-item" title={item.name || "表情"} disabled={disabled}
+                  <Button type="button" variant="ghost" size="icon-sm" className="chat-emoji-item" title={item.name || "表情"} disabled={disabled}
                     onClick={() => void remember({ kind: "image", value: src }, imageToken(src))}>
                     <img src={src} alt={item.name || ""} />
-                  </button>
-                  <button type="button" className="chat-emoji-remove" disabled={disabled || busy}
-                    onClick={() => void dropItem(item)}>删除</button>
+                  </Button>
+                  <Button type="button" variant="ghost" size="xs" className="chat-emoji-remove" disabled={disabled || busy}
+                    onClick={() => void dropItem(item)}>删除</Button>
                 </span>
               );
             })}
@@ -257,7 +261,7 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
               aria-hidden="true" tabIndex={-1} onChange={(event) => void uploadFaces(Array.from(event.target.files ?? []))} />
             <Button type="button" size="xs" variant="outline" disabled={disabled || busy}
               onClick={() => faceInputRef.current?.click()}>选择图片上传</Button>
-            <input className="chat-inline-input" value={urlDraft} placeholder="https:// 图片地址"
+            <Input className="chat-inline-input" value={urlDraft} placeholder="https:// 图片地址"
               aria-label="服务器表情图片地址" disabled={disabled || busy}
               onChange={(event) => setUrlDraft(event.target.value)} />
             <Button type="button" size="xs" variant="outline" disabled={disabled || busy || !urlDraft.trim()}
@@ -291,7 +295,6 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
       {tab === "recent" ? (
         <div role="tabpanel" aria-label="最近表情">
           <p className="chat-emoji-note">最近使用只存在本机，不代表服务器收藏。</p>
-          {recent.length === 0 ? <p className="chat-emoji-note">还没有最近使用</p> : null}
           <div className="chat-emoji-grid">
             {recent.map((item) => {
               const known = item.kind === "shortcode"
@@ -299,10 +302,10 @@ export function EmojiPanel({ disabled, onInsert }: EmojiPanelProps) {
               const src = item.kind === "image" ? sanitizeHttpUrl(item.value) : known?.url;
               if (item.kind === "image" && !src) return null;
               return (
-                <button key={`${item.kind}:${item.value}`} type="button" className="chat-emoji-item" title={item.value}
+                <Button key={`${item.kind}:${item.value}`} type="button" variant="ghost" size="icon-sm" className="chat-emoji-item" title={item.value}
                   disabled={disabled} onClick={() => onInsert(item.kind === "shortcode" ? `:${item.value}:` : imageToken(src!))}>
                   {src ? <img src={src} alt="" /> : <span>{item.value}</span>}
-                </button>
+                </Button>
               );
             })}
           </div>

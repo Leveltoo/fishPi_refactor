@@ -1,77 +1,131 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLoader, deferred, flush, plain } from "../shell/testLoader.mjs";
+import { createLoader, flush, plain } from "../shell/testLoader.mjs";
 
-function find(node, predicate) {
-  if (Array.isArray(node)) return node.flatMap((child) => find(child, predicate));
-  if (!node || typeof node !== "object") return [];
-  return [...(predicate(node) ? [node] : []), ...find(node.props?.children, predicate)];
+function find(node, predicate, matches = []) {
+  if (Array.isArray(node)) node.forEach((item) => find(item, predicate, matches));
+  else if (node && typeof node === "object") {
+    if (typeof node.type === "function" && node.props) {
+      find(node.type(node.props), predicate, matches);
+    } else {
+      if (predicate(node)) matches.push(node);
+      find(node.props?.children, predicate, matches);
+    }
+  }
+  return matches;
 }
 
-async function panel() {
+function mountPanel() {
   const slots = [];
   const effects = [];
   const listeners = new Map();
   const calls = [];
-  const writes = [];
   const themes = [];
+  const opened = [];
   let cursor = 0;
   let first = true;
-  let cleanups;
+  let cleanups = [];
   let prefs = { extensionRoot: "C:\\extensions", theme: "publisher.theme" };
-  const picker = deferred();
-  const save = { result: null };
+  let scanVersion = 1;
+
+  const Button = ({ children, ...props }) => ({ type: "button", props: { ...props, children } });
+  const ScrollArea = ({ children, ...props }) => ({ type: "div", props: { ...props, children } });
+  const Markdown = ({ children }) => ({ type: "div", props: { children } });
+
   const load = createLoader({
     react: {
       useState: (initial) => {
-        const i = cursor++;
-        if (!(i in slots)) slots[i] = initial;
-        return [slots[i], (next) => { slots[i] = next; }];
+        const index = cursor++;
+        if (!(index in slots)) slots[index] = initial;
+        return [slots[index], (next) => {
+          slots[index] = typeof next === "function" ? next(slots[index]) : next;
+        }];
       },
-      useRef: (initial) => {
-        const i = cursor++;
-        if (!(i in slots)) slots[i] = { current: initial };
-        return slots[i];
+      useRef: (value) => {
+        const index = cursor++;
+        if (!(index in slots)) slots[index] = { current: value };
+        return slots[index];
       },
-      useEffect: (effect) => { if (first) effects.push(effect); },
+      useEffect: (effect) => {
+        if (first) effects.push(effect);
+      },
     },
     "react/jsx-runtime": {
       jsx: (type, props) => ({ type, props }),
       jsxs: (type, props) => ({ type, props }),
     },
-    "@tauri-apps/api/event": { listen: async (name, handler) => {
-      listeners.set(name, handler);
-      return () => listeners.delete(name);
-    } },
-    "@tauri-apps/api/core": { invoke: async (command, args) => {
-      calls.push({ command, args: plain(args) });
-      if (command === "extension_choose_directory") return picker.promise;
-      if (command === "extension_scan") {
-        return { root: args.root, plugins: [], themes: [], diagnostics: [] };
-      }
-      if (command === "extension_load_theme") {
-        return { applied: true, css: `${args.root}:${args.theme}` };
-      }
-      throw new Error(command);
-    } },
-    "@tauri-apps/plugin-opener": {},
-    "lucide-react": { FolderOpen: "FolderOpen", RefreshCw: "RefreshCw" },
-    "react-markdown": {},
-    "remark-gfm": {},
+    "@tauri-apps/api/event": {
+      listen: async (name, handler) => {
+        listeners.set(name, handler);
+        return () => listeners.delete(name);
+      },
+    },
+    "@tauri-apps/api/core": {
+      invoke: async (command, args) => {
+        calls.push({ command, args: plain(args) });
+        if (command === "extension_choose_directory") return "D:\\chosen";
+        if (command === "extension_scan") {
+          return {
+            root: args.root,
+            plugins: [{
+              key: "publisher.plugin",
+              name: "plugin",
+              displayName: "Plugin",
+              description: `Version ${scanVersion}`,
+              version: "1.0.0",
+              kind: "plugin",
+              author: "Publisher",
+              homepage: "https://example.com/plugin",
+              repository: "",
+              icon: "",
+            }],
+            themes: [{
+              key: "publisher.theme",
+              name: "theme",
+              displayName: "Theme",
+              description: "Theme",
+              version: "1.0.0",
+              kind: "theme",
+              author: "Publisher",
+              homepage: "",
+              repository: "",
+              icon: "",
+            }],
+            unsupported: [],
+            diagnostics: [],
+            message: "",
+          };
+        }
+        if (command === "extension_load_theme") {
+          return args.theme === "Default"
+            ? { applied: false, css: "", message: "" }
+            : { applied: true, css: `${args.root}:${args.theme}`, message: "" };
+        }
+        if (command === "extension_call") {
+          return { key: args.key, readme: "# Readme\n\n[site](https://example.com/readme)", message: "" };
+        }
+        throw new Error(command);
+      },
+    },
+    "@tauri-apps/plugin-opener": {
+      openUrl: async (url) => opened.push(url),
+    },
+    "@/components/ui/button": { Button },
+    "@/components/ui/scroll-area": { ScrollArea },
+    "react-markdown": { default: Markdown },
+    "remark-gfm": { default: {} },
     "../desktop/api": {
       commandError: (error) => error.message,
       desktopPrefsGet: async () => prefs,
-      desktopPrefsSet: async (patch) => {
-        writes.push(plain(patch));
-        if (save.result) await save.result;
-        prefs = { ...prefs, ...patch };
+    },
+    "./theme": {
+      applyLegacyTheme: (css) => {
+        themes.push(css);
+        return { mapped: css ? 1 : 0, ignored: 0 };
       },
     },
-    "./theme": { applyLegacyTheme: (css) => {
-      themes.push(css);
-      return { mapped: css ? 1 : 0, ignored: 0 };
-    } },
   });
+
   const { ExtensionMount } = load(new URL("./ExtensionMount.tsx", import.meta.url));
   const render = () => {
     cursor = 0;
@@ -79,18 +133,19 @@ async function panel() {
     first = false;
     return tree;
   };
-  const control = (predicate) => find(render(), predicate)[0];
-  render();
-  cleanups = effects.map((effect) => effect());
-  await flush();
+  const start = async () => {
+    render();
+    cleanups = effects.map((effect) => effect());
+    await flush();
+  };
   return {
-    calls, writes, themes, picker, save, listeners, render,
-    input: () => control((node) => node.type === "input"),
-    theme: () => control((node) => node.type === "select"),
-    choose: () => control((node) => node.type === "button" && node.props.children.type === "FolderOpen"),
-    alert: () => control((node) => node.props?.role === "alert"),
-    importPrefs: (next) => {
+    calls,
+    opened,
+    render,
+    start,
+    changePrefs(next) {
       prefs = next;
+      scanVersion += 1;
       listeners.get("desktop://prefs-changed")();
     },
     stop: async () => {
@@ -98,13 +153,19 @@ async function panel() {
       await flush();
       assert.equal(listeners.size, 0);
     },
+    themes,
   };
 }
 
-test("directory wrapper uses the explicit command and nullable initial directory", async () => {
+test("directory wrapper uses the explicit native command", async () => {
   const calls = [];
   const load = createLoader({
-    "@tauri-apps/api/core": { invoke: async (...args) => { calls.push(plain(args)); return null; } },
+    "@tauri-apps/api/core": {
+      invoke: async (...args) => {
+        calls.push(plain(args));
+        return null;
+      },
+    },
   });
   const api = load(new URL("./api.ts", import.meta.url));
   assert.equal(await api.extensionChooseDirectory(), null);
@@ -115,150 +176,54 @@ test("directory wrapper uses the explicit command and nullable initial directory
   ]);
 });
 
-test("cancel keeps the draft, saved root, scan and applied theme; chooser is accessible", async () => {
-  const p = await panel();
-  p.input().props.onChange({ target: { value: "C:\\draft" } });
-  const button = p.choose();
-  assert.ok(button.props["aria-label"]);
-  assert.equal(button.props.title, button.props["aria-label"]);
-  assert.equal(String(button.props.children.props["aria-hidden"]), "true");
-  let prevented = false;
-  button.props.onMouseDown({ button: 0, preventDefault: () => { prevented = true; } });
-  assert.equal(prevented, true);
-  const before = [...p.themes];
-  button.props.onClick();
-  button.props.onClick();
-  p.input().props.onBlur();
-  assert.equal(p.choose().props.disabled, true);
-  assert.equal(p.input().props.disabled, true);
-  assert.equal(p.theme().props.disabled, true);
-  assert.equal(String(p.render().props["aria-busy"]), "true");
-  assert.deepEqual(p.calls.filter((call) => call.command === "extension_choose_directory"),
-    [{ command: "extension_choose_directory", args: { root: "C:\\draft" } }]);
-  p.picker.resolve(null);
-  await flush();
-  assert.equal(p.input().props.value, "C:\\draft");
-  assert.equal(p.theme().props.value, "publisher.theme");
-  assert.deepEqual(p.writes, []);
-  assert.deepEqual(p.themes, before);
-  assert.equal(p.calls.filter((call) => call.command === "extension_scan").length, 1);
-  assert.equal(p.choose().props.disabled, false);
-  await p.stop();
-});
-
-test("chosen directory saves only the root and rescans with the existing theme", async () => {
-  const p = await panel();
-  p.choose().props.onClick();
-  p.picker.resolve("D:\\chosen");
-  await flush();
-  assert.deepEqual(p.writes, [{ extensionRoot: "D:\\chosen" }]);
-  assert.equal(p.input().props.value, "D:\\chosen");
-  assert.equal(p.theme().props.value, "publisher.theme");
-  assert.deepEqual(p.calls.slice(-2), [
-    { command: "extension_scan", args: { root: "D:\\chosen" } },
-    { command: "extension_load_theme", args: { root: "D:\\chosen", theme: "publisher.theme" } },
+test("legacy extension page loads list and applies selected theme", async () => {
+  const p = mountPanel();
+  await p.start();
+  assert.deepEqual(p.calls.slice(0, 2), [
+    { command: "extension_scan", args: { root: "C:\\extensions" } },
+    {
+      command: "extension_load_theme",
+      args: { root: "C:\\extensions", theme: "publisher.theme" },
+    },
   ]);
-  assert.equal(p.themes.at(-1), "D:\\chosen:publisher.theme");
-  assert.equal(p.render().props["aria-busy"], false);
+  assert.equal(p.themes.at(-1), "C:\\extensions:publisher.theme");
+  const rows = find(p.render(), (node) => node.props?.["aria-pressed"] !== undefined);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.some((row) => JSON.stringify(row.props.children).includes("Plugin")), true);
   await p.stop();
 });
 
-test("selecting the saved directory avoids a redundant save and scan", async () => {
-  const p = await panel();
-  p.choose().props.onClick();
-  p.picker.resolve("C:\\extensions");
+test("clicking an extension opens README and external links", async () => {
+  const p = mountPanel();
+  await p.start();
+  const row = find(p.render(), (node) =>
+    node.type === "button" && node.props?.["aria-pressed"] === false)[0];
+  row.props.onClick();
   await flush();
-  assert.deepEqual(p.writes, []);
-  assert.equal(p.calls.filter((call) => call.command === "extension_scan").length, 1);
+  assert.equal(p.calls.some((call) =>
+    call.command === "extension_call" &&
+    call.args.key === "publisher.plugin"), true);
+
+  const links = find(p.render(), (node) =>
+    node.type === "button" && String(node.props?.children).includes("主页"));
+  links[0].props.onClick();
+  await flush();
+  assert.deepEqual(p.opened, ["https://example.com/plugin"]);
   await p.stop();
 });
 
-test("native chooser errors preserve directory and theme and enable retry", async () => {
-  const p = await panel();
-  p.choose().props.onClick();
-  p.picker.reject(new Error("Cannot open directory picker"));
+test("prefs change refreshes metadata and clears old detail", async () => {
+  const p = mountPanel();
+  await p.start();
+  const row = find(p.render(), (node) =>
+    node.type === "button" && node.props?.["aria-pressed"] === false)[0];
+  row.props.onClick();
   await flush();
-  assert.equal(p.alert().props.children, "Cannot open directory picker");
-  assert.equal(p.input().props.value, "C:\\extensions");
-  assert.equal(p.themes.length, 1);
-  assert.deepEqual(p.writes, []);
-  assert.equal(p.choose().props.disabled, false);
-  await p.stop();
-});
-
-test("save failures keep the chosen draft without scanning or changing the theme", async () => {
-  const p = await panel();
-  const failure = deferred();
-  p.save.result = failure.promise;
-  p.choose().props.onClick();
-  p.picker.resolve("D:\\chosen");
+  const reads = p.calls.filter((call) => call.command === "extension_call").length;
+  p.changePrefs({ extensionRoot: "D:\\new", theme: "Default" });
   await flush();
-  failure.reject(new Error("Cannot save preferences"));
-  await flush();
-  assert.equal(p.alert().props.children, "Cannot save preferences");
-  assert.equal(p.input().props.value, "D:\\chosen");
-  assert.equal(p.theme().props.value, "publisher.theme");
-  assert.equal(p.themes.length, 1);
-  assert.equal(p.calls.filter((call) => call.command === "extension_scan").length, 1);
-  assert.equal(p.choose().props.disabled, false);
-  await p.stop();
-});
-
-for (const rejects of [false, true]) {
-  test(`preference refresh discards an older picker ${rejects ? "error" : "selection"}`, async () => {
-    const p = await panel();
-    p.choose().props.onClick();
-    p.importPrefs({ extensionRoot: "D:\\imported", theme: "Default" });
-    await flush();
-    if (rejects) p.picker.reject(new Error("Old native failure"));
-    else p.picker.resolve("D:\\stale");
-    await flush();
-    assert.equal(p.input().props.value, "D:\\imported");
-    assert.equal(p.theme().props.value, "Default");
-    assert.deepEqual(p.writes, []);
-    assert.equal(p.alert(), undefined);
-    assert.equal(p.choose().props.disabled, false);
-    await p.stop();
-  });
-}
-
-test("unmounted panels discard a late selection without writing or restoring theme", async () => {
-  const p = await panel();
-  p.choose().props.onClick();
-  await p.stop();
-  const before = [...p.themes];
-  p.picker.resolve("D:\\stale");
-  await flush();
-  assert.deepEqual(p.writes, []);
-  assert.deepEqual(p.themes, before);
+  assert.equal(p.calls.filter((call) => call.command === "extension_scan").length, 2);
+  assert.equal(p.calls.filter((call) => call.command === "extension_call").length, reads);
   assert.equal(p.themes.at(-1), "");
-});
-
-test("a superseded save failure cannot overwrite imported state or surface an old error", async () => {
-  const p = await panel();
-  const saving = deferred();
-  p.save.result = saving.promise;
-  p.choose().props.onClick();
-  p.picker.resolve("D:\\chosen");
-  await flush();
-  p.importPrefs({ extensionRoot: "D:\\imported", theme: "Default" });
-  await flush();
-  saving.reject(new Error("Old save failure"));
-  await flush();
-  assert.equal(p.input().props.value, "D:\\imported");
-  assert.equal(p.theme().props.value, "Default");
-  assert.equal(p.alert(), undefined);
-  assert.equal(p.render().props["aria-busy"], false);
-  await p.stop();
-});
-
-test("manual directory input retains its trim, save and scan behavior", async () => {
-  const p = await panel();
-  p.input().props.onChange({ target: { value: "  D:\\manual  " } });
-  p.input().props.onBlur();
-  await flush();
-  assert.deepEqual(p.writes, [{ extensionRoot: "D:\\manual" }]);
-  assert.equal(p.input().props.value, "D:\\manual");
-  assert.equal(p.themes.at(-1), "D:\\manual:publisher.theme");
   await p.stop();
 });

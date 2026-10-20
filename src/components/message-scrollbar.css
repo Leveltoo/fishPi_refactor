@@ -5,19 +5,19 @@
   justify-content: space-between;
   width: 0.5em;
   height: 100%;
-  text-align: center;
+  text-align: right;
   color: var(--global-scroll-bar-color, var(--color-text-muted));
   user-select: none;
 }
 
 .msg-scrollbar__btn {
-  display: inline-block;
+  display: block;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 0.5em;
-  line-height: 0.5em;
+  font-size: 0.55em;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -28,7 +28,7 @@
 .msg-scrollbar__track {
   position: relative;
   flex: 1;
-  margin-top: 4px;
+  margin-top: 30px;
   min-height: 32px;
 }
 

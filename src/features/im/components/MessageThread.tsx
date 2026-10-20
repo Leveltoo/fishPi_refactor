@@ -176,18 +176,14 @@ export function MessageThread({
                 size="sm"
                 className="im-load-more"
                 disabled={loadingMore}
+                aria-label="加载更早消息"
                 onClick={loadOlder}
               >
-                {loadingMore ? <Spinner /> : null}
-                {loadingMore ? "加载中" : "加载更早消息"}
+                {loadingMore ? <Spinner /> : "..."}
               </Button>
-            ) : messages.length > 0 ? (
-              <p className="im-thread-end">没有更早的消息了</p>
             ) : null}
 
-            {messages.length === 0 ? (
-              <p className="im-thread-empty">暂无消息</p>
-            ) : (
+            {messages.length === 0 ? null : (
               messages.filter((message) => !message.revoked).map((message) => (
                 <MessageBubble
                   key={message.id}

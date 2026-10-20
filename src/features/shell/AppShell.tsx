@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -86,7 +87,7 @@ const MAIN_NAV: { id: MainPage; label: string; icon: string }[] = [
   { id: "im", label: "私聊", icon: "fa-solid fa-comment-dots" },
   { id: "article", label: "帖子", icon: "fa-solid fa-pen-clip" },
   { id: "breezemoon", label: "清风明月", icon: "fa fa-leaf" },
-  { id: "activity", label: "活动（签到/通知）", icon: "fa-solid fa-bell" },
+  { id: "activity", label: "活动", icon: "fa-solid fa-bell" },
   { id: "music", label: "播放列表", icon: "fa-solid fa-music" },
   { id: "extension", label: "扩展", icon: "ivu-icon ivu-icon-md-cube" },
 ];
@@ -171,8 +172,10 @@ function WinCtrlButton({
     classes.push("is-on");
   }
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon-sm"
       className={classes.join(" ")}
       title={label}
       aria-label={label}
@@ -180,7 +183,7 @@ function WinCtrlButton({
       onClick={onClick}
     >
       {customIcon}
-    </button>
+    </Button>
   );
 }
 
@@ -356,8 +359,9 @@ export function AppShell({
                 const current = page === id;
                 return (
                   <RailTip key={id} label={label}>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       className={navClass(current, current)}
                       aria-current={current ? "page" : undefined}
                       onClick={() => setPage(id)}
@@ -374,7 +378,7 @@ export function AppShell({
                           ? `，${unread > 99 ? "99+" : unread} 条未读`
                           : ""}
                       </span>
-                    </button>
+                    </Button>
                   </RailTip>
                 );
               })}
@@ -382,15 +386,16 @@ export function AppShell({
 
             <div className="shell__account">
               <RailTip label="设置">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   className={navClass(page === "settings", page === "settings")}
                   aria-current={page === "settings" ? "page" : undefined}
                   onClick={() => setPage("settings")}
                 >
                   <i className="ivu-icon ivu-icon-md-settings" aria-hidden="true" />
                   <span className="visually-hidden">设置</span>
-                </button>
+                </Button>
               </RailTip>
               <DropdownMenu>
                 <DropdownMenuTrigger

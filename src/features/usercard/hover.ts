@@ -6,9 +6,15 @@
  */
 
 import { useEffect } from "react";
-import { hideUserCardWindow, showUserCardWindow, trackUserCardMouse } from "./window";
+import { prefetchUserProfile } from "../overlay/api";
+import {
+  hideUserCardWindow,
+  prewarmUserCardWindow,
+  showUserCardWindow,
+  trackUserCardMouse,
+} from "./window";
 
-const DEFAULT_DELAY_MS = 1500;
+const DEFAULT_DELAY_MS = 600;
 
 const SELECTOR =
   ".user-card[data-user], [data-user-card], [data-user]:is(.user-card, .msg-avatar, .chat-msg-identity, .chat-msg-name, .chat-online-user-row, .im-conv-avatar, .im-avatar, .chat-also-user)";
@@ -67,7 +73,12 @@ export function useUserCardHover(): void {
         return;
       }
       clearTimer();
+      const changed = activeEl !== el;
       activeEl = el;
+      if (changed) {
+        void prefetchUserProfile(userName);
+        void prewarmUserCardWindow(userName);
+      }
       const rawDelay = Number(
         el.getAttribute("data-user-card-delay") ?? el.getAttribute("data-time"),
       );

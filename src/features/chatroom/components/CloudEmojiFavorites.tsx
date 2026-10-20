@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Plus, RefreshCw, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -117,10 +116,10 @@ export function CloudEmojiFavorites({ disabled, onPick }: Props) {
           return (
             <ContextMenu key={`${index}:${raw}`}>
               <ContextMenuTrigger asChild>
-                <button type="button" className="chat-emoji-item" title="收藏表情" disabled={disabled}
+                <Button type="button" variant="ghost" size="icon-sm" className="chat-emoji-item" title="收藏表情" disabled={disabled}
                   onClick={() => onPick(src)}>
                   <img src={src} alt="" />
-                </button>
+                </Button>
               </ContextMenuTrigger>
               <ContextMenuContent className="chat-menu">
                 <ContextMenuItem variant="destructive" disabled={cannotWrite}
@@ -165,14 +164,14 @@ export function CloudEmojiFavorites({ disabled, onPick }: Props) {
             event.target.value = "";
           }} />
         <Button type="button" size="icon-sm" variant="outline" title="添加收藏图片" aria-label="添加收藏图片"
-          disabled={cannotWrite} onClick={() => fileInput.current?.click()}><Plus aria-hidden="true" /></Button>
+          disabled={cannotWrite} onClick={() => fileInput.current?.click()}><i className="fa fa-plus" aria-hidden="true" /></Button>
         <Button type="button" size="icon-sm" variant="outline" title="导出收藏" aria-label="导出收藏"
           disabled={loading || busy || unknown || snapshot == null}
-          onClick={() => downloadCloudEmojiText(urls)}><Download aria-hidden="true" /></Button>
+          onClick={() => downloadCloudEmojiText(urls)}><i className="fa fa-download" aria-hidden="true" /></Button>
         <Button type="button" size="icon-sm" variant="outline" title="导入收藏" aria-label="导入收藏"
-          disabled={cannotWrite} onClick={() => importInput.current?.click()}><Upload aria-hidden="true" /></Button>
+          disabled={cannotWrite} onClick={() => importInput.current?.click()}><i className="fa fa-upload" aria-hidden="true" /></Button>
         <Button type="button" size="icon-sm" variant="ghost" title="刷新收藏" aria-label="刷新收藏"
-          disabled={loading || busy} onClick={() => void reload()}><RefreshCw aria-hidden="true" /></Button>
+          disabled={loading || busy} onClick={() => void reload()}><i className="fa fa-refresh" aria-hidden="true" /></Button>
       </div>
     </div>
   );

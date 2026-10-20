@@ -55,8 +55,64 @@ export type SearchOutcome =
 
 const PROFILE_UNAVAILABLE = "用户资料命令尚未接入 Bridge。";
 const SEARCH_UNAVAILABLE = "搜人接口尚未接入 Bridge。";
+const PROFILE_TTL_MS = 60_000;
+
+type CachedProfile = {
+  outcome: ProfileOutcome;
+  expiresAt: number;
+};
+
+const profileCache = new Map<string, CachedProfile>();
+const profileInFlight = new Map<string, Promise<ProfileOutcome>>();
 
 export async function fetchUserProfile(userName: string): Promise<ProfileOutcome> {
+  return loadUserProfile(userName);
+}
+
+export function prefetchUserProfile(userName: string): Promise<ProfileOutcome> {
+  return loadUserProfile(userName);
+}
+
+export function cachedUserProfile(userName: string): ProfileOutcome | null {
+  const entry = profileCache.get(profileKey(userName));
+  return entry != null && entry.expiresAt > Date.now() ? entry.outcome : null;
+}
+
+export function invalidateUserProfile(userName: string): void {
+  const key = profileKey(userName);
+  profileCache.delete(key);
+  profileInFlight.delete(key);
+}
+
+function loadUserProfile(userName: string): Promise<ProfileOutcome> {
+  const name = userName.trim();
+  const key = profileKey(name);
+  const cached = profileCache.get(key);
+  if (cached != null && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.outcome);
+  }
+  const pending = profileInFlight.get(key);
+  if (pending != null) {
+    return pending;
+  }
+  const request = requestUserProfile(name)
+    .then((outcome) => {
+      if (outcome.status === "ok") {
+        profileCache.set(key, {
+          outcome,
+          expiresAt: Date.now() + PROFILE_TTL_MS,
+        });
+      }
+      return outcome;
+    })
+    .finally(() => {
+      profileInFlight.delete(key);
+    });
+  profileInFlight.set(key, request);
+  return request;
+}
+
+async function requestUserProfile(userName: string): Promise<ProfileOutcome> {
   const request = { userName };
   try {
     const payload = await invokeCommand(OVERLAY_COMMAND.profile, { request });
@@ -70,6 +126,10 @@ export async function fetchUserProfile(userName: string): Promise<ProfileOutcome
     }
     return { status: "error", message: toUserMessage(error) };
   }
+}
+
+function profileKey(userName: string): string {
+  return userName.trim().toLocaleLowerCase();
 }
 
 export async function searchUsers(query: string): Promise<SearchOutcome> {

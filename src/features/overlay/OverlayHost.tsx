@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -242,36 +241,52 @@ function ImagePreviewDialog({
     >
       <DialogContent
         className="dark ov-image-dialog max-w-[min(52rem,calc(100vw-2rem))] sm:max-w-[min(52rem,calc(100vw-2rem))]"
-        showCloseButton
+        showCloseButton={false}
       >
         <DialogHeader className="ov-image-header">
-          <DialogTitle className="ov-image-title" title={title}>{title || "图片预览"}</DialogTitle>
+          <DialogTitle className="ov-image-title" title={title}>
+            <i className="fa fa-picture-o" aria-hidden="true" />
+            <span>{title || "图片预览"}</span>
+          </DialogTitle>
           <DialogDescription className="sr-only">
             滚轮缩放，拖拽移动，Esc 关闭
           </DialogDescription>
-          {image ? (
+          <span className="ov-image-actions">
+            {image ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                title="适合窗口"
+                aria-label="适合窗口"
+                onClick={fitImage}
+              >
+                <i className="fa fa-arrows-alt" aria-hidden="true" />
+              </Button>
+            ) : null}
+            {image ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                title="用浏览器打开"
+                aria-label="用浏览器打开"
+                onClick={openInBrowser}
+              >
+                <i className="fa fa-external-link" aria-hidden="true" />
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="ghost"
               size="icon-xs"
-              title="适合窗口"
-              aria-label="适合窗口"
-              onClick={fitImage}
+              title="关闭"
+              aria-label="关闭"
+              onClick={onClose}
             >
-              <RotateCcw />
+              <i className="fa fa-times" aria-hidden="true" />
             </Button>
-          ) : null}
-          {image ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="ov-image-open"
-              onClick={openInBrowser}
-            >
-              用浏览器打开
-            </Button>
-          ) : null}
+          </span>
         </DialogHeader>
         {image ? (
           <ContextMenu>

@@ -1,13 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { WarningIcon } from "@phosphor-icons/react";
+import { Input } from "@/components/ui/input";
 
 import { OPEN_IM_EVENT, type OpenImDetail } from "../../lib/nav";
 import { setHeaderTitle } from "../../lib/headerTitle";
 import { ConversationList } from "./components/ConversationList";
 import { MessagePane } from "./components/MessagePane";
-import { StartChatDialog } from "./components/StartChatDialog";
 import { usePrivateChat } from "./usePrivateChat";
 import { replyTargetFromMessage } from "./replyQuote";
 import "./im.css";
@@ -19,12 +18,22 @@ import "./im.css";
 export function PrivateChatHost() {
   const chat = usePrivateChat();
   const rootRef = useRef<HTMLDivElement>(null);
+  const [newUser, setNewUser] = useState("");
   const active = chat.conversations.find(
     (item) => item.peerUserName === chat.activeUser,
   );
   const bridgeMissing = !chat.loadingList && !chat.capabilities.list;
   const openConversation = chat.openConversation;
   const setVisible = chat.setVisible;
+
+  function startNewChat(): void {
+    const userName = newUser.trim();
+    if (userName.length === 0) {
+      return;
+    }
+    chat.startChat({ userName, userAvatarUrl: "" });
+    setNewUser("");
+  }
 
   useEffect(() => {
     const root = rootRef.current;
@@ -69,7 +78,7 @@ export function PrivateChatHost() {
 
       {bridgeMissing ? (
         <Alert className="im-alert">
-          <WarningIcon />
+          <i className="fa fa-exclamation-circle" aria-hidden="true" />
           <AlertTitle>私聊暂不可用</AlertTitle>
           <AlertDescription>
             无法加载会话
@@ -77,10 +86,31 @@ export function PrivateChatHost() {
         </Alert>
       ) : chat.error ? (
         <Alert variant="destructive" className="im-alert">
-          <WarningIcon />
+          <i className="fa fa-exclamation-circle" aria-hidden="true" />
           <AlertTitle>私聊请求失败</AlertTitle>
           <AlertDescription>{chat.error}</AlertDescription>
         </Alert>
+      ) : null}
+
+      {chat.startOpen ? (
+        <section className="im-user-form">
+          <Input
+            autoFocus
+            value={newUser}
+            placeholder="想和谁聊聊？"
+            aria-label="想和谁聊聊？"
+            onChange={(event) => setNewUser(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                startNewChat();
+              } else if (event.key === "Escape") {
+                setNewUser("");
+                chat.setStartOpen(false);
+              }
+            }}
+          />
+        </section>
       ) : null}
 
       <div className="im-body">
@@ -127,14 +157,6 @@ export function PrivateChatHost() {
         />
       </div>
 
-      <StartChatDialog
-        open={chat.startOpen}
-        onOpenChange={chat.setStartOpen}
-        conversations={chat.conversations}
-        searchAvailable={chat.capabilities.search}
-        onSearch={chat.searchUsers}
-        onPick={chat.startChat}
-      />
     </div>
   );
 }

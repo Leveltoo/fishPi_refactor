@@ -1,53 +1,48 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { FolderOpen, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { commandError, desktopPrefsGet, desktopPrefsSet } from "../desktop/api";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { commandError, desktopPrefsGet } from "../desktop/api";
 import {
-  extensionCall, extensionChooseDirectory, extensionLoadTheme, extensionScan,
-  type ExtensionDetail, type ExtensionItem, type ExtensionScan,
+  extensionCall,
+  extensionLoadTheme,
+  extensionScan,
+  type ExtensionDetail,
+  type ExtensionItem,
+  type ExtensionScan,
 } from "./api";
 import { applyLegacyTheme } from "./theme";
-import "../desktop/panel.css";
 import "./extension.css";
 
 function safeDataIcon(icon: string): string | null {
-  if (!/^data:image\/(?:png|jpeg|gif|webp|x-icon);base64,[A-Za-z0-9+/=]+$/.test(icon)) {
-    return null;
-  }
-  return icon;
+  return /^data:image\/(?:png|jpeg|gif|webp|x-icon);base64,[A-Za-z0-9+/=]+$/.test(icon)
+    ? icon
+    : null;
 }
 
 function safeWebLink(value: string): string | null {
   try {
     const url = new URL(value);
     return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
-      ? url.href : null;
+      ? url.href
+      : null;
   } catch {
     return null;
   }
 }
 
-/**
- * Read-only extension metadata and README, plus controlled legacy theme colors.
- */
 export function ExtensionMount() {
-  const [root, setRoot] = useState("");
-  const [theme, setTheme] = useState("Default");
   const [scan, setScan] = useState<ExtensionScan | null>(null);
-  const [note, setNote] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [choosing, setChoosing] = useState(false);
   const [selected, setSelected] = useState("");
   const [detail, setDetail] = useState<ExtensionDetail | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const mounted = useRef(false);
   const revision = useRef(0);
   const detailRevision = useRef(0);
-  const savedRoot = useRef("");
-  const pendingPicker = useRef<number | null>(null);
 
   async function refresh(): Promise<void> {
     const request = ++revision.current;
@@ -58,56 +53,43 @@ export function ExtensionMount() {
     setError("");
     try {
       const prefs = await desktopPrefsGet();
-      if (!mounted.current || request !== revision.current) {
-        return;
-      }
-      const [listed, loaded] = await Promise.all([
-        extensionScan(prefs.extensionRoot || undefined),
-        extensionLoadTheme(prefs.theme, prefs.extensionRoot || undefined),
-      ]);
-      if (!mounted.current || request !== revision.current) {
-        return;
-      }
-      savedRoot.current = prefs.extensionRoot;
-      setRoot(prefs.extensionRoot);
-      setTheme(prefs.theme);
+      const listed = await extensionScan(prefs.extensionRoot || undefined);
+      if (!mounted.current || request !== revision.current) return;
       setScan(listed);
-      const mapped = applyLegacyTheme(loaded.applied ? loaded.css : "");
-      setNote(mapped.mapped
-        ? `已应用 ${mapped.mapped} 项主题颜色，忽略 ${mapped.ignored} 项未适配样式。`
-        : prefs.theme === "Default"
-          ? "当前使用内置主题。"
-          : loaded.applied
-            ? "主题没有可适配的颜色，当前使用内置主题。"
-            : loaded.message);
-    } catch (err: unknown) {
-      if (!mounted.current || request !== revision.current) {
-        return;
+      try {
+        const loaded = await extensionLoadTheme(
+          prefs.theme,
+          prefs.extensionRoot || undefined,
+        );
+        if (mounted.current && request === revision.current) {
+          applyLegacyTheme(loaded.applied ? loaded.css : "");
+        }
+      } catch {
+        if (mounted.current && request === revision.current) {
+          applyLegacyTheme("");
+        }
       }
-      applyLegacyTheme("");
-      setScan(null);
-      setError(commandError(err));
-    } finally {
+    } catch (err) {
       if (mounted.current && request === revision.current) {
-        setBusy(false);
+        applyLegacyTheme("");
+        setScan(null);
+        setError(commandError(err));
       }
+    } finally {
+      if (mounted.current && request === revision.current) setBusy(false);
     }
   }
 
   useEffect(() => {
     mounted.current = true;
     let alive = true;
-    // Register first so importing settings while this panel stays mounted is observed.
     const stop = listen("desktop://prefs-changed", () => {
-      if (alive) {
-        void refresh();
-      }
+      if (alive) void refresh();
     });
-    void stop.then(() => {
-      if (alive) {
-        void refresh();
-      }
-    })
+    void stop
+      .then(() => {
+        if (alive) void refresh();
+      })
       .catch((err: unknown) => {
         if (alive) {
           setError(commandError(err));
@@ -119,58 +101,10 @@ export function ExtensionMount() {
       mounted.current = false;
       revision.current += 1;
       detailRevision.current += 1;
-      pendingPicker.current = null;
       void stop.then((unlisten) => unlisten()).catch(() => undefined);
       applyLegacyTheme("");
     };
   }, []);
-
-  async function save(patch: { extensionRoot?: string; theme?: string }): Promise<void> {
-    const request = ++revision.current;
-    setBusy(true);
-    setError("");
-    try {
-      await desktopPrefsSet(patch);
-      if (mounted.current && request === revision.current) {
-        await refresh();
-      }
-    } catch (err: unknown) {
-      if (mounted.current && request === revision.current) {
-        setError(commandError(err));
-        setBusy(false);
-      }
-    }
-  }
-
-  async function chooseDirectory(): Promise<void> {
-    if (!mounted.current || busy || pendingPicker.current !== null) {
-      return;
-    }
-    const request = ++revision.current;
-    pendingPicker.current = request;
-    setChoosing(true);
-    try {
-      const chosen = await extensionChooseDirectory(root.trim() || undefined);
-      if (!mounted.current || request !== revision.current || chosen === null) {
-        return;
-      }
-      setRoot(chosen);
-      if (chosen !== savedRoot.current) {
-        await save({ extensionRoot: chosen });
-      }
-    } catch (err: unknown) {
-      if (mounted.current && request === revision.current) {
-        setError(commandError(err));
-      }
-    } finally {
-      if (pendingPicker.current === request) {
-        pendingPicker.current = null;
-        if (mounted.current) {
-          setChoosing(false);
-        }
-      }
-    }
-  }
 
   async function viewDetail(item: ExtensionItem): Promise<void> {
     const request = ++detailRevision.current;
@@ -184,10 +118,8 @@ export function ExtensionMount() {
     setError("");
     try {
       const result = await extensionCall("readme", item.key, scan?.root);
-      if (mounted.current && request === detailRevision.current) {
-        setDetail(result);
-      }
-    } catch (err: unknown) {
+      if (mounted.current && request === detailRevision.current) setDetail(result);
+    } catch (err) {
       if (mounted.current && request === detailRevision.current) {
         setError(commandError(err));
       }
@@ -196,114 +128,131 @@ export function ExtensionMount() {
 
   async function openLink(link: string): Promise<void> {
     const safe = safeWebLink(link);
-    if (!safe) {
-      return;
-    }
+    if (!safe) return;
     try {
       await openUrl(safe);
-    } catch (err: unknown) {
-      if (mounted.current) {
-        setError(commandError(err));
-      }
+    } catch (err) {
+      if (mounted.current) setError(commandError(err));
     }
   }
 
   const items = [...(scan?.plugins ?? []), ...(scan?.themes ?? [])];
+  const selectedItem = items.find((item) => item.key === selected) ?? null;
 
   return (
-    <section className="parity-panel extension-panel" aria-label="扩展" aria-busy={busy || choosing}>
-      <section className="parity-section">
-        <h2>本地扩展</h2>
-        <div className="parity-row">
-          <label htmlFor="extension-root">扩展目录</label>
-          <input
-            id="extension-root"
-            value={root}
-            disabled={busy || choosing}
-            onChange={(event) => setRoot(event.target.value)}
-            onBlur={() => {
-              if (pendingPicker.current === null && root.trim() !== savedRoot.current) {
-                void save({ extensionRoot: root.trim() });
-              }
-            }}
-          />
-          <button type="button" disabled={busy || choosing} title="选择扩展目录" aria-label="选择扩展目录"
-            onMouseDown={(event) => {
-              // Keep the draft intact when opening or cancelling the picker.
-              if (event.button === 0) event.preventDefault();
-            }}
-            onClick={() => void chooseDirectory()}>
-            <FolderOpen size={16} aria-hidden="true" />
-          </button>
-          <button type="button" disabled={busy || choosing} title="重新扫描" aria-label="重新扫描"
-            onClick={() => void refresh()}>
-            <RefreshCw size={16} aria-hidden="true" />
-          </button>
-        </div>
-        <label className="parity-row">
-          主题
-          <select
-            value={theme}
-            disabled={busy || choosing}
-            onChange={(event) => {
-              const next = event.target.value;
-              setTheme(next);
-              void save({ theme: next });
-            }}
-          >
-            <option value="Default">默认</option>
-            {theme !== "Default" && !(scan?.themes ?? []).some((item) => item.key === theme) ? (
-              <option value={theme}>{theme}</option>
-            ) : null}
-            {(scan?.themes ?? []).map((item) => (
-              <option key={item.key} value={item.key}>
-                {item.description || item.displayName || item.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="parity-note">
-          {note || "正在读取本地扩展。"}
-        </p>
-        {scan?.diagnostics.length ? (
-          <ul className="parity-list">
-            {scan.diagnostics.map((text, index) => <li key={index}>{text}</li>)}
-          </ul>
-        ) : null}
-        {items.length ? (
-          <ul className="parity-ext-list">
+    <section
+      className="legacy-extension-page"
+      aria-label="扩展"
+      aria-busy={busy}
+    >
+      <section
+        className={selected ? "legacy-ext-list-pane is-detail-open" : "legacy-ext-list-pane"}
+      >
+        <ScrollArea className="legacy-ext-scroll">
+          <ul className="legacy-ext-list">
             {items.map((item) => (
-              <ExtensionCard key={item.key} item={item} selected={selected === item.key}
-                onDetail={() => void viewDetail(item)} onLink={(link) => void openLink(link)} />
+              <ExtensionRow
+                key={item.key}
+                item={item}
+                selected={selected === item.key}
+                onDetail={() => void viewDetail(item)}
+                onLink={(link) => void openLink(link)}
+              />
             ))}
           </ul>
-        ) : (
-          <p className="parity-note">{busy ? "正在扫描。" : "没有可列出的本地扩展。"}</p>
-        )}
+        </ScrollArea>
       </section>
 
-      {selected ? (
-        <section className="parity-section extension-readme" aria-label="扩展详情" aria-live="polite">
-          <h2>{items.find((item) => item.key === selected)?.displayName ?? selected}</h2>
-          {detail ? (
-            detail.readme ? (
-              <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
-                a: ({ href, children }) => href && safeWebLink(href)
-                  ? <button type="button" className="parity-ext__link"
-                      onClick={() => void openLink(href)}>{children}</button>
-                  : <span>{children}</span>,
-                img: ({ alt }) => <span>{alt ?? ""}</span>,
-              }}>{detail.readme}</ReactMarkdown>
-            ) : <p className="parity-note">作者没有提供介绍。</p>
-          ) : <p className="parity-note">{error ? "详情未载入。" : "正在读取介绍。"}</p>}
-        </section>
-      ) : null}
-      {error ? <p className="parity-error" role="alert">{error}</p> : null}
+      <section
+        className={selected ? "legacy-ext-detail is-open" : "legacy-ext-detail"}
+        aria-live="polite"
+      >
+        {selectedItem ? (
+          <>
+            <header className="legacy-ext-detail-head">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="legacy-ext-back"
+                title="返回扩展列表"
+                aria-label="返回扩展列表"
+                onClick={() => {
+                  detailRevision.current += 1;
+                  setSelected("");
+                  setDetail(null);
+                }}
+              >
+                <i className="fa fa-arrow-left" aria-hidden="true" />
+              </Button>
+              <h2>{selectedItem.displayName || selectedItem.name}</h2>
+              {[selectedItem.homepage, selectedItem.repository]
+                .map(safeWebLink)
+                .find((link): link is string => link != null) ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  className="legacy-ext-home"
+                  onClick={() => {
+                    const link = [selectedItem.homepage, selectedItem.repository]
+                      .map(safeWebLink)
+                      .find((value): value is string => value != null);
+                    if (link) void openLink(link);
+                  }}
+                >
+                  主页
+                </Button>
+              ) : null}
+            </header>
+            <ScrollArea className="legacy-ext-detail-scroll">
+              <div className="md-style legacy-ext-readme">
+                {detail ? (
+                  detail.readme ? (
+                    <ReactMarkdown
+                      skipHtml
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        a: ({ href, children }) =>
+                          href && safeWebLink(href) ? (
+                            <Button
+                              type="button"
+                              variant="link"
+                              size="xs"
+                              className="legacy-ext-link"
+                              onClick={() => void openLink(href)}
+                            >
+                              {children}
+                            </Button>
+                          ) : (
+                            <span>{children}</span>
+                          ),
+                        img: ({ alt }) => <span>{alt ?? ""}</span>,
+                      }}
+                    >
+                      {detail.readme}
+                    </ReactMarkdown>
+                  ) : (
+                    <p>作者什么也没有介绍。</p>
+                  )
+                ) : null}
+              </div>
+            </ScrollArea>
+          </>
+        ) : null}
+      </section>
+
+      {error ? <p className="legacy-ext-error" role="alert">{error}</p> : null}
     </section>
   );
 }
 
-function ExtensionCard({ item, selected, onDetail, onLink }: {
+function ExtensionRow({
+  item,
+  selected,
+  onDetail,
+  onLink,
+}: {
   item: ExtensionItem;
   selected: boolean;
   onDetail: () => void;
@@ -311,46 +260,43 @@ function ExtensionCard({ item, selected, onDetail, onLink }: {
 }) {
   const icon = safeDataIcon(item.icon);
   const link = safeWebLink(item.homepage || item.repository);
-  const title = item.displayName || item.name;
 
   return (
-    <li className="parity-ext">
-      {icon ? (
-        <img className="parity-ext__icon" src={icon} alt="" />
-      ) : (
-        <span className="parity-ext__icon parity-ext__icon--empty" aria-hidden="true" />
-      )}
-      <div className="parity-ext__info">
-        <h3 className="parity-ext__title">
-          {link ? (
-            <button
-              type="button"
-              className="parity-ext__link"
-              onClick={() => onLink(link)}
-            >
-              {title}
-            </button>
-          ) : (
-            title
-          )}
-          {item.version ? <sub>{item.version}</sub> : null}
-        </h3>
-        <p className="parity-ext__desc">{item.description || "作者什么也没有介绍。"}</p>
-        <p className="parity-ext__author">{item.author || "神秘开发者"}（{item.kind === "theme" ? "主题" : "脚本未运行"}）</p>
-        <button type="button" aria-pressed={selected} onClick={onDetail}>详情</button>
-        {link ? (
-          <p className="parity-ext__author">
-            主页{" "}
-            <button
-              type="button"
-              className="parity-ext__link"
-              onClick={() => onLink(link)}
-            >
-              {link}
-            </button>
-          </p>
-        ) : null}
-      </div>
+    <li className={selected ? "legacy-ext-item is-active" : "legacy-ext-item"}>
+      <Button
+        type="button"
+        variant="ghost"
+        className="legacy-ext-item-main"
+        aria-pressed={selected}
+        onClick={onDetail}
+      >
+        <span className="legacy-ext-icon">
+          {icon ? <img src={icon} alt="" /> : <i className="fa fa-cube" aria-hidden="true" />}
+        </span>
+        <span className="legacy-ext-info">
+          <span className="legacy-ext-title">
+            <strong>{item.displayName || item.name}</strong>
+            {item.version ? <small>{item.version}</small> : null}
+          </span>
+          <span className="legacy-ext-desc">{item.description}</span>
+          <span className="legacy-ext-author">
+            {item.author || "神秘开发者"}
+          </span>
+        </span>
+      </Button>
+      {link ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="legacy-ext-open"
+          title="访问扩展主页"
+          aria-label={`访问 ${item.displayName || item.name} 主页`}
+          onClick={() => onLink(link)}
+        >
+          <i className="fa fa-external-link" aria-hidden="true" />
+        </Button>
+      ) : null}
     </li>
   );
 }

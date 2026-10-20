@@ -21,6 +21,7 @@ test("the extension rail button opens its single persistent host outside setting
     "lucide-react": component,
     "@/components/ui/alert": component,
     "@/components/ui/avatar": component,
+    "@/components/ui/button": component,
     "@/components/ui/context-menu": component,
     "@/components/ui/dropdown-menu": component,
     "@/components/ui/separator": component,

@@ -6,26 +6,16 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Image as ImageIcon, Send, Smile } from "lucide-react";
-import {
-  LockSimpleIcon,
-  MaskHappyIcon,
-  XIcon,
-} from "@phosphor-icons/react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Spinner } from "@/components/ui/spinner";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { EmojiPanel } from "../chatroom/components/EmojiPanel";
 import { toMusicBox } from "../chatroom/messageView";
 import { isFileSrc, uploadLocalSources } from "../chatroom/pasteImages";
 import { MentionList } from "../overlay/MentionList";
-import { readMention, insertMention } from "../overlay/mention";
+import { insertMention, readMention } from "../overlay/mention";
 import { isImageFile, uploadMediaToMarkdown } from "../../lib/upload";
 import { emojiCompletion, imageMarkdown, pastedImageSources } from "./commentInput";
 import { toUserErrorMessage } from "./errors";
@@ -42,10 +32,6 @@ type CommentComposerProps = {
   onSend: (draft: CommentSubmit) => Promise<boolean>;
 };
 
-/**
- * 评论输入：回复、匿名、仅楼主可见、插图、表情。
- * 匿名 / 可见按界面传入，不写死 false。
- */
 export function CommentComposer({
   disabled,
   sending,
@@ -61,7 +47,6 @@ export function CommentComposer({
   const [visible, setVisible] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [height, setHeight] = useState(() => {
@@ -83,14 +68,26 @@ export function CommentComposer({
   const showEmoji = completion && dismissed !== completionKey;
 
   useEffect(() => {
+    if (pendingConfirm) {
+      toast.error("结果未确认，请刷新后再发送");
+    }
+  }, [pendingConfirm]);
+
+  useEffect(() => {
     if (!resizing) return;
     function move(event: PointerEvent) {
       if (!drag.current) return;
-      const next = Math.min(400, Math.max(48, drag.current.height + event.clientY - drag.current.y));
+      const next = Math.min(
+        400,
+        Math.max(48, drag.current.height + event.clientY - drag.current.y),
+      );
       setHeight(next);
       localStorage.setItem("message-height", String(next));
     }
-    function end() { drag.current = null; setResizing(false); }
+    function end() {
+      drag.current = null;
+      setResizing(false);
+    }
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end, { once: true });
     return () => {
@@ -110,57 +107,53 @@ export function CommentComposer({
     requestAnimationFrame(() => {
       const node = textareaRef.current;
       const pos = lastCursorRef.current;
-      if (node == null) {
-        return;
-      }
+      if (node == null) return;
       node.focus();
       node.setSelectionRange(pos, pos);
     });
   }
 
-  async function appendUploaded(files: File[], local: string[] = []): Promise<void> {
+  async function appendUploaded(
+    files: File[],
+    local: string[] = [],
+  ): Promise<void> {
     const media = files.filter(isImageFile);
-    if ((media.length === 0 && local.length === 0) || uploadLock.current || locked) {
+    if (
+      (media.length === 0 && local.length === 0) ||
+      uploadLock.current ||
+      locked
+    ) {
       return;
     }
     uploadLock.current = true;
     setUploadBusy(true);
-    setUploadError(null);
     try {
       const markdown = await uploadMediaToMarkdown(media);
-      if (markdown.length > 0) {
-        insertAtCursor(markdown);
-      }
+      if (markdown.length > 0) insertAtCursor(markdown);
       if (local.length) {
         const localMarkdown = await uploadLocalSources(local);
         if (!localMarkdown) throw new Error("本地图片无法读取");
         insertAtCursor(localMarkdown);
       }
     } catch (err) {
-      setUploadError(toUserErrorMessage(err));
+      toast.error(toUserErrorMessage(err));
     } finally {
       uploadLock.current = false;
       setUploadBusy(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
     const clipboard = event.clipboardData;
-    if (clipboard == null || locked || uploadBusy) {
-      return;
-    }
+    if (clipboard == null || locked || uploadBusy) return;
     lastCursorRef.current =
       event.currentTarget.selectionStart ?? lastCursorRef.current;
     const files: File[] = [];
     for (const item of Array.from(clipboard.items ?? [])) {
       if (item.type.includes("image")) {
         const file = item.getAsFile();
-        if (file != null) {
-          files.push(file);
-        }
+        if (file != null) files.push(file);
       }
     }
     const html = clipboard.getData("text/html");
@@ -171,15 +164,19 @@ export function CommentComposer({
       return;
     }
     event.preventDefault();
-    if (remote.length > 0) {
-      insertAtCursor(remote);
-    }
+    if (remote.length > 0) insertAtCursor(remote);
     void appendUploaded(files, local);
   }
 
   async function submit(): Promise<void> {
     const content = draft.trim();
-    if (content.length === 0 || locked || sending || uploadBusy || submitLock.current) {
+    if (
+      content.length === 0 ||
+      locked ||
+      sending ||
+      uploadBusy ||
+      submitLock.current
+    ) {
       return;
     }
     submitLock.current = true;
@@ -214,7 +211,8 @@ export function CommentComposer({
       chooseCompletion(completion.start, `:${completion.items[0].name}:`);
       return;
     }
-    lastCursorRef.current = event.currentTarget.selectionStart ?? lastCursorRef.current;
+    lastCursorRef.current =
+      event.currentTarget.selectionStart ?? lastCursorRef.current;
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       void submit();
@@ -234,34 +232,19 @@ export function CommentComposer({
   }
 
   const placeholder = !commentAvailable
-    ? "评论接口尚未接入，不会伪装发出"
+    ? "评论不可用"
     : !commentable
-      ? "这篇帖子关闭了评论"
+      ? "评论已关闭"
       : "说点什么";
 
   return (
-    <form className="article-composer" onSubmit={onSubmit} id="article-composer">
-      {pendingConfirm ? (
-        <p className="article-pending" role="status">
-          结果待确认。请稍后查看是否已经成功，请勿重复提交。
-        </p>
-      ) : null}
-      {reply ? (
-        <div className="article-reply-chip">
-          <p>
-            回复 @{reply.userName}
-            {reply.content.trim() ? (
-              <span>：{stripPreview(reply.content)}</span>
-            ) : null}
-          </p>
-          <Button type="button" variant="ghost" size="xs" onClick={onClearReply}>
-            <XIcon />
-            取消
-          </Button>
-        </div>
-      ) : null}
-      <div className="article-composer-toolbar">
-        <input
+    <form
+      className={resizing ? "article-composer chat-editor is-resizing" : "article-composer chat-editor"}
+      onSubmit={onSubmit}
+      id="article-composer"
+    >
+      <section className="chat-toolbar">
+        <Input
           ref={fileInputRef}
           type="file"
           accept="image/*"
@@ -273,32 +256,54 @@ export function CommentComposer({
             void appendUploaded(Array.from(event.target.files ?? []));
           }}
         />
-        <Button
+        <Button variant="ghost"
           type="button"
-          variant="ghost"
-          size="icon-sm"
+          className="msg-control"
           title={uploadBusy ? "上传中..." : "上传图片"}
           aria-label="上传图片"
           disabled={locked || uploadBusy}
           onClick={() => fileInputRef.current?.click()}
         >
-          {uploadBusy ? <Spinner /> : <ImageIcon aria-hidden="true" />}
+          <i
+            className={uploadBusy ? "fa fa-spinner fa-spin" : "fa fa-picture-o"}
+            aria-hidden="true"
+          />
         </Button>
-        <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={emojiOpen ? "is-active" : undefined}
-              title="插表情"
-              aria-label="插表情"
-              disabled={locked}
-            >
-              <Smile aria-hidden="true" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="article-emoji-popover">
+        <Button variant="ghost"
+          type="button"
+          className={emojiOpen ? "msg-control emoji-btn active" : "msg-control emoji-btn"}
+          title="发表情"
+          aria-label="发表情"
+          aria-pressed={emojiOpen}
+          disabled={locked}
+          onClick={() => setEmojiOpen((value) => !value)}
+        >
+          <i className="fa fa-smile-o" aria-hidden="true" />
+        </Button>
+        <Button variant="ghost"
+          type="button"
+          className={anonymous ? "msg-control active" : "msg-control"}
+          title="匿名"
+          aria-label="匿名"
+          aria-pressed={anonymous}
+          disabled={locked}
+          onClick={() => setAnonymous((value) => !value)}
+        >
+          <i className="fa-solid fa-mask" aria-hidden="true" />
+        </Button>
+        <Button variant="ghost"
+          type="button"
+          className={visible ? "msg-control active" : "msg-control"}
+          title="仅楼主可见"
+          aria-label="仅楼主可见"
+          aria-pressed={visible}
+          disabled={locked}
+          onClick={() => setVisible((value) => !value)}
+        >
+          <i className="fa-solid fa-lock" aria-hidden="true" />
+        </Button>
+        {emojiOpen ? (
+          <section className="emoji-form">
             <EmojiPanel
               disabled={locked}
               onInsert={(token) => {
@@ -306,109 +311,111 @@ export function CommentComposer({
                 setEmojiOpen(false);
               }}
             />
-          </PopoverContent>
-        </Popover>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className={anonymous ? "is-active" : undefined}
-          title="匿名"
-          aria-label="匿名"
-          aria-pressed={anonymous}
-          disabled={locked}
-          onClick={() => setAnonymous((prev) => !prev)}
-        >
-          <MaskHappyIcon />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className={visible ? "is-active" : undefined}
-          title="仅楼主可见"
-          aria-label="仅楼主可见"
-          aria-pressed={visible}
-          disabled={locked}
-          onClick={() => setVisible((prev) => !prev)}
-        >
-          <LockSimpleIcon />
-        </Button>
-        {anonymous ? <span className="article-flag-hint">匿名</span> : null}
-        {visible ? <span className="article-flag-hint">仅楼主可见</span> : null}
-      </div>
-      {uploadError ? (
-        <p className="article-pending" role="status">
-          {uploadError}
-        </p>
-      ) : null}
-      <div className="article-resize" role="separator" aria-label="调整输入框高度"
-        aria-orientation="horizontal" onPointerDown={(event) => {
+          </section>
+        ) : null}
+        {showMention ? (
+          <MentionList
+            query={mention.query}
+            onClose={() => setDismissed(completionKey)}
+            onPick={(name) => {
+              const inserted = insertMention(draft, mention.start, caret, name);
+              chooseCompletion(
+                mention.start,
+                inserted.text.slice(mention.start, inserted.caret),
+              );
+            }}
+          />
+        ) : null}
+        {showEmoji ? (
+          <section className="article-emoji-complete" aria-label="表情补全">
+            {completion.items.map((emoji) => (
+              <Button variant="ghost"
+                key={emoji.name}
+                type="button"
+                title={emoji.name}
+                aria-label={emoji.name}
+                onClick={() =>
+                  chooseCompletion(completion.start, `:${emoji.name}:`)
+                }
+              >
+                <img src={emoji.url} alt="" />
+              </Button>
+            ))}
+          </section>
+        ) : null}
+      </section>
+      <section
+        className="chat-sender-resize"
+        role="separator"
+        aria-label="调整输入框高度"
+        aria-orientation="horizontal"
+        onPointerDown={(event) => {
           if (locked) return;
           event.preventDefault();
           drag.current = { y: event.clientY, height };
           setResizing(true);
-        }} />
-      {showMention ? <MentionList query={mention.query}
-        onClose={() => setDismissed(completionKey)}
-        onPick={(name) => {
-          const inserted = insertMention(draft, mention.start, caret, name);
-          chooseCompletion(mention.start, inserted.text.slice(mention.start, inserted.caret));
-        }} /> : null}
-      {showEmoji ? (
-        <div className="article-emoji-complete" role="group" aria-label="表情补全">
-          {completion.items.map((emoji) => (
-            <Button key={emoji.name} type="button" variant="ghost" size="icon-sm"
-              title={emoji.name} aria-label={emoji.name}
-              onClick={() => chooseCompletion(completion.start, `:${emoji.name}:`)}>
-              <img src={emoji.url} alt="" />
-            </Button>
-          ))}
-        </div>
-      ) : null}
-      <Textarea
-        id="article-comment-input"
-        ref={textareaRef}
-        rows={3}
-        style={{ height }}
-        value={draft}
-        disabled={locked}
-        placeholder={placeholder}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          setDismissed(null);
-          setCaret(event.target.selectionStart);
-          lastCursorRef.current = event.target.selectionStart ?? event.target.value.length;
         }}
-        onSelect={(event) => {
-          lastCursorRef.current = event.currentTarget.selectionStart ?? lastCursorRef.current;
-          setCaret(event.currentTarget.selectionStart);
-        }}
-        onKeyDown={onKeyDown}
-        onPaste={onPaste}
-        aria-label="评论内容"
-      />
-      <div className="article-composer-bar">
-        <Button
+      >
+        <hr />
+      </section>
+      <section className="chat-sender">
+        <section className="chat-msg">
+          <Textarea
+            id="article-comment-input"
+            ref={textareaRef}
+            rows={3}
+            className="article-comment-input"
+            style={{ height }}
+            value={draft}
+            disabled={locked}
+            placeholder={placeholder}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setDismissed(null);
+              setCaret(event.target.selectionStart);
+              lastCursorRef.current =
+                event.target.selectionStart ?? event.target.value.length;
+            }}
+            onSelect={(event) => {
+              lastCursorRef.current = event.currentTarget.selectionStart ?? 0;
+              setCaret(event.currentTarget.selectionStart);
+            }}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            aria-label="评论内容"
+          />
+        </section>
+        <Button variant="ghost"
           type="submit"
-          size="sm"
-          disabled={locked || sending || uploadBusy || draft.trim().length === 0}
+          className="chat-send"
+          title="发送"
+          aria-label="发送"
+          disabled={
+            locked || sending || uploadBusy || draft.trim().length === 0
+          }
+          style={{ height }}
         >
-          {sending ? <Spinner /> : <Send aria-hidden="true" />}
-          {sending ? "发送中" : "发送"}
+          <i
+            className={sending ? "fa fa-spinner fa-spin" : "fa fa-paper-plane"}
+            aria-hidden="true"
+          />
         </Button>
-      </div>
+        <section className="msg-more">
+          {reply ? (
+            <span className="article-reply-tag">
+              回复：@{reply.userName}
+              <Button variant="ghost"
+                type="button"
+                title="取消回复"
+                aria-label="取消回复"
+                onClick={onClearReply}
+              >
+                <i className="fa fa-times" aria-hidden="true" />
+              </Button>
+            </span>
+          ) : null}
+        </section>
+      </section>
     </form>
   );
-}
-
-function stripPreview(raw: string): string {
-  const text = raw
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (text.length <= 48) {
-    return text;
-  }
-  return `${text.slice(0, 48)}…`;
 }

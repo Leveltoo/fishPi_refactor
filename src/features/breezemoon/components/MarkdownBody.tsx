@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { Button } from "@/components/ui/button";
 
 import { ContentHtml } from "../../article/ContentHtml";
 import { looksLikeHtml } from "../../../lib/safeHtml";
@@ -11,6 +12,11 @@ import {
   openSafeExternalUrl,
   sanitizeHttpUrl,
 } from "../../../lib/markdown";
+import {
+  expandEmojiShortcodes,
+  isDefaultEmojiSrc,
+  isEmojiImage,
+} from "../../chatroom/emojiShortcode";
 import { dispatchPreviewImage } from "../events";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
@@ -70,9 +76,13 @@ const MARKDOWN_COMPONENTS: Components = {
     if (safeSrc == null) {
       return alt ? <span>{alt}</span> : null;
     }
+    if (isDefaultEmojiSrc(safeSrc)) {
+      return <img className="emoji" src={safeSrc} alt={alt ?? ""} />;
+    }
     return (
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className="bm-img-btn"
         onClick={(event) => {
           event.preventDefault();
@@ -81,7 +91,7 @@ const MARKDOWN_COMPONENTS: Components = {
         }}
       >
         <img src={safeSrc} alt={alt ?? ""} loading="lazy" />
-      </button>
+      </Button>
     );
   },
 };
@@ -97,6 +107,9 @@ function onMarkdownClick(event: MouseEvent<HTMLDivElement>): void {
   }
   const image = target.closest("img");
   if (image instanceof HTMLImageElement) {
+    if (isEmojiImage(image)) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     dispatchPreviewImage(image.getAttribute("src") ?? "", image.alt);
@@ -132,7 +145,7 @@ export function MarkdownBody({ source }: MarkdownBodyProps) {
         remarkPlugins={REMARK_PLUGINS}
         components={MARKDOWN_COMPONENTS}
       >
-        {text}
+        {expandEmojiShortcodes(text)}
       </ReactMarkdown>
     </div>
   );

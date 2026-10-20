@@ -332,6 +332,7 @@ async function cloudFavoriteTests() {
       sonner: { toast: Object.fromEntries(["success", "info", "warning", "error"].map((kind) =>
         [kind, (text) => calls.notices.push({ kind, text })])) },
       "@/components/ui/avatar": components,
+      "@/components/ui/button": components,
       "@/components/ui/context-menu": components,
       "../../../lib/markdown": { sanitizeHttpUrl: () => null, openSafeExternalUrl: async () => {} },
       "../../../lib/tauri": { invokeAuthMe: auth ?? (async () => ({ sessionGeneration: 7, user: { userName: "self" } })) },

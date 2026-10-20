@@ -209,6 +209,7 @@ test("settings filters reload on import without pending edits, late reads/saves 
     "@/components/ui/alert": components,
     "@/components/ui/button": components,
     "@/components/ui/input": components,
+    "@/components/ui/select": components,
     "@/components/ui/spinner": components,
     "@/features/desktop/api": {},
     "@/features/music/playerStore": {
@@ -245,7 +246,7 @@ test("settings filters reload on import without pending edits, late reads/saves 
   await flush();
   initial.resolve({ shield: [{ type: "username", value: "old" }], careUsers: ["old-user"] });
   await flush();
-  const input = () => find(render(), (node) => node.type === "input" && node.props.placeholder === "正则")[0];
+  const input = () => find(render(), (node) => node.type === "Input" && node.props.placeholder === "正则")[0];
   assert.equal(input().props.value, "imported");
   input().props.onChange({ target: { value: "unsaved" } });
   assert.equal(timer.pending.size, 1);
@@ -267,9 +268,9 @@ test("settings filters reload on import without pending edits, late reads/saves 
   oldSave.resolve({ shield: [{ type: "content", value: "late-save" }], careUsers: ["old-user"] });
   await flush();
   assert.equal(input().props.value, "third-import");
-  find(render(), (node) => node.type === "input" && node.props.placeholder === "用户名")[0]
+  find(render(), (node) => node.type === "Input" && node.props.placeholder === "用户名")[0]
     .props.onChange({ target: { value: "pending-user" } });
-  find(render(), (node) => node.type === "input" && node.props.placeholder === "用户名")[0]
+  find(render(), (node) => node.type === "Input" && node.props.placeholder === "用户名")[0]
     .props.onKeyDown({ key: "Enter", preventDefault: () => {} });
   await flush();
   onImport({ payload: { filtersSaved: true } });

@@ -2,7 +2,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PlusIcon } from "@phosphor-icons/react";
 
 import type { Conversation } from "../types";
 import { userCardProps } from "../../usercard/hover";
@@ -34,7 +33,7 @@ export function ConversationList({
           title="想和谁聊聊？"
           onClick={onStart}
         >
-          <PlusIcon />
+          <i className="fa fa-plus" aria-hidden="true" />
         </Button>
       </div>
       <ScrollArea className="im-sidebar-scroll">
@@ -44,16 +43,15 @@ export function ConversationList({
             <Skeleton className="im-skel-row" />
             <Skeleton className="im-skel-row" />
           </div>
-        ) : conversations.length === 0 ? (
-          <p className="im-sidebar-empty">暂无会话</p>
         ) : (
           <ul className="im-conv-list">
             {conversations.map((item) => {
               const active = item.peerUserName === activeUser;
               return (
                 <li key={item.peerUserName}>
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     className={active ? "im-conv is-active" : "im-conv"}
                     aria-current={active ? "true" : undefined}
                     title={item.peerUserName}
@@ -63,7 +61,6 @@ export function ConversationList({
                     <span
                       className="im-conv-avatar"
                       {...userCardProps(item.peerUserName)}
-                      data-user-card-delay="3000"
                     >
                       <PeerAvatar
                         name={item.peerUserName}
@@ -73,12 +70,11 @@ export function ConversationList({
                         <Badge
                           className="im-unread"
                           title={`${item.unread}条未读私信`}
-                        >
-                          {item.unread > 99 ? "99+" : item.unread}
-                        </Badge>
+                          aria-hidden="true"
+                        />
                       ) : null}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               );
             })}

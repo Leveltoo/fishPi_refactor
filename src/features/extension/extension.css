@@ -1,50 +1,265 @@
-.extension-panel .parity-row input,
-.extension-panel .parity-row select {
-  min-width: 0;
-  max-width: 100%;
+.legacy-extension-page {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--global-text-color);
+  background: var(--main-chatroom-background-color);
 }
 
-.extension-panel .parity-row input {
-  flex: 1;
-  width: 12rem;
+.legacy-ext-list-pane {
+  flex: 0 0 300px;
+  width: 300px;
+  min-height: 0;
 }
 
-.extension-panel .parity-row button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 32px;
-  min-height: 32px;
+.legacy-ext-scroll,
+.legacy-ext-detail-scroll {
+  width: 100%;
+  height: 100%;
 }
 
-.extension-panel button:disabled,
-.extension-panel input:disabled,
-.extension-panel select:disabled {
-  opacity: 0.6;
-}
-
-.extension-panel .parity-ext__link,
-.extension-panel .parity-list,
-.extension-readme {
-  overflow-wrap: anywhere;
-}
-
-.extension-panel button.parity-ext__link {
+.legacy-ext-list {
+  width: 100%;
+  margin: 0;
   padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--color-accent);
+  list-style: none;
+}
+
+.legacy-ext-item {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  border-bottom: 1px dashed var(--global-control-border-color);
+}
+
+.legacy-ext-item:hover,
+.legacy-ext-item.is-active {
+  background: var(--main-chatroom-sidebar-background-color);
+}
+
+.legacy-ext-item-main {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  padding: 10px;
+  color: inherit;
   text-align: left;
+  white-space: normal;
 }
 
-.extension-readme pre,
-.extension-readme table {
+.legacy-ext-item-main:hover {
+  background: transparent;
+}
+
+.legacy-ext-icon {
+  display: grid;
+  flex: 0 0 70px;
+  place-items: center;
+  width: 70px;
+  height: 70px;
+  margin: 5px;
+  color: var(--global-control-text-color);
+}
+
+.legacy-ext-icon img {
   display: block;
-  max-width: 100%;
-  overflow: auto;
+  width: 70px;
+  height: 70px;
+  object-fit: contain;
 }
 
-.extension-readme pre {
-  white-space: pre-wrap;
+.legacy-ext-icon .fa {
+  font-size: 38px;
+}
+
+.legacy-ext-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  margin-left: 10px;
+  font-size: 0.8em;
+  line-height: 1.8;
+}
+
+.legacy-ext-title {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.legacy-ext-title strong {
+  overflow: hidden;
+  font-size: 1.4em;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legacy-ext-title small {
+  flex: none;
+  margin: 0 5px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--main-chatroom-sidebar-background-color);
+  font-size: 0.75em;
+  font-weight: 400;
+}
+
+.legacy-ext-desc {
+  overflow: hidden;
+  color: var(--global-text-color);
+  font-weight: 100;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legacy-ext-author {
+  color: var(--global-text-color);
+  font-weight: 400;
+}
+
+.legacy-ext-open {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  color: var(--global-control-text-color);
+}
+
+.legacy-ext-detail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--main-chatroom-sidebar-background-color);
+}
+
+.legacy-ext-detail-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px dashed var(--global-control-border-color);
+}
+
+.legacy-ext-detail-head h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 1em;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legacy-ext-back {
+  display: none;
+}
+
+.legacy-ext-home {
+  margin-left: auto;
+}
+
+.legacy-ext-readme {
+  padding: 15px;
+  color: var(--global-text-color);
+  font-size: 0.85em;
+  line-height: 1.8;
+}
+
+.legacy-ext-readme img {
+  max-width: 100%;
+  max-height: 60vh;
+  background: transparent;
+}
+
+.legacy-ext-readme h1,
+.legacy-ext-readme h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--markdown-head-border-color, #eaecef);
+}
+
+.legacy-ext-readme blockquote {
+  margin-left: 0;
+  padding-left: 1em;
+  border-left: 0.25em solid var(--markdown-blockquote-border-color, #eaecef);
+  color: var(--markdown-blockquote-color, #6a737d);
+}
+
+.legacy-ext-readme pre {
+  max-width: 100%;
+  padding: 0.5em;
+  overflow: auto;
+  background: var(--global-control-background-color);
+  white-space: pre;
+}
+
+.legacy-ext-readme table {
+  max-width: 100%;
+  border-collapse: collapse;
+}
+
+.legacy-ext-readme th,
+.legacy-ext-readme td {
+  padding: 3px 6px;
+  border: 1px solid var(--global-control-border-color);
+}
+
+.legacy-ext-link {
+  height: auto;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+.legacy-ext-error {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  left: 10px;
+  margin: 0;
+  color: #ed4014;
+  font-size: 12px;
+  text-align: right;
+}
+
+@media (max-width: 599px) {
+  .legacy-extension-page {
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  .legacy-ext-list-pane,
+  .legacy-ext-detail {
+    width: 100%;
+    flex: none;
+  }
+
+  .legacy-ext-list-pane.is-detail-open {
+    display: none;
+  }
+
+  .legacy-ext-detail {
+    display: none;
+    min-height: 100%;
+  }
+
+  .legacy-ext-detail.is-open {
+    display: flex;
+  }
+
+  .legacy-ext-back {
+    display: inline-flex;
+  }
 }

@@ -67,6 +67,7 @@ pub use window_opacity::*;
 
 pub mod config_import;
 pub mod extension_host;
+pub mod extension_directory;
 pub mod fetch_image;
 pub mod file_upload;
 pub mod music;
@@ -76,6 +77,7 @@ pub mod updater;
 
 pub use config_import::*;
 pub use extension_host::*;
+pub use extension_directory::*;
 pub use fetch_image::*;
 pub use file_upload::*;
 pub use music::*;
