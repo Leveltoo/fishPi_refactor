@@ -35,6 +35,10 @@ export type ExtensionDetail = {
   message: string;
 };
 
+export function extensionChooseDirectory(root?: string): Promise<string | null> {
+  return invoke<string | null>("extension_choose_directory", { root: root ?? null });
+}
+
 export function extensionScan(root?: string): Promise<ExtensionScan> {
   return invoke<ExtensionScan>("extension_scan", { root: root ?? null });
 }

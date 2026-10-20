@@ -50,6 +50,7 @@ test("the extension rail button opens its single persistent host outside setting
     "./useAutoReward": { useAutoReward: empty },
     "./useMessageNotices": { useMessageNotices: () => ({ broadcast: null, dismissBroadcast: empty }) },
     "./useStartupUpdateCheck": { useStartupUpdateCheck: empty },
+    "./useNativeNotificationClicks": { useNativeNotificationClicks: empty },
     "./WarnBroadcast": { WarnBroadcastDialog: "WarnBroadcastDialog" },
     "./windowActions": {},
   });
@@ -70,15 +71,15 @@ test("the extension rail button opens its single persistent host outside setting
   const rail = find(initial, (node) => node.props?.label === "扩展")[0];
   assert.ok(rail);
   const button = rail.props.children;
-  assert.equal(button.props.children[0].type, "Blocks");
+  assert.equal(button.props.children[0].type, "i");
+  assert.match(button.props.children[0].props.className, /md-cube/);
   const extensionPage = find(initial, (node) => node.props?.children?.type === "ExtensionMount");
   assert.equal(extensionPage.length, 1);
   assert.equal(extensionPage[0].props.hidden, true);
   button.props.onClick();
   const next = render();
   assert.equal(find(next, (node) => node.props?.children?.type === "ExtensionMount")[0].props.hidden, false);
-  const settings = find(next, (node) =>
-    Array.isArray(node.props?.children) && node.props.children.some((item) => item?.type === "SettingsHost"))[0];
+  const settings = find(next, (node) => node.props?.children?.type === "SettingsHost")[0];
   assert.equal(settings.props.hidden, true);
   assert.equal(find(settings, (node) => node.type === "ExtensionMount").length, 0);
 });

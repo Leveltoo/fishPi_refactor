@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { RefreshCw } from "lucide-react";
+import { FolderOpen, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { commandError, desktopPrefsGet, desktopPrefsSet } from "../desktop/api";
 import {
-  extensionCall, extensionLoadTheme, extensionScan,
+  extensionCall, extensionChooseDirectory, extensionLoadTheme, extensionScan,
   type ExtensionDetail, type ExtensionItem, type ExtensionScan,
 } from "./api";
 import { applyLegacyTheme } from "./theme";
@@ -40,12 +40,14 @@ export function ExtensionMount() {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const [selected, setSelected] = useState("");
   const [detail, setDetail] = useState<ExtensionDetail | null>(null);
   const mounted = useRef(false);
   const revision = useRef(0);
   const detailRevision = useRef(0);
   const savedRoot = useRef("");
+  const pendingPicker = useRef<number | null>(null);
 
   async function refresh(): Promise<void> {
     const request = ++revision.current;
@@ -56,6 +58,9 @@ export function ExtensionMount() {
     setError("");
     try {
       const prefs = await desktopPrefsGet();
+      if (!mounted.current || request !== revision.current) {
+        return;
+      }
       const [listed, loaded] = await Promise.all([
         extensionScan(prefs.extensionRoot || undefined),
         extensionLoadTheme(prefs.theme, prefs.extensionRoot || undefined),
@@ -114,23 +119,55 @@ export function ExtensionMount() {
       mounted.current = false;
       revision.current += 1;
       detailRevision.current += 1;
+      pendingPicker.current = null;
       void stop.then((unlisten) => unlisten()).catch(() => undefined);
       applyLegacyTheme("");
     };
   }, []);
 
   async function save(patch: { extensionRoot?: string; theme?: string }): Promise<void> {
+    const request = ++revision.current;
     setBusy(true);
     setError("");
     try {
       await desktopPrefsSet(patch);
-      if (mounted.current) {
+      if (mounted.current && request === revision.current) {
         await refresh();
       }
     } catch (err: unknown) {
-      if (mounted.current) {
+      if (mounted.current && request === revision.current) {
         setError(commandError(err));
         setBusy(false);
+      }
+    }
+  }
+
+  async function chooseDirectory(): Promise<void> {
+    if (!mounted.current || busy || pendingPicker.current !== null) {
+      return;
+    }
+    const request = ++revision.current;
+    pendingPicker.current = request;
+    setChoosing(true);
+    try {
+      const chosen = await extensionChooseDirectory(root.trim() || undefined);
+      if (!mounted.current || request !== revision.current || chosen === null) {
+        return;
+      }
+      setRoot(chosen);
+      if (chosen !== savedRoot.current) {
+        await save({ extensionRoot: chosen });
+      }
+    } catch (err: unknown) {
+      if (mounted.current && request === revision.current) {
+        setError(commandError(err));
+      }
+    } finally {
+      if (pendingPicker.current === request) {
+        pendingPicker.current = null;
+        if (mounted.current) {
+          setChoosing(false);
+        }
       }
     }
   }
@@ -174,7 +211,7 @@ export function ExtensionMount() {
   const items = [...(scan?.plugins ?? []), ...(scan?.themes ?? [])];
 
   return (
-    <section className="parity-panel extension-panel" aria-label="扩展" aria-busy={busy}>
+    <section className="parity-panel extension-panel" aria-label="扩展" aria-busy={busy || choosing}>
       <section className="parity-section">
         <h2>本地扩展</h2>
         <div className="parity-row">
@@ -182,15 +219,23 @@ export function ExtensionMount() {
           <input
             id="extension-root"
             value={root}
-            disabled={busy}
+            disabled={busy || choosing}
             onChange={(event) => setRoot(event.target.value)}
             onBlur={() => {
-              if (root.trim() !== savedRoot.current) {
+              if (pendingPicker.current === null && root.trim() !== savedRoot.current) {
                 void save({ extensionRoot: root.trim() });
               }
             }}
           />
-          <button type="button" disabled={busy} title="重新扫描" aria-label="重新扫描"
+          <button type="button" disabled={busy || choosing} title="选择扩展目录" aria-label="选择扩展目录"
+            onMouseDown={(event) => {
+              // Keep the draft intact when opening or cancelling the picker.
+              if (event.button === 0) event.preventDefault();
+            }}
+            onClick={() => void chooseDirectory()}>
+            <FolderOpen size={16} aria-hidden="true" />
+          </button>
+          <button type="button" disabled={busy || choosing} title="重新扫描" aria-label="重新扫描"
             onClick={() => void refresh()}>
             <RefreshCw size={16} aria-hidden="true" />
           </button>
@@ -199,7 +244,7 @@ export function ExtensionMount() {
           主题
           <select
             value={theme}
-            disabled={busy}
+            disabled={busy || choosing}
             onChange={(event) => {
               const next = event.target.value;
               setTheme(next);

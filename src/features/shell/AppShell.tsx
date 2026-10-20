@@ -1,21 +1,3 @@
-import {
-  Bell,
-  Blocks,
-  Leaf,
-  ListMusic,
-  MessageSquare,
-  MessagesSquare,
-  Minus,
-  Network,
-  PenLine,
-  Pin,
-  Plus,
-  Search,
-  Settings,
-  Waves,
-  X,
-  type LucideIcon,
-} from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -34,7 +16,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
   TooltipContent,
@@ -54,7 +35,7 @@ import { DEFAULT_SETTINGS } from "@/features/settings/constants";
 import {
   subscribeDesktopSettings,
 } from "@/features/settings/settingsStore";
-import { FishMark } from "./FishMark";
+import legacyIcon from "@/assets/legacy/icon.png";
 import { listen } from "@tauri-apps/api/event";
 import { OPEN_CHATROOM_EVENT } from "./navigation";
 import { showUserCardWindow } from "../usercard/window";
@@ -70,6 +51,7 @@ import { avatarInitial, displayName, type ShellUser } from "./session-snapshot";
 import { useAutoReward } from "./useAutoReward";
 import { useMessageNotices } from "./useMessageNotices";
 import { useStartupUpdateCheck } from "./useStartupUpdateCheck";
+import { useNativeNotificationClicks } from "./useNativeNotificationClicks";
 import { WarnBroadcastDialog } from "./WarnBroadcast";
 import {
   closeMainWindow,
@@ -82,6 +64,7 @@ import "./AppShell.css";
 
 type AppShellProps = {
   user: ShellUser;
+  sessionGeneration: number;
   persistWarning?: string;
   loggingOut?: boolean;
   onLogout: () => void;
@@ -98,14 +81,14 @@ type MainPage =
   | "extension"
   | "settings";
 
-const MAIN_NAV: { id: MainPage; label: string; Icon: LucideIcon }[] = [
-  { id: "chatroom", label: "聊天室", Icon: MessageSquare },
-  { id: "im", label: "私聊", Icon: MessagesSquare },
-  { id: "article", label: "帖子", Icon: PenLine },
-  { id: "breezemoon", label: "清风明月", Icon: Leaf },
-  { id: "activity", label: "活动（签到/通知）", Icon: Bell },
-  { id: "music", label: "播放列表", Icon: ListMusic },
-  { id: "extension", label: "扩展", Icon: Blocks },
+const MAIN_NAV: { id: MainPage; label: string; icon: string }[] = [
+  { id: "chatroom", label: "聊天室", icon: "fa-solid fa-comments" },
+  { id: "im", label: "私聊", icon: "fa-solid fa-comment-dots" },
+  { id: "article", label: "帖子", icon: "fa-solid fa-pen-clip" },
+  { id: "breezemoon", label: "清风明月", icon: "fa fa-leaf" },
+  { id: "activity", label: "活动（签到/通知）", icon: "fa-solid fa-bell" },
+  { id: "music", label: "播放列表", icon: "fa-solid fa-music" },
+  { id: "extension", label: "扩展", icon: "ivu-icon ivu-icon-md-cube" },
 ];
 
 const PAGE_TITLES: Record<MainPage, string> = {
@@ -169,14 +152,12 @@ async function pasteIntoActiveElement(): Promise<void> {
 function WinCtrlButton({
   label,
   className,
-  Icon,
   customIcon,
   onClick,
   pressed,
 }: {
   label: string;
   className?: string;
-  Icon?: LucideIcon;
   /** 旧版透明钮是虚线圆 span，不是图标字 */
   customIcon?: ReactNode;
   onClick?: () => void;
@@ -198,13 +179,14 @@ function WinCtrlButton({
       aria-pressed={pressed}
       onClick={onClick}
     >
-      {customIcon ?? (Icon ? <Icon /> : null)}
+      {customIcon}
     </button>
   );
 }
 
 export function AppShell({
   user,
+  sessionGeneration,
   persistWarning,
   loggingOut = false,
   onLogout,
@@ -220,9 +202,10 @@ export function AppShell({
   );
   const unread = useImUnreadTotal();
   const liveness = useWindowLiveness();
-  const { broadcast, dismissBroadcast } = useMessageNotices(user.userName);
+  const { broadcast, dismissBroadcast } = useMessageNotices(user.userName, sessionGeneration);
   useAutoReward();
-  useStartupUpdateCheck();
+  useStartupUpdateCheck(sessionGeneration);
+  useNativeNotificationClicks(sessionGeneration);
   const name = displayName(user);
   const avatarSrc = user.userAvatarUrl || undefined;
   const [titleOverride, setTitleOverride] = useState<HeaderTitleDetail | null>(
@@ -301,48 +284,13 @@ export function AppShell({
           <ContextMenuTrigger asChild>
             <header className="shell__header" onMouseDown={startWindowDrag}>
               <div className="shell__header-title">
-                <FishMark />
+                <img src={legacyIcon} alt="" />
                 <span className="shell__header-title-text">
                   摸鱼派 - {pageTitle}
                 </span>
               </div>
 
-              <div className="shell__header-mid">
-                <HeaderMusic />
-
-                <div
-                  className="shell__header-slot shell__header-slot--cx shell__header-cx"
-                  aria-hidden="true"
-                >
-                  <span className="shell__header-icon">
-                    <Network />
-                  </span>
-                  <span className="shell__header-cx-status">
-                    model stream · idle
-                  </span>
-                  <span className="shell__header-icon">
-                    <Waves />
-                  </span>
-                </div>
-
-                <div className="shell__header-slot shell__header-slot--ding">
-                  <div className="shell__header-search">
-                    <Search />
-                    <span>搜索或提问 (Ctrl+Shift+F)</span>
-                  </div>
-                </div>
-
-                <div className="shell__header-slot shell__header-slot--feishu shell__header-crumb">
-                  <span className="shell__header-crumb-title">全部会话</span>
-                  <span className="shell__header-pill shell__header-pill--ghost">
-                    另存为
-                  </span>
-                  <span className="shell__header-pill">
-                    <Plus />
-                    新建
-                  </span>
-                </div>
-              </div>
+              <div className="shell__header-mid"><HeaderMusic /></div>
 
               <div
                 className="shell__win-ctrl"
@@ -352,7 +300,11 @@ export function AppShell({
                     : undefined
                 }
               >
-                <WinCtrlButton label="最小化" Icon={Minus} onClick={onMinimize} />
+                <WinCtrlButton
+                  label="最小化"
+                  customIcon={<i className="fa fa-minus" aria-hidden="true" />}
+                  onClick={onMinimize}
+                />
                 <WinCtrlButton
                   label="透明窗体"
                   className="win-opacity-btn"
@@ -363,14 +315,14 @@ export function AppShell({
                 <WinCtrlButton
                   label="窗口置顶"
                   className="win-pin-btn"
-                  Icon={Pin}
+                  customIcon={<i className="fa fa-thumb-tack" aria-hidden="true" />}
                   pressed={alwaysOnTop}
                   onClick={onTogglePin}
                 />
                 <WinCtrlButton
                   label="关闭"
                   className="is-close"
-                  Icon={X}
+                  customIcon={<i className="fa fa-times" aria-hidden="true" />}
                   onClick={onClose}
                 />
               </div>
@@ -399,12 +351,8 @@ export function AppShell({
 
         <div className="shell__body">
           <aside className="shell__rail" aria-label="主导航">
-            <div className="shell__brand" title="摸鱼派">
-              <FishMark />
-            </div>
-
             <nav className="shell__nav" aria-label="功能">
-              {MAIN_NAV.map(({ id, label, Icon }) => {
+              {MAIN_NAV.map(({ id, label, icon }) => {
                 const current = page === id;
                 return (
                   <RailTip key={id} label={label}>
@@ -414,7 +362,7 @@ export function AppShell({
                       aria-current={current ? "page" : undefined}
                       onClick={() => setPage(id)}
                     >
-                      <Icon />
+                      <i className={icon} aria-hidden="true" />
                       {id === "im" && unread > 0 ? (
                         <span className="shell__unread" aria-hidden="true">
                           {unread > 99 ? "99+" : unread}
@@ -432,8 +380,6 @@ export function AppShell({
               })}
             </nav>
 
-            <Separator className="shell__rail-sep" />
-
             <div className="shell__account">
               <RailTip label="设置">
                 <button
@@ -442,7 +388,7 @@ export function AppShell({
                   aria-current={page === "settings" ? "page" : undefined}
                   onClick={() => setPage("settings")}
                 >
-                  <Settings />
+                  <i className="ivu-icon ivu-icon-md-settings" aria-hidden="true" />
                   <span className="visually-hidden">设置</span>
                 </button>
               </RailTip>
@@ -512,12 +458,8 @@ export function AppShell({
               <div className="shell__page shell__page--stack" hidden={page !== "extension"}>
                 <ExtensionMount />
               </div>
-              <div
-                className="shell__page shell__page--stack"
-                hidden={page !== "settings"}
-              >
+              <div className="shell__page" hidden={page !== "settings"}>
                 <SettingsHost />
-                <DesktopMount />
               </div>
             </div>
           </section>
@@ -525,6 +467,9 @@ export function AppShell({
       </div>
       <RedPacketHost />
       <OverlayHost />
+      <div hidden>
+        <DesktopMount />
+      </div>
       <LivenessEdge percent={liveness} />
       <WarnBroadcastDialog broadcast={broadcast} onClose={dismissBroadcast} />
     </>

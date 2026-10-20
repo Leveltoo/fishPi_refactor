@@ -4,6 +4,9 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/jetbrains-mono";
+@import "./assets/legacy/font-awesome/all.min.css";
+@import "./styles/legacy-base.css";
+@import "./styles/legacy-fontawesome.css";
 
 @custom-variant dark (&:is(.dark *));
 

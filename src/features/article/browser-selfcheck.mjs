@@ -10,6 +10,7 @@ const browser = await chromium.launch({
 });
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+  await page.route(/https?:\/\/(?!localhost:|127\.0\.0\.1:)/, (route) => route.abort());
   await page.route("**/content-selfcheck", (route) => route.fulfill({
     contentType: "text/html",
     body: '<html><body><div id="test-root" style="height:100vh"></div></body></html>',
@@ -26,6 +27,9 @@ try {
     const events = new Map();
     window.testCalls = [];
     window.testMoonPosted = false;
+    window.testMusicCalls = [];
+    window.testPreviewCalls = [];
+    window.addEventListener("fishpi:preview-image", ({ detail }) => window.testPreviewCalls.push(detail));
     window.testEmit = (event, payload) => events.get(event)?.forEach((id) =>
       callbacks.get(id)?.({ payload, event }));
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
@@ -51,11 +55,14 @@ try {
         };
         if (command === "article_detail") return { sessionGeneration: 4, article: {
           id: args.request.id, title: "Detail", authorUserName: "me",
-          html: "<p>body</p>", commentable: true, rewarded: false, rewardPoint: 10,
+          html: '<p>:smile: body :unknown_emoji:</p>' +
+            '<iframe src="//music.163.com/outchain/player?type=2&amp;id=123&amp;auto=1"></iframe>' +
+            '<iframe src="//music.163.com/outchain/player?type=1&amp;id=456"></iframe>',
+          commentable: true, rewarded: false, rewardPoint: 10,
           rewardContent: "SECRET", commentCount: 2, pageCount: 1, commentPage: 1,
           comments: [
-            { id: "c1", userName: "me", markdown: "old" },
-            { id: "c2", userName: "bob", markdown: "new", replyId: "c1" },
+            { id: "c1", userName: "me", markdown: ":smile: old :unknown_emoji:" },
+            { id: "c2", userName: "bob", html: "<p>:smile: new</p>", replyId: "c1" },
           ],
         }};
         if (command === "article_heat") return { sessionGeneration: 4, count: 2 };
@@ -66,7 +73,8 @@ try {
           sessionGeneration: 4, exhausted: false,
           items: Array.from({ length: 20 }, (_, index) => ({
             id: `m${(args.query.page - 1) * 20 + index}`,
-            authorName: "bob", content: `Moon ${(args.query.page - 1) * 20 + index}`,
+            authorName: "bob", content: index === 1 ? "<p>:smile: HTML moon</p>"
+              : `:smile: Moon ${(args.query.page - 1) * 20 + index}`,
             timeAgo: "now", city: "Shanghai",
           })).concat(window.testMoonPosted && args.query.page === 1
             ? [{ id: "posted", authorName: "me", content: "Real posted moon" }] : []),
@@ -88,6 +96,22 @@ try {
     if (/onclick|onerror|<script|javascript:|data:image|position:fixed|evil.test/.test(clean))
       throw new Error("Unsafe HTML survived");
     if (!clean.includes('sandbox="allow-scripts allow-same-origin"')) throw new Error("Music sandbox missing");
+    const emojiHtml = sanitizeContentHtml("<p>:smile: :unknown_emoji:</p>");
+    const emojiDocument = new DOMParser().parseFromString(emojiHtml, "text/html");
+    if (emojiDocument.querySelectorAll("img.emoji").length !== 1)
+      throw new Error("HTML shortcode did not render as an emoji image");
+    if (!emojiDocument.body.textContent.includes(":unknown_emoji:"))
+      throw new Error("Unknown emoji shortcode was lost");
+    const rejected = sanitizeContentHtml(
+      '<iframe src="https://music.163.com.evil.test/outchain/player?type=2&amp;id=123"></iframe>' +
+      '<iframe src="https://name:pass@music.163.com/outchain/player?type=2&amp;id=123"></iframe>' +
+      '<iframe src="https://music.163.com/outchain/player?type=2&amp;id=oops"></iframe>' +
+      '<iframe src="https://music.163.com/outchain/player?type=3&amp;id=123"></iframe>',
+    );
+    if (rejected.includes("<iframe") || rejected.includes("content-netease-cover"))
+      throw new Error("Invalid music embed survived");
+    const { bindPlaylist } = await import("/src/features/music/playlist.ts");
+    bindPlaylist((id, forceAdd) => window.testMusicCalls.push({ id, forceAdd }));
     const { pastedImageSources, imageMarkdown, emojiCompletion } = await import("/src/features/article/commentInput.ts");
     if (pastedImageSources("<video src='https://a.test/v'></video><img src='https://a.test/x'>").length !== 1)
       throw new Error("Only images may be pasted");
@@ -109,6 +133,25 @@ try {
   assert.deepEqual(await page.locator(".article-comments > li").evaluateAll((nodes) => nodes.map((n) => n.id)), ["comment-item-c2", "comment-item-c1"]);
   assert.equal(await page.getByRole("button", { name: /感谢 0/ }).first().isDisabled(), true);
   assert.equal(await page.locator("body").innerText().then((text) => text.includes("SECRET")), false);
+  assert.equal(await page.locator(".article-detail > .article-md img.emoji").count(), 1);
+  assert.equal(await page.locator(".article-comments img.emoji").count(), 2);
+  assert.ok((await page.locator("#comment-item-c1").innerText()).includes(":unknown_emoji:"));
+  await page.locator("#comment-item-c1 img.emoji").click();
+  await page.locator("#comment-item-c2 img.emoji").click();
+  assert.equal(await page.evaluate(() => window.testPreviewCalls.length), 0);
+  assert.equal(await page.locator(".content-netease-cover").count(), 1);
+  const cover = page.locator(".content-netease-cover");
+  await cover.focus();
+  await cover.press("Enter");
+  await cover.click();
+  assert.deepEqual(await page.evaluate(() => window.testMusicCalls), [
+    { id: "123", forceAdd: false }, { id: "123", forceAdd: false },
+  ]);
+  const frames = await page.locator(".article-detail iframe").evaluateAll((nodes) =>
+    nodes.map((node) => ({ src: node.src, height: node.height, width: node.width })));
+  assert.equal(frames.length, 2);
+  assert.ok(frames.every((frame) => frame.width === "100%" && frame.src.includes("auto=0")));
+  assert.deepEqual(frames.map((frame) => frame.height), ["86", "210"]);
   const count = await page.evaluate(() => window.testCalls.filter((c) => c === "article_heat_watch").length);
   await page.evaluate(() => window.testEmit("desktop://reconnect", { sessionGeneration: 99 }));
   await page.waitForTimeout(80);
@@ -137,6 +180,11 @@ try {
     window.testRoot.render(window.testReact.createElement(BreezemoonHost));
   });
   await page.locator(".bm-item").first().waitFor();
+  assert.equal(await page.locator(".bm-item").first().locator("img.emoji").count(), 1);
+  assert.equal(await page.locator(".bm-item").nth(1).locator("img.emoji").count(), 1);
+  await page.locator(".bm-item").first().locator("img.emoji").click();
+  await page.locator(".bm-item").nth(1).locator("img.emoji").click();
+  assert.equal(await page.evaluate(() => window.testPreviewCalls.length), 0);
   await page.getByRole("button", { name: "加载更多" }).click();
   await page.waitForFunction(() => document.querySelectorAll(".bm-item").length === 40);
   await page.locator("#breezemoon-input").fill("new moon");
@@ -151,7 +199,7 @@ try {
     await page.screenshot({ path: `${process.env.CONTENT_SCREENSHOT_DIR}/content-mobile.png` });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
   }
-  console.log("content browser selfcheck: HTML/paste security, comment order, own thank, reconnect generations, unknown write draft, cleanup, real moon merge passed");
+  console.log("content browser selfcheck: emoji rendering/preview suppression, desktop music click/keyboard/safety, HTML/paste security, comment order, own thank, reconnect generations, unknown write draft, cleanup, real moon merge passed");
 } finally {
   await browser.close();
 }

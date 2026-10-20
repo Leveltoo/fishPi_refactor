@@ -15,11 +15,11 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: var(--space-3);
+  gap: 6px;
   height: var(--header-height, 40px);
-  padding: 0 var(--space-3);
+  padding: 0 5px;
   background: var(--color-header-bg, var(--color-bg-raised));
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 0;
   user-select: none;
   -webkit-app-region: drag;
   app-region: drag;
@@ -28,42 +28,39 @@
 .shell__header-title {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
   color: var(--color-text);
-  font-family: var(--font-display);
-  font-size: 13px;
-  font-weight: 500;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 400;
   /* 与旧版一致：标题区可拖窗；按钮等交互元素再单独 no-drag */
   -webkit-app-region: drag;
   app-region: drag;
 }
 
-.shell__header-title svg {
-  width: 18px;
-  height: 18px;
+.shell__header-title img {
+  width: auto;
+  height: 1.5em;
   flex: none;
-  color: var(--color-accent);
 }
 
 .shell__header-title-text {
   overflow: hidden;
+  max-width: calc(100vw - 170px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .shell__header-mid {
   display: flex;
+  flex: 1;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
   min-width: 0;
-  margin-right: auto;
-  margin-left: auto;
-}
-
-html[data-theme="desk"] .shell__header-mid,
-html:not([data-theme]) .shell__header-mid {
   margin-right: 0;
+  margin-left: 0;
 }
 
 .shell__header-slot {
@@ -135,6 +132,10 @@ html[data-theme="feishu"] .shell__header-slot--feishu {
 .shell__header-icon-btn svg {
   width: 13px;
   height: 13px;
+}
+
+.shell__header-icon-btn i {
+  font-size: 14px;
 }
 
 .shell__header-icon-btn:hover:not(:disabled) {
@@ -281,6 +282,10 @@ html[data-theme="feishu"] .shell__header-slot--feishu {
   height: 13px;
 }
 
+.shell__win-btn i {
+  font-size: 14px;
+}
+
 .shell__win-btn:hover {
   background: transparent;
   color: var(--color-text);
@@ -335,8 +340,8 @@ html[data-theme="feishu"] .shell__header-slot--feishu {
   align-items: center;
   width: var(--sidebar-width);
   padding: var(--space-3) 0 var(--space-2);
-  background: var(--color-bg-sidebar);
-  border-right: 1px solid var(--color-border);
+  background: transparent;
+  border-right: 0;
 }
 
 .shell__brand {
@@ -358,18 +363,18 @@ html[data-theme="feishu"] .shell__header-slot--feishu {
   flex: 1;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 0;
 }
 
 .shell__nav-item {
   position: relative;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -380,29 +385,26 @@ html[data-theme="feishu"] .shell__header-slot--feishu {
 }
 
 .shell__nav-item:hover {
-  background: var(--color-bg-hover);
+  background: transparent;
   color: var(--color-text);
+  text-shadow: 0 0 5px var(--global-active-color, var(--color-accent));
 }
 
 .shell__nav-item.is-active {
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  background: transparent;
   color: var(--color-accent);
 }
 
 .shell__nav-item.is-active::after {
-  content: "";
-  position: absolute;
-  top: 8px;
-  right: -6px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--color-accent);
+  display: none;
 }
 
-.shell__nav-item svg {
-  width: 18px;
-  height: 18px;
+.shell__nav-item i {
+  font-size: 17px;
+}
+
+.shell__nav-item .ivu-icon {
+  font-size: 19px;
 }
 
 .shell__rail-sep {

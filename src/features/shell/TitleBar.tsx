@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { FishMark } from "./FishMark";
+import legacyIcon from "@/assets/legacy/icon.png";
 import { WindowControls } from "./WindowControls";
 import { startWindowDrag } from "./windowActions";
 import "./AppShell.css";
@@ -21,7 +21,7 @@ export function TitleBar({ title, children, compact = false }: TitleBarProps) {
   return (
     <header className="shell__header" onMouseDown={startWindowDrag}>
       <div className="shell__header-title">
-        <FishMark />
+        <img src={legacyIcon} alt="" />
         {title ? (
           <span className="shell__header-title-text">{title}</span>
         ) : null}

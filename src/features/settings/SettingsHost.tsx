@@ -1,406 +1,44 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { WarningIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
+
+import packageJson from "../../../package.json";
 import {
   loadChatroomFilters,
   lookupUserName,
   saveChatroomFilters,
   type ChatroomFilters,
   type ShieldKind,
-  type ShieldRule,
 } from "@/features/chatroom/chatroomApi";
-import { commandError, desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
-import type { ImportResult } from "../desktop/api";
-import { clampMusicMode, MUSIC_MODE_OPTIONS } from "@/features/music/modes";
+import {
+  extensionChooseDirectory,
+  extensionLoadTheme,
+  extensionScan,
+  type ExtensionItem,
+} from "@/features/extension/api";
+import { applyLegacyTheme } from "@/features/extension/theme";
+import {
+  commandError,
+  desktopPrefsGet,
+  desktopPrefsSet,
+  updateApply,
+  updateCheck,
+  updateOpenRelease,
+  type UpdateApplyResult,
+  type UpdateInfo,
+} from "../desktop/api";
+import { clampMusicMode, MUSIC_MODE_OPTIONS } from "../music/modes";
 import {
   getPlayerSnapshot,
   setPlayerMode,
   subscribePlayer,
-} from "@/features/music/playerStore";
-import {
-  BRIDGE_GAP_COPY,
-  OPACITY_PERCENT_MAX,
-  OPACITY_PERCENT_MIN,
-  THEME_OPTIONS,
-} from "./constants";
-import { compileTalkPattern } from "./talkPattern";
+} from "../music/playerStore";
+import { OPACITY_PERCENT_MAX, OPACITY_PERCENT_MIN } from "./constants";
 import { useDesktopSettings } from "./useDesktopSettings";
 import "./settings.css";
 
-/**
- * 设置页宿主：无必填 props。命令缺失时本地可改，不假装已写入系统。
- */
-export function SettingsHost() {
-  const desktop = useDesktopSettings();
-  const opacityPercent = Math.round(desktop.settings.opacity * 100);
-  const talkPattern = compileTalkPattern(desktop.settings.notifyTalkPattern);
-
-  return (
-    <div className="settings" id="setting">
-      <header className="settings-head">
-        <p className="settings-kicker">桌面</p>
-        <h1 className="settings-title">设置</h1>
-        <p className="settings-lead">
-          内置主题仍走受控 CSS 变量。
-        </p>
-      </header>
-
-      {desktop.notice ? (
-        <Alert
-          className={
-            desktop.notice.kind === "error"
-              ? "settings-alert settings-alert--error"
-              : desktop.notice.kind === "ok"
-                ? "settings-alert settings-alert--ok"
-                : "settings-alert"
-          }
-        >
-          <WarningIcon />
-          <AlertTitle>
-            {desktop.notice.kind === "gap"
-              ? BRIDGE_GAP_COPY
-              : desktop.notice.kind === "ok"
-                ? "通知"
-                : "未能写入系统"}
-          </AlertTitle>
-          <AlertDescription>{desktop.notice.text}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {desktop.loading ? (
-        <p className="settings-loading">
-          <Spinner />
-          正在读取设置
-        </p>
-      ) : (
-        <div className="settings-body">
-          <section className="settings-section" aria-labelledby="settings-theme">
-            <h2 id="settings-theme" className="settings-section__title">
-              外观
-            </h2>
-            <div className="settings-themes" role="radiogroup" aria-label="主题">
-              {THEME_OPTIONS.map((theme) => (
-                <button
-                  key={theme.id}
-                  type="button"
-                  className={
-                    desktop.settings.themeId === theme.id
-                      ? "settings-theme is-active"
-                      : "settings-theme"
-                  }
-                  role="radio"
-                  aria-checked={desktop.settings.themeId === theme.id}
-                  data-theme-preview={theme.id}
-                  onClick={() => {
-                    if (desktop.settings.themeId !== theme.id) {
-                      desktop.setTheme(theme.id);
-                    }
-                  }}
-                >
-                  <span className="settings-theme__swatch" aria-hidden="true" />
-                  <span className="settings-theme__label">{theme.label}</span>
-                  <span className="settings-theme__blurb">{theme.blurb}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="settings-section" aria-labelledby="settings-window">
-            <h2 id="settings-window" className="settings-section__title">
-              窗口
-            </h2>
-            <ToggleRow
-              label="窗口置顶"
-              description="保持主窗口在其他窗口之上。"
-              pressed={desktop.settings.alwaysOnTop}
-              onPressedChange={desktop.setAlwaysOnTop}
-            />
-            <ToggleRow
-              label="透明窗体"
-              description="打开后按下面的百分比设置整窗透明度。顶栏透明按钮使用这个值，不会写死 30%。"
-              pressed={desktop.settings.opacityEnabled}
-              onPressedChange={desktop.setOpacityEnabled}
-            />
-            <div className="settings-row">
-              <div className="settings-row__copy">
-                <div className="settings-row__label" id="settings-opacity-label">
-                  透明度
-                </div>
-                <p className="settings-row__hint">
-                  范围 10%–100%，与旧版一致。当前 {opacityPercent}%。
-                </p>
-              </div>
-              <input
-                className="settings-range"
-                type="range"
-                min={OPACITY_PERCENT_MIN}
-                max={OPACITY_PERCENT_MAX}
-                step={1}
-                disabled={!desktop.settings.opacityEnabled}
-                value={opacityPercent}
-                aria-labelledby="settings-opacity-label"
-                onChange={(event) => {
-                  desktop.setOpacity(Number(event.target.value) / 100);
-                }}
-              />
-            </div>
-            <ToggleRow
-              label="关闭到托盘"
-              description="默认关闭：点关闭即退出，对齐旧版。打开后点关闭只藏到托盘，退出请用托盘菜单。"
-              pressed={desktop.settings.closeToTray}
-              onPressedChange={desktop.setCloseToTray}
-            />
-            <div className="settings-row">
-              <div className="settings-row__copy">
-                <label className="settings-row__label" htmlFor="settings-music-mode">
-                  网易音乐
-                </label>
-                <p className="settings-row__hint">
-                  点击聊天室封面时的行为。数值与旧版一致（含 1/2 文案对调）。与播放列表页共用同一份偏好。
-                </p>
-              </div>
-              <MusicModeSelect />
-            </div>
-          </section>
-
-          <section className="settings-section" aria-labelledby="settings-hotkey">
-            <h2 id="settings-hotkey" className="settings-section__title">
-              快捷键
-            </h2>
-            <HotkeyRow
-              label="老板键"
-              description="全局隐藏或显示主窗口。经设置保存后由 Rust 注册。"
-              value={desktop.settings.bossKey}
-              onChange={desktop.setBossKey}
-            />
-          </section>
-
-          <section className="settings-section" aria-labelledby="settings-notify">
-            <h2 id="settings-notify" className="settings-section__title">
-              通知
-            </h2>
-            <ToggleRow
-              label="系统通知"
-              description="允许桌面端弹出系统通知。权限失败时不会假装已发送。"
-              pressed={desktop.settings.notifyEnabled}
-              onPressedChange={desktop.setNotifyEnabled}
-            />
-            <div className="settings-row">
-              <div className="settings-row__copy">
-                <div className="settings-row__label">测试通知</div>
-                <p className="settings-row__hint">用来确认系统通知权限。</p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={desktop.notifyTesting}
-                onClick={() => {
-                  void desktop.testNotify();
-                }}
-              >
-                {desktop.notifyTesting ? "发送中" : "发送测试"}
-              </Button>
-            </div>
-            <p className="settings-row__hint">
-              关闭的类别不响、也不弹。系统消息还要打开上面的总开关。聊天室普通发言不弹系统通知（旧版「聊天室除外」）。
-            </p>
-            <p className="settings-row__hint">
-              系统通知点击无法跳到对应页面：当前 tauri-plugin-notification 2.4 在 Windows 上没有点击回调，不会假装能跳。
-            </p>
-            <ToggleRow
-              label="聊天室新消息"
-              description="别人在聊天室发言时提示。自己的消息不提示。"
-              pressed={desktop.settings.notifyChatroom}
-              onPressedChange={(notifyChatroom) =>
-                desktop.update({ notifyChatroom })
-              }
-            />
-            <ToggleRow
-              label="私聊新消息"
-              description="收到闲置私聊时提示。"
-              pressed={desktop.settings.notifyChat}
-              onPressedChange={(notifyChat) => desktop.update({ notifyChat })}
-            />
-            <ToggleRow
-              label="提及了我"
-              description="未读的 @ 通知。"
-              pressed={desktop.settings.notifyAt}
-              onPressedChange={(notifyAt) => desktop.update({ notifyAt })}
-            />
-            <ToggleRow
-              label="收到回复"
-              description="未读的回复和评论。"
-              pressed={desktop.settings.notifyReply}
-              onPressedChange={(notifyReply) =>
-                desktop.update({ notifyReply })
-              }
-            />
-            <ToggleRow
-              label="系统公告"
-              description="未读的系统公告列表，不是紧急弹窗。"
-              pressed={desktop.settings.notifySys}
-              onPressedChange={(notifySys) => desktop.update({ notifySys })}
-            />
-            <ToggleRow
-              label="聊天室聊到了"
-              description="聊天室正文命中下面的正则时提示。"
-              pressed={desktop.settings.notifyTalk}
-              onPressedChange={(notifyTalk) => desktop.update({ notifyTalk })}
-            />
-            <div className="settings-row">
-              <div className="settings-row__copy">
-                <label className="settings-row__label" htmlFor="settings-talk-pattern">
-                  内容正则
-                </label>
-                <p className="settings-row__hint">
-                  {talkPattern === "invalid"
-                    ? "这不是合法正则，匹配时会忽略并提示，不会把这段文字当代码执行。"
-                    : "空正则匹配所有聊天室消息，与旧版 new RegExp('') 一致。"}
-                </p>
-              </div>
-              <Input
-                id="settings-talk-pattern"
-                className="settings-text"
-                value={desktop.settings.notifyTalkPattern}
-                placeholder="内容正则"
-                spellCheck={false}
-                onChange={(event) => {
-                  desktop.update({ notifyTalkPattern: event.target.value });
-                }}
-              />
-            </div>
-            <ToggleRow
-              label="新消息声音"
-              description="类别打开时播放一声短提示。关闭则不响。"
-              pressed={desktop.settings.notifySound}
-              onPressedChange={(notifySound) =>
-                desktop.update({ notifySound })
-              }
-            />
-            <ToggleRow
-              label="系统消息"
-              description="类别打开且总开关打开时弹出系统通知。聊天室普通发言除外；关键词命中、私聊、@、回复、系统公告仍会弹。"
-              pressed={desktop.settings.notifySystem}
-              onPressedChange={(notifySystem) =>
-                desktop.update({ notifySystem })
-              }
-            />
-          </section>
-
-          <section className="settings-section" aria-labelledby="settings-reward">
-            <h2 id="settings-reward" className="settings-section__title">
-              活跃
-            </h2>
-            <ToggleRow
-              label="自动领取昨日活跃"
-              description="登录成功后尝试一次。默认关闭。失败不会显示成已领取。"
-              pressed={desktop.settings.autoReward}
-              onPressedChange={(autoReward) => desktop.update({ autoReward })}
-            />
-            <ToggleRow
-              label="红包提醒"
-              description="别人发红包时提示。自己发的不提示。"
-              pressed={desktop.settings.redpackNotice}
-              onPressedChange={(redpackNotice) =>
-                desktop.update({ redpackNotice })
-              }
-            />
-          </section>
-
-          <ChatroomFiltersSection />
-        </div>
-      )}
-
-      {desktop.saving ? (
-        <p className="settings-status" role="status">
-          正在保存
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function MusicModeSelect() {
-  const mode = useSyncExternalStore(
-    subscribePlayer,
-    getPlayerSnapshot,
-    getPlayerSnapshot,
-  ).mode;
-
-  useEffect(() => {
-    let alive = true;
-    void desktopPrefsGet()
-      .then((prefs) => {
-        if (alive) {
-          setPlayerMode(clampMusicMode(prefs.musicMode));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  return (
-    <select
-      id="settings-music-mode"
-      className="settings-filter-select"
-      value={String(clampMusicMode(mode))}
-      onChange={(event) => {
-        const next = clampMusicMode(Number(event.target.value));
-        const previous = getPlayerSnapshot().mode;
-        setPlayerMode(next);
-        void desktopPrefsSet({ musicMode: next }).catch((err: unknown) => {
-          if (getPlayerSnapshot().mode === next) {
-            setPlayerMode(previous);
-          }
-          toast.error(commandError(err));
-        });
-      }}
-    >
-      {MUSIC_MODE_OPTIONS.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function ToggleRow({
-  label,
-  description,
-  pressed,
-  onPressedChange,
-}: {
-  label: string;
-  description: string;
-  pressed: boolean;
-  onPressedChange: (next: boolean) => void;
-}) {
-  return (
-    <div className="settings-row">
-      <div className="settings-row__copy">
-        <div className="settings-row__label">{label}</div>
-        <p className="settings-row__hint">{description}</p>
-      </div>
-      <Button
-        type="button"
-        className="settings-toggle"
-        variant={pressed ? "default" : "outline"}
-        aria-pressed={pressed}
-        onClick={() => onPressedChange(!pressed)}
-      >
-        {pressed ? "开" : "关"}
-      </Button>
-    </div>
-  );
-}
+const APP_VERSION = packageJson.version;
+const FILTER_SAVE_DELAY_MS = 350;
 
 const SHIELD_OPTIONS: Array<{ value: ShieldKind; text: string }> = [
   { value: "username", text: "用户" },
@@ -408,348 +46,800 @@ const SHIELD_OPTIONS: Array<{ value: ShieldKind; text: string }> = [
   { value: "redpacket", text: "红包" },
 ];
 
-/**
- * 聊天室屏蔽 / 特别关心：与聊天室 FilterPanel 共用 chatroom-filters.json。
- * 不复制规则语义，只调 chatroomApi 的 get/set。
- */
-function ChatroomFiltersSection() {
-  const [shield, setShield] = useState<ShieldRule[]>([]);
-  const [careUsers, setCareUsers] = useState<string[]>([]);
-  const [careDraft, setCareDraft] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const persistTimer = useRef(0);
-  const ready = useRef(false);
-  const revision = useRef(0);
+function subscribePlayerMode(listener: () => void): () => void {
+  return subscribePlayer(listener);
+}
+
+function playerModeSnapshot(): number {
+  return getPlayerSnapshot().mode;
+}
+
+export function SettingsHost() {
+  const desktop = useDesktopSettings();
+  const settings = desktop.settings;
+  const opacityPercent = Math.round(settings.opacity * 100);
+  const musicMode = useSyncExternalStore(
+    subscribePlayerMode,
+    playerModeSnapshot,
+    playerModeSnapshot,
+  );
+
+  const [mirror, setMirror] = useState("");
+  const [extensionRoot, setExtensionRoot] = useState("");
+  const [theme, setTheme] = useState("Default");
+  const [themes, setThemes] = useState<ExtensionItem[]>([]);
+  const [error, setError] = useState("");
+
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [applyResult, setApplyResult] = useState<UpdateApplyResult | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    async function refresh(): Promise<void> {
-      const token = ++revision.current;
-      ready.current = false;
-      window.clearTimeout(persistTimer.current);
-      setLoading(true);
-      setBusy(false);
-      setError(null);
+    let alive = true;
+    async function loadPrefs(): Promise<void> {
       try {
-        const loaded = await loadChatroomFilters();
-        if (cancelled || token !== revision.current) return;
-        setShield(loaded.shield);
-        setCareUsers(loaded.careUsers);
-        ready.current = true;
-      } catch {
-        if (!cancelled && token === revision.current) setError("读取聊天室屏蔽失败");
-      } finally {
-        if (!cancelled && token === revision.current) setLoading(false);
+        const prefs = await desktopPrefsGet();
+        if (!alive) return;
+        setMirror(prefs.updateMirror);
+        setExtensionRoot(prefs.extensionRoot);
+        setTheme(prefs.theme || "Default");
+        setPlayerMode(clampMusicMode(prefs.musicMode));
+        await loadThemes(prefs.extensionRoot, alive);
+        await applyExtensionTheme(prefs.theme || "Default", prefs.extensionRoot, alive);
+      } catch (err) {
+        if (alive) setError(commandError(err));
       }
     }
-    const stop = listen<ImportResult>("desktop://config-imported", (event) => {
-      if (!cancelled && event.payload.filtersSaved) void refresh();
-    });
-    void stop.then(() => {
-      if (!cancelled) void refresh();
-    }).catch(() => {
-      if (!cancelled) void refresh();
+    void loadPrefs();
+    const stop = listen("desktop://prefs-changed", () => {
+      if (alive) void loadPrefs();
     });
     return () => {
-      cancelled = true;
-      ready.current = false;
-      revision.current += 1;
-      window.clearTimeout(persistTimer.current);
-      void stop.then((unlisten) => unlisten()).catch(() => undefined);
+      alive = false;
+      void stop.then((fn) => fn()).catch(() => undefined);
     };
   }, []);
 
-  async function persist(next: ChatroomFilters, quiet = true): Promise<boolean> {
-    if (!ready.current) return false;
-    const token = revision.current;
+  useEffect(() => {
+    void runUpdateCheck(false);
+  }, []);
+
+  async function loadThemes(root: string, alive = true): Promise<void> {
+    try {
+      const scan = await extensionScan(root.trim() || undefined);
+      if (alive) setThemes(scan.themes);
+    } catch {
+      if (alive) setThemes([]);
+    }
+  }
+
+  async function applyExtensionTheme(
+    nextTheme: string,
+    root: string,
+    alive = true,
+  ): Promise<void> {
+    try {
+      if (nextTheme === "Default") {
+        applyLegacyTheme("");
+        return;
+      }
+      const loaded = await extensionLoadTheme(nextTheme, root.trim() || undefined);
+      if (alive) applyLegacyTheme(loaded.css);
+    } catch (err) {
+      if (alive) setError(commandError(err));
+    }
+  }
+
+  async function saveMirror(): Promise<void> {
+    setError("");
+    try {
+      const prefs = await desktopPrefsSet({ updateMirror: mirror.trim() });
+      setMirror(prefs.updateMirror);
+    } catch (err) {
+      setError(commandError(err));
+    }
+  }
+
+  async function saveExtensionRoot(): Promise<void> {
+    setError("");
+    try {
+      const prefs = await desktopPrefsSet({ extensionRoot: extensionRoot.trim() });
+      setExtensionRoot(prefs.extensionRoot);
+      await loadThemes(prefs.extensionRoot);
+      await applyExtensionTheme(theme, prefs.extensionRoot);
+    } catch (err) {
+      setError(commandError(err));
+    }
+  }
+
+  async function chooseExtensionRoot(): Promise<void> {
+    try {
+      const chosen = await extensionChooseDirectory(extensionRoot.trim() || undefined);
+      if (chosen == null) return;
+      setExtensionRoot(chosen);
+      const prefs = await desktopPrefsSet({ extensionRoot: chosen });
+      setExtensionRoot(prefs.extensionRoot);
+      await loadThemes(prefs.extensionRoot);
+      await applyExtensionTheme(theme, prefs.extensionRoot);
+    } catch (err) {
+      setError(commandError(err));
+    }
+  }
+
+  async function selectTheme(next: string): Promise<void> {
+    setTheme(next);
+    try {
+      const prefs = await desktopPrefsSet({ theme: next });
+      setTheme(prefs.theme);
+      await applyExtensionTheme(prefs.theme, extensionRoot);
+    } catch (err) {
+      setError(commandError(err));
+    }
+  }
+
+  async function changeMusicMode(nextMode: number): Promise<void> {
+    const next = clampMusicMode(nextMode);
+    setPlayerMode(next);
+    try {
+      const prefs = await desktopPrefsSet({ musicMode: next });
+      setPlayerMode(prefs.musicMode);
+    } catch (err) {
+      setError(commandError(err));
+    }
+  }
+
+  async function runUpdateCheck(showError = true): Promise<void> {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    if (showError) setError("");
+    try {
+      setUpdate(await updateCheck());
+    } catch (err) {
+      if (showError) setError(commandError(err));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  function updateButton(): void {
+    if (update != null && !update.upToDate) {
+      setApplyResult(null);
+      setUpdateOpen(true);
+      return;
+    }
+    void runUpdateCheck(true);
+  }
+
+  async function applyUpdate(): Promise<void> {
+    if (updating) return;
+    setUpdating(true);
+    setError("");
+    try {
+      const result = await updateApply();
+      setApplyResult(result);
+      if (!result.downloaded && !result.installed) {
+        setError(result.message || "更新失败");
+      }
+    } catch (err) {
+      setError(commandError(err));
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  async function openRelease(): Promise<void> {
+    if (!update?.tag) return;
+    try {
+      await updateOpenRelease(update.tag);
+    } catch (err) {
+      setError(commandError(err));
+    }
+  }
+
+  const updateLabel = checkingUpdate
+    ? "检查中..."
+    : update?.upToDate
+      ? "已是最新"
+      : update != null
+        ? "开始更新"
+        : "检查更新";
+
+  return (
+    <div id="setting" className="legacy-settings" aria-busy={desktop.loading}>
+      <article className="settings">
+        <section className="app-version">
+          <p>
+            <b>当前版本：</b>
+            <span>{APP_VERSION}</span>
+          </p>
+          <p>
+            <button
+              type="button"
+              className="legacy-btn legacy-btn--success legacy-btn--small"
+              disabled={checkingUpdate || updating || update?.upToDate === true}
+              onClick={updateButton}
+            >
+              {updateLabel}
+            </button>
+          </p>
+        </section>
+
+        <p className="app-version">
+          <label htmlFor="update-mirror">更新镜像：</label>
+          <input
+            id="update-mirror"
+            className="legacy-input"
+            value={mirror}
+            placeholder="更新镜像域名"
+            spellCheck={false}
+            onChange={(event) => setMirror(event.target.value)}
+            onBlur={() => void saveMirror()}
+          />
+        </p>
+
+        <SettingsSection title="通用">
+          <FormRow label="透明窗体">
+            <div className="opacity-form">
+              <LegacySwitch
+                checked={settings.opacityEnabled}
+                title="透明窗体"
+                onChange={desktop.setOpacityEnabled}
+              />
+              <input
+                className="legacy-slider"
+                type="range"
+                title="透明度"
+                min={OPACITY_PERCENT_MIN}
+                max={OPACITY_PERCENT_MAX}
+                disabled={!settings.opacityEnabled}
+                value={opacityPercent}
+                onChange={(event) =>
+                  desktop.setOpacity(Number(event.target.value) / 100)
+                }
+              />
+            </div>
+          </FormRow>
+          <FormRow label="窗口置顶">
+            <LegacySwitch
+              checked={settings.alwaysOnTop}
+              title="窗口置顶"
+              onChange={desktop.setAlwaysOnTop}
+            />
+          </FormRow>
+          <FormRow label="昨日活跃">
+            <LegacySwitch
+              checked={settings.autoReward}
+              title="自动领取"
+              onChange={(autoReward) => desktop.update({ autoReward })}
+            />
+          </FormRow>
+          <FormRow label="网易音乐">
+            <select
+              className="legacy-select"
+              value={String(clampMusicMode(musicMode))}
+              onChange={(event) => void changeMusicMode(Number(event.target.value))}
+            >
+              {MUSIC_MODE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </FormRow>
+        </SettingsSection>
+
+        <SettingsSection title="聊天室">
+          <ChatroomFiltersSection
+            redpackNotice={settings.redpackNotice}
+            onRedpackNotice={(redpackNotice) => desktop.update({ redpackNotice })}
+          />
+        </SettingsSection>
+
+        <SettingsSection title="消息">
+          <FormRow label="消息提示">
+            <div className="legacy-checkboxes">
+              <Checkbox
+                label="聊天室新消息"
+                checked={settings.notifyChatroom}
+                onChange={(notifyChatroom) => desktop.update({ notifyChatroom })}
+              />
+              <Checkbox
+                label="私聊新消息"
+                checked={settings.notifyChat}
+                onChange={(notifyChat) => desktop.update({ notifyChat })}
+              />
+              <Checkbox
+                label="提及了我"
+                checked={settings.notifyAt}
+                onChange={(notifyAt) => desktop.update({ notifyAt })}
+              />
+              <Checkbox
+                label="收到回复"
+                checked={settings.notifyReply}
+                onChange={(notifyReply) => desktop.update({ notifyReply })}
+              />
+              <Checkbox
+                label="系统公告"
+                checked={settings.notifySys}
+                onChange={(notifySys) => desktop.update({ notifySys })}
+              />
+              <Checkbox
+                label="聊天室聊到了"
+                checked={settings.notifyTalk}
+                onChange={(notifyTalk) => desktop.update({ notifyTalk })}
+              />
+              <input
+                className="legacy-input legacy-input--small talk-pattern"
+                value={settings.notifyTalkPattern}
+                placeholder="内容正则"
+                onChange={(event) =>
+                  desktop.update({ notifyTalkPattern: event.target.value })
+                }
+              />
+            </div>
+          </FormRow>
+          <FormRow label="提示方式">
+            <div className="legacy-checkboxes">
+              <Checkbox
+                label="新消息声音"
+                checked={settings.notifySound}
+                onChange={(notifySound) => desktop.update({ notifySound })}
+              />
+              <Checkbox
+                label="系统消息(聊天室除外)"
+                checked={settings.notifySystem}
+                onChange={(notifySystem) =>
+                  desktop.update({
+                    notifySystem,
+                    notifyEnabled: notifySystem || settings.notifyEnabled,
+                  })
+                }
+              />
+            </div>
+          </FormRow>
+        </SettingsSection>
+
+        <SettingsSection title="快捷键">
+          <FormRow label="老板键">
+            <HotkeyInput value={settings.bossKey} onChange={desktop.setBossKey} />
+          </FormRow>
+        </SettingsSection>
+
+        <SettingsSection title="扩展">
+          <FormRow label="扩展目录">
+            <div className="legacy-input-group">
+              <input
+                className="legacy-input"
+                value={extensionRoot}
+                placeholder="扩展加载根目录"
+                spellCheck={false}
+                onChange={(event) => setExtensionRoot(event.target.value)}
+                onBlur={() => void saveExtensionRoot()}
+              />
+              <button
+                type="button"
+                className="legacy-input-group__append"
+                title="选择扩展目录"
+                aria-label="选择扩展目录"
+                onClick={() => void chooseExtensionRoot()}
+              >
+                <i className="fa fa-folder-open" aria-hidden="true" />
+              </button>
+            </div>
+          </FormRow>
+          <FormRow label="主题">
+            <select
+              className="legacy-select"
+              value={theme}
+              onChange={(event) => void selectTheme(event.target.value)}
+            >
+              <option value="Default">默认</option>
+              {theme !== "Default" &&
+              !themes.some((item) => item.key === theme) ? (
+                <option value={theme}>{theme}</option>
+              ) : null}
+              {themes.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.description || item.displayName || item.name}
+                </option>
+              ))}
+            </select>
+          </FormRow>
+        </SettingsSection>
+
+        {error || desktop.notice?.kind === "error" ? (
+          <p className="settings-error" role="alert">
+            {error || desktop.notice?.text}
+          </p>
+        ) : null}
+      </article>
+
+      {updateOpen && update ? (
+        <section className="update-card" role="dialog" aria-modal="true" aria-label="检查更新">
+          <header>{update.name || update.tag}</header>
+          <section className="update-time">
+            {formatDate(update.publishedAt)}
+          </section>
+          <section className="update-note">{update.body}</section>
+          <footer>
+            <button
+              type="button"
+              className="legacy-btn legacy-btn--success update-button"
+              disabled={updating}
+              onClick={() => void applyUpdate()}
+            >
+              {updating ? "下载中..." : "更新"}
+            </button>
+            {applyResult ? (
+              <p className="update-result">{applyResult.message}</p>
+            ) : null}
+            {applyResult && !applyResult.downloaded && !applyResult.installed ? (
+              <button
+                type="button"
+                className="legacy-btn legacy-btn--default"
+                onClick={() => void openRelease()}
+              >
+                打开发布页
+              </button>
+            ) : null}
+          </footer>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function ChatroomFiltersSection({
+  redpackNotice,
+  onRedpackNotice,
+}: {
+  redpackNotice: boolean;
+  onRedpackNotice: (checked: boolean) => void;
+}) {
+  const [filters, setFilters] = useState<ChatroomFilters>({ shield: [], careUsers: [] });
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [careDraft, setCareDraft] = useState("");
+  const [error, setError] = useState("");
+  const timer = useRef(0);
+  const revision = useRef(0);
+
+  useEffect(() => {
+    let alive = true;
+    async function refresh(): Promise<void> {
+      const current = ++revision.current;
+      try {
+        const loaded = await loadChatroomFilters();
+        if (alive && current === revision.current) {
+          setFilters(loaded);
+          setReady(true);
+        }
+      } catch (err) {
+        if (alive && current === revision.current) {
+          setReady(false);
+          setError(commandError(err));
+        }
+      }
+    }
+    void refresh();
+    const stop = listen<{ filtersSaved?: boolean }>("desktop://config-imported", (event) => {
+      if (!event.payload?.filtersSaved) return;
+      window.clearTimeout(timer.current);
+      setReady(false);
+      void refresh();
+    });
+    return () => {
+      alive = false;
+      revision.current += 1;
+      window.clearTimeout(timer.current);
+      void stop.then((fn) => fn()).catch(() => undefined);
+    };
+  }, []);
+
+  async function persist(next: ChatroomFilters): Promise<void> {
+    if (!ready) return;
+    const current = revision.current;
     setBusy(true);
-    setError(null);
     try {
       const saved = await saveChatroomFilters(next);
-      if (!ready.current || token !== revision.current) return false;
-      setShield(saved.shield);
-      setCareUsers(saved.careUsers);
-      if (!quiet) {
-        toast.success("已保存屏蔽与特别关心");
+      if (current === revision.current) {
+        setFilters(saved);
+        setError("");
       }
-      return true;
     } catch (err) {
-      if (!ready.current || token !== revision.current) return false;
-      const message = err instanceof Error ? err.message : "保存失败";
-      setError(message);
-      toast.error(message);
-      return false;
+      if (current === revision.current) setError(commandError(err));
     } finally {
-      if (token === revision.current) setBusy(false);
+      if (current === revision.current) setBusy(false);
     }
   }
 
-  function schedulePersist(next: ChatroomFilters): void {
-    if (!ready.current) {
-      return;
-    }
-    window.clearTimeout(persistTimer.current);
-    const token = revision.current;
-    persistTimer.current = window.setTimeout(() => {
-      if (ready.current && token === revision.current) void persist(next);
-    }, 400);
+  function schedule(next: ChatroomFilters): void {
+    setFilters(next);
+    window.clearTimeout(timer.current);
+    const current = revision.current;
+    timer.current = window.setTimeout(() => {
+      if (current === revision.current) void persist(next);
+    }, FILTER_SAVE_DELAY_MS);
   }
 
-  function updateShield(next: ShieldRule[]): void {
-    if (!ready.current) return;
-    setShield(next);
-    schedulePersist({ shield: next, careUsers });
-  }
-
-  async function addCare(): Promise<void> {
+  async function addCareUser(): Promise<void> {
     const name = careDraft.trim();
-    if (!ready.current || name.length === 0 || careUsers.includes(name) || busy) {
-      return;
-    }
-    const token = revision.current;
+    if (!ready || !name || filters.careUsers.includes(name) || busy) return;
     setBusy(true);
-    setError(null);
     try {
       const found = await lookupUserName(name);
-      if (!ready.current || token !== revision.current) return;
       if (found !== name) {
-        setError("用户名不存在");
         toast.error("用户名不存在");
         return;
       }
-      const ok = await persist({
-        shield,
-        careUsers: [...careUsers, name],
+      const saved = await saveChatroomFilters({
+        ...filters,
+        careUsers: [...filters.careUsers, name],
       });
-      if (ok) {
-        setCareDraft("");
-      }
+      setFilters(saved);
+      setCareDraft("");
     } catch (err) {
-      if (!ready.current || token !== revision.current) return;
-      const message = err instanceof Error ? err.message : "添加失败";
-      setError(message);
-      toast.error(message);
+      setError(commandError(err));
     } finally {
-      if (token === revision.current) setBusy(false);
+      setBusy(false);
     }
   }
 
-  return (
-    <section
-      className="settings-section"
-      aria-labelledby="settings-chat-filters"
-    >
-      <h2 id="settings-chat-filters" className="settings-section__title">
-        消息屏蔽 / 特别关心
-      </h2>
-      <p className="settings-row__hint">
-        仅存本机 chatroom-filters.json，不写登录凭据。改完自动保存。也可在聊天室顶栏「屏蔽」里编辑。
-      </p>
-      {error ? (
-        <p className="settings-row__hint settings-filter-error" role="status">
-          {error}
-        </p>
-      ) : null}
-      {loading ? (
-        <p className="settings-loading">
-          <Spinner />
-          正在读取屏蔽规则
-        </p>
-      ) : (
-        <>
-          <div className="settings-row__label">消息屏蔽</div>
-          <ul className="settings-filter-list">
-            {shield.length === 0 ? (
-              <li className="settings-filter-empty">暂无屏蔽规则</li>
-            ) : (
-              shield.map((rule, index) => (
-                <li
-                  key={`${rule.type}-${index}`}
-                  className="settings-filter-row"
-                >
-                  <select
-                    className="settings-filter-select"
-                    value={rule.type}
-                    aria-label="屏蔽类型"
-                    onChange={(event) => {
-                      const type = event.target.value as ShieldKind;
-                      updateShield(
-                        shield.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, type } : item,
-                        ),
-                      );
-                    }}
-                  >
-                    {SHIELD_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.text}
-                      </option>
-                    ))}
-                  </select>
-                  {rule.type === "redpacket" ? (
-                    <span className="settings-filter-readonly">全部红包</span>
-                  ) : (
-                    <Input
-                      className="settings-text settings-filter-value"
-                      value={rule.value}
-                      placeholder={rule.type === "username" ? "用户名" : "正则"}
-                      onChange={(event) => {
-                        updateShield(
-                          shield.map((item, itemIndex) =>
-                            itemIndex === index
-                              ? { ...item, value: event.target.value }
-                              : item,
-                          ),
-                        );
-                      }}
-                    />
-                  )}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => {
-                      updateShield(
-                        shield.filter((_, itemIndex) => itemIndex !== index),
-                      );
-                    }}
-                  >
-                    删除
-                  </Button>
-                </li>
-              ))
-            )}
-          </ul>
-          <div className="settings-filter-actions">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                updateShield([
-                  ...shield,
-                  { type: "username", value: "" },
-                ]);
-              }}
-            >
-              加一条屏蔽
-            </Button>
-            <span className="settings-row__hint">
-              {busy ? "正在保存" : "改完即保存，不必再点保存。"}
-            </span>
-          </div>
+  async function removeCareUser(name: string): Promise<void> {
+    if (!ready || busy) return;
+    window.clearTimeout(timer.current);
+    await persist({
+      ...filters,
+      careUsers: filters.careUsers.filter((item) => item !== name),
+    });
+  }
 
-          <div className="settings-row__label">特别关心</div>
-          <div className="settings-filter-care">
-            {careUsers.length === 0 ? (
-              <span className="settings-filter-empty">暂无特别关心</span>
-            ) : (
-              careUsers.map((name) => (
-                <Button
-                  key={name}
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => {
-                    void persist({
-                      shield,
-                      careUsers: careUsers.filter((item) => item !== name),
-                    });
-                  }}
-                >
-                  {name} ×
-                </Button>
-              ))
-            )}
-          </div>
-          <form
-            className="settings-filter-actions"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void addCare();
-            }}
+  return (
+    <>
+      <FormRow label="消息屏蔽">
+        <div className="shield-list">
+          {filters.shield.map((rule, index) => (
+            <section className="shield-item" key={`${rule.type}-${index}`}>
+              <select
+                className="legacy-select shield-type"
+                aria-label="屏蔽类型"
+                value={rule.type}
+                onChange={(event) => {
+                  const type = event.target.value as ShieldKind;
+                  schedule({
+                    ...filters,
+                    shield: filters.shield.map((item, itemIndex) =>
+                      itemIndex === index
+                        ? { type, value: type === "redpacket" ? "" : item.value }
+                        : item,
+                    ),
+                  });
+                }}
+              >
+                {SHIELD_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.text}
+                  </option>
+                ))}
+              </select>
+              {rule.type !== "redpacket" ? (
+                <input
+                  className="legacy-input shield-value"
+                  value={rule.value}
+                  placeholder={rule.type === "username" ? "用户名" : "正则"}
+                  onChange={(event) =>
+                    schedule({
+                      ...filters,
+                      shield: filters.shield.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, value: event.target.value }
+                          : item,
+                      ),
+                    })
+                  }
+                />
+              ) : null}
+              <button
+                type="button"
+                className="legacy-text-btn"
+                title="删除"
+                aria-label="删除屏蔽规则"
+                onClick={() =>
+                  schedule({
+                    ...filters,
+                    shield: filters.shield.filter((_, itemIndex) => itemIndex !== index),
+                  })
+                }
+              >
+                <i className="fa fa-trash-o" aria-hidden="true" />
+              </button>
+            </section>
+          ))}
+          <button
+            type="button"
+            className="shield-add"
+            title="添加屏蔽"
+            aria-label="添加屏蔽"
+            onClick={() =>
+              schedule({
+                ...filters,
+                shield: [...filters.shield, { type: "username", value: "" }],
+              })
+            }
           >
-            <Input
-              className="settings-text settings-filter-value"
+            <i className="fa fa-plus" aria-hidden="true" />
+          </button>
+        </div>
+      </FormRow>
+      <FormRow label="特别关心">
+        <div className="care-users">
+          {filters.careUsers.map((name) => (
+            <span className="legacy-tag" key={name}>
+              {name}
+              <button
+                type="button"
+                title="移除"
+                aria-label={`移除特别关心 ${name}`}
+                onClick={() => void removeCareUser(name)}
+              >
+                <i className="ivu-icon ivu-icon-ios-close" aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+          <div className="care-add">
+            <button
+              type="button"
+              className="care-add__button"
+              title="添加特别关心"
+              aria-label="添加特别关心"
+              disabled={busy || careDraft.trim().length === 0}
+              onClick={() => void addCareUser()}
+            >
+              <i className="ivu-icon ivu-icon-ios-add" aria-hidden="true" />
+            </button>
+            <input
+              className="care-add__input"
               value={careDraft}
               placeholder="用户名"
               onChange={(event) => setCareDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void addCareUser();
+                }
+              }}
             />
-            <Button
-              type="submit"
-              size="sm"
-              variant="outline"
-              disabled={busy || careDraft.trim().length === 0}
-            >
-              添加关心
-            </Button>
-          </form>
-        </>
-      )}
+          </div>
+        </div>
+      </FormRow>
+      <FormRow label="红包提醒">
+        <LegacySwitch
+          checked={redpackNotice}
+          title="红包提醒"
+          onChange={onRedpackNotice}
+        />
+      </FormRow>
+      {error ? <p className="settings-error">{error}</p> : null}
+    </>
+  );
+}
+
+function SettingsSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <div className="legacy-divider">
+        <span>{title}</span>
+      </div>
+      <div className="setting-form">{children}</div>
     </section>
   );
 }
 
-function HotkeyRow({
+function FormRow({
   label,
-  description,
-  value,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="legacy-form-item">
+      <div className="legacy-form-label">{label}</div>
+      <div className="legacy-form-control">{children}</div>
+    </div>
+  );
+}
+
+function LegacySwitch({
+  checked,
+  title,
+  onChange,
+}: {
+  checked: boolean;
+  title: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      title={title}
+      aria-label={title}
+      className={checked ? "legacy-switch is-checked" : "legacy-switch"}
+      onClick={() => onChange(!checked)}
+    >
+      <span />
+    </button>
+  );
+}
+
+function Checkbox({
+  label,
+  checked,
   onChange,
 }: {
   label: string;
-  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="legacy-checkbox">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function HotkeyInput({
+  value,
+  onChange,
+}: {
   value: string;
-  onChange: (next: string) => void;
+  onChange: (value: string) => void;
 }) {
   const [listening, setListening] = useState(false);
 
   useEffect(() => {
-    if (!listening) {
-      return;
-    }
-
-    function onKeyDown(event: KeyboardEvent) {
+    if (!listening) return;
+    function onKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
         event.preventDefault();
         setListening(false);
         return;
       }
       const combo = readHotkey(event);
-      if (!combo) {
-        return;
-      }
+      if (!combo) return;
       event.preventDefault();
       setListening(false);
       onChange(combo);
     }
-
     window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-    };
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [listening, onChange]);
 
   return (
-    <div className="settings-row">
-      <div className="settings-row__copy">
-        <div className="settings-row__label">{label}</div>
-        <p className="settings-row__hint">{description}</p>
-      </div>
-      <Button
-        type="button"
-        variant={listening ? "default" : "outline"}
-        aria-pressed={listening}
-        onBlur={() => setListening(false)}
-        onClick={() => setListening((current) => !current)}
-      >
-        {listening ? "按下组合键" : displayHotkey(value)}
-      </Button>
-    </div>
+    <button
+      type="button"
+      className={listening ? "legacy-hotkey is-listening" : "legacy-hotkey"}
+      aria-pressed={listening}
+      onBlur={() => setListening(false)}
+      onClick={() => setListening((current) => !current)}
+    >
+      {listening ? "请按下组合按键" : displayHotkey(value)}
+    </button>
   );
 }
 
@@ -763,23 +853,12 @@ function readHotkey(event: KeyboardEvent): string | null {
     return null;
   }
   const parts: string[] = [];
-  if (event.ctrlKey) {
-    parts.push("Ctrl");
-  }
-  if (event.metaKey) {
-    // global-hotkey 0.8 只认 SUPER/CMD；UI 再显示成 Win。
-    parts.push("SUPER");
-  }
-  if (event.altKey) {
-    parts.push("Alt");
-  }
-  if (event.shiftKey) {
-    parts.push("Shift");
-  }
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.metaKey) parts.push("SUPER");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
   const key = hotkeyToken(event);
-  if (!key || parts.length === 0) {
-    return null;
-  }
+  if (!key || parts.length === 0) return null;
   parts.push(key);
   return parts.join("+");
 }
@@ -789,25 +868,20 @@ function displayHotkey(value: string): string {
     .split("+")
     .map((part) => {
       const token = part.trim();
-      if (/^(SUPER|CMD|META|COMMAND)$/i.test(token)) {
-        return "Win";
-      }
-      return token;
+      return /^(SUPER|CMD|META|COMMAND)$/i.test(token) ? "Win" : token;
     })
-    .filter((part) => part.length > 0)
+    .filter(Boolean)
     .join("+");
 }
 
 function hotkeyToken(event: KeyboardEvent): string {
-  const { key } = event;
-  if (key === " ") {
-    return "Space";
-  }
-  if (key.length === 1) {
-    return key.toUpperCase();
-  }
-  if (key.startsWith("Arrow")) {
-    return key.slice("Arrow".length);
-  }
-  return key;
+  if (event.key === " ") return "Space";
+  if (event.key.length === 1) return event.key.toUpperCase();
+  if (event.key.startsWith("Arrow")) return event.key.slice("Arrow".length);
+  return event.key;
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }

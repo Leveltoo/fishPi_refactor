@@ -1,5 +1,4 @@
 import { useState, useSyncExternalStore } from "react";
-import { Music, Pause, Play, SkipBack, SkipForward, Trash2, Volume2, VolumeX, X } from "lucide-react";
 import {
   getPlayerSnapshot,
   playerClear,
@@ -52,7 +51,7 @@ export function HeaderMusic() {
         aria-expanded={expanded}
         onClick={() => setExpanded((open) => !open)}
       >
-        <Music />
+        <i className="fa fa-music" aria-hidden="true" />
       </button>
       <span
         className={
@@ -68,7 +67,7 @@ export function HeaderMusic() {
           aria-label="关闭播放器"
           onClick={() => playerClear()}
         >
-          <X />
+          <i className="fa fa-times" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -78,7 +77,7 @@ export function HeaderMusic() {
           disabled={!multi}
           onClick={() => playerPrev()}
         >
-          <SkipBack />
+          <i className="fa fa-backward" aria-hidden="true" />
         </button>
         <span className="shell__header-music-name">
           {current.artist} - {current.name}
@@ -91,7 +90,7 @@ export function HeaderMusic() {
           disabled={!multi}
           onClick={() => playerNext()}
         >
-          <SkipForward />
+          <i className="fa fa-forward" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -100,7 +99,7 @@ export function HeaderMusic() {
           aria-label={player.playing ? "暂停" : "播放"}
           onClick={() => playerTogglePlay()}
         >
-          {player.playing ? <Pause /> : <Play />}
+          <i className={player.playing ? "fa fa-pause" : "fa fa-play"} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -109,7 +108,7 @@ export function HeaderMusic() {
           aria-label={player.muted ? "取消静音" : "静音"}
           onClick={() => playerToggleMute()}
         >
-          {player.muted ? <VolumeX /> : <Volume2 />}
+          <i className={player.muted ? "fa fa-volume-off" : "fa fa-volume-up"} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -118,7 +117,7 @@ export function HeaderMusic() {
           aria-label="移出播放列表"
           onClick={() => playerRemoveCurrent()}
         >
-          <Trash2 />
+          <i className="fa fa-trash-o" aria-hidden="true" />
         </button>
       </span>
     </div>

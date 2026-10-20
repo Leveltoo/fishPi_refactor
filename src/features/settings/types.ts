@@ -27,6 +27,8 @@ export type DesktopSettings = {
 export type NotifyShowRequest = {
   title: string;
   body: string;
+  target?: import("../shell/navigation").NoticeTarget;
+  sessionGeneration?: number;
 };
 
 export type AlwaysOnTopRequest = {

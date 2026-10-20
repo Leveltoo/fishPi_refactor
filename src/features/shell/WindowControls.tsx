@@ -1,4 +1,3 @@
-import { Minus, Pin, X } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DEFAULT_SETTINGS } from "@/features/settings/constants";
 import {
@@ -14,7 +13,6 @@ import {
 type WinBtnProps = {
   label: string;
   className?: string;
-  Icon?: typeof Minus;
   customIcon?: ReactNode;
   onClick?: () => void;
   pressed?: boolean;
@@ -23,7 +21,6 @@ type WinBtnProps = {
 function WinBtn({
   label,
   className,
-  Icon,
   customIcon,
   onClick,
   pressed,
@@ -44,7 +41,7 @@ function WinBtn({
       aria-pressed={pressed}
       onClick={onClick}
     >
-      {customIcon ?? (Icon ? <Icon /> : null)}
+      {customIcon}
     </button>
   );
 }
@@ -87,7 +84,11 @@ export function WindowControls({ compact = false }: { compact?: boolean }) {
 
   return (
     <div className="shell__win-ctrl">
-      <WinBtn label="最小化" Icon={Minus} onClick={onMinimize} />
+      <WinBtn
+        label="最小化"
+        customIcon={<i className="fa fa-minus" aria-hidden="true" />}
+        onClick={onMinimize}
+      />
       {compact ? null : (
         <>
           <WinBtn
@@ -100,7 +101,7 @@ export function WindowControls({ compact = false }: { compact?: boolean }) {
           <WinBtn
             label="窗口置顶"
             className="win-pin-btn"
-            Icon={Pin}
+            customIcon={<i className="fa fa-thumb-tack" aria-hidden="true" />}
             pressed={alwaysOnTop}
             onClick={onTogglePin}
           />
@@ -109,7 +110,7 @@ export function WindowControls({ compact = false }: { compact?: boolean }) {
       <WinBtn
         label="关闭"
         className="is-close"
-        Icon={X}
+        customIcon={<i className="fa fa-times" aria-hidden="true" />}
         onClick={onClose}
       />
     </div>

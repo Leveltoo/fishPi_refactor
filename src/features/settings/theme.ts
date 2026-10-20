@@ -8,12 +8,10 @@ const LEGACY_THEME_MAP: Readonly<Record<string, ThemeId>> = {
   contrast: "desk",
 };
 
-const DARK_THEME_IDS: readonly ThemeId[] = ["desk", "cx"];
-
-export function applyTheme(themeId: ThemeId): void {
+export function applyTheme(_themeId: ThemeId): void {
   const root = document.documentElement;
-  root.dataset.theme = themeId;
-  root.classList.toggle("dark", DARK_THEME_IDS.includes(themeId));
+  root.dataset.theme = "desk";
+  root.classList.add("dark");
 }
 
 export function resolveThemeId(value: unknown): ThemeId {

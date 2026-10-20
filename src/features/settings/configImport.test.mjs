@@ -155,6 +155,13 @@ function renderHooks() {
   let first = true;
   let cleanups = [];
   return {
+    reset: () => {
+      slots.length = 0;
+      effects.length = 0;
+      cursor = 0;
+      first = true;
+      cleanups = [];
+    },
     react: {
       useState: (initial) => {
         const i = cursor++;
@@ -166,6 +173,7 @@ function renderHooks() {
         if (!(i in slots)) slots[i] = { current: initial };
         return slots[i];
       },
+      useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
       useEffect: (effect) => { if (first) effects.push(effect); },
     },
     render: (component) => { cursor = 0; const node = component(); first = false; return node; },
@@ -203,7 +211,16 @@ test("settings filters reload on import without pending edits, late reads/saves 
     "@/components/ui/input": components,
     "@/components/ui/spinner": components,
     "@/features/desktop/api": {},
-    "@/features/music/playerStore": {},
+    "@/features/music/playerStore": {
+      getPlayerSnapshot: () => ({ mode: 0 }),
+      subscribePlayer: () => () => {},
+      setPlayerMode: () => {},
+    },
+    "@/features/extension/api": {
+      extensionChooseDirectory: async () => null,
+      extensionScan: async () => ({ themes: [] }),
+    },
+    "@tauri-apps/api/core": { invoke: async () => null },
     "./useDesktopSettings": { useDesktopSettings: () => ({ settings: defaults, loading: false }) },
     "@/features/chatroom/chatroomApi": {
       loadChatroomFilters: async () => {
@@ -217,7 +234,9 @@ test("settings filters reload on import without pending edits, late reads/saves 
   defaults = load(new URL("./constants.ts", import.meta.url)).DEFAULT_SETTINGS;
   const host = load(new URL("./SettingsHost.tsx", import.meta.url)).SettingsHost();
   const section = find(host, (node) => node.type?.name === "ChatroomFiltersSection")[0].type;
-  const render = () => hooks.render(section);
+  hooks.reset();
+  const render = () => hooks.render(() =>
+    section({ redpackNotice: false, onRedpackNotice: () => {} }));
   render();
   hooks.start();
   await flush();
@@ -226,7 +245,7 @@ test("settings filters reload on import without pending edits, late reads/saves 
   await flush();
   initial.resolve({ shield: [{ type: "username", value: "old" }], careUsers: ["old-user"] });
   await flush();
-  const input = () => find(render(), (node) => node.type === "Input" && node.props.placeholder === "正则")[0];
+  const input = () => find(render(), (node) => node.type === "input" && node.props.placeholder === "正则")[0];
   assert.equal(input().props.value, "imported");
   input().props.onChange({ target: { value: "unsaved" } });
   assert.equal(timer.pending.size, 1);
@@ -248,9 +267,10 @@ test("settings filters reload on import without pending edits, late reads/saves 
   oldSave.resolve({ shield: [{ type: "content", value: "late-save" }], careUsers: ["old-user"] });
   await flush();
   assert.equal(input().props.value, "third-import");
-  find(render(), (node) => node.type === "Input" && node.props.placeholder === "用户名")[0]
+  find(render(), (node) => node.type === "input" && node.props.placeholder === "用户名")[0]
     .props.onChange({ target: { value: "pending-user" } });
-  find(render(), (node) => node.type === "form")[0].props.onSubmit({ preventDefault: () => {} });
+  find(render(), (node) => node.type === "input" && node.props.placeholder === "用户名")[0]
+    .props.onKeyDown({ key: "Enter", preventDefault: () => {} });
   await flush();
   onImport({ payload: { filtersSaved: true } });
   await flush();

@@ -1,30 +1,14 @@
-/**
- * 登录页：用户名、密码、可选 MFA。
- * 密码只在提交时交给 auth_login，不写入 localStorage。
- *
- * 依赖 src/lib/tauri.ts 的 invokeAuthLogin（前端类型化 API agent）。
- */
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Eye, EyeOff, Import, Lock, Shield, User } from "lucide-react";
-import { useEffect, useId, useState, type FormEvent } from "react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-} from "@/components/ui/input-group";
-import { Spinner } from "@/components/ui/spinner";
-import { commandError, configImport, desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import legacyIcon from "@/assets/legacy/icon.png";
+import { desktopPrefsGet, desktopPrefsSet } from "@/features/desktop/api";
 import { invokeAuthLogin } from "../../lib/tauri";
 import type { AuthSession } from "../../lib/types";
-import { FishMark } from "../shell/FishMark";
 import { TitleBar } from "../shell/TitleBar";
 import { authErrorMessage } from "./auth-errors";
 import "./LoginPage.css";
 
-const REGISTER_URL = "https://fishpi.cn/register";
+const REGISTER_URL = "https://fishpi.cn/register?r=imlinhanchao";
 
 export type LoginPageProps = {
   notice?: string;
@@ -37,25 +21,15 @@ export function LoginPage({
   notice,
   submittingFromGate = false,
   onLoggedIn,
-  onRestoreSession,
 }: LoginPageProps) {
-  const formId = useId();
-  const usernameId = `${formId}-username`;
-  const passwordId = `${formId}-password`;
-  const mfaId = `${formId}-mfa`;
-  const errorId = `${formId}-error`;
-  const noticeId = `${formId}-notice`;
-  const registerHintId = `${formId}-register-hint`;
-
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const mfaRef = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [registerHint, setRegisterHint] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importNotice, setImportNotice] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -71,39 +45,33 @@ export function LoginPage({
     };
   }, []);
 
-  const busy = submitting || importing || submittingFromGate;
-  const invalid = Boolean(error);
-  const describedBy =
-    [notice ? noticeId : null, error ? errorId : null].filter(Boolean).join(" ") ||
-    undefined;
+  const busy = submitting || submittingFromGate;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) {
-      return;
-    }
+    if (busy) return;
 
-    const trimmedName = username.trim();
-    if (!trimmedName) {
-      setError("请输入用户名");
+    const name = username.trim();
+    if (!name) {
+      setError("请输入您的用户名");
       return;
     }
     if (!password) {
-      setError("请输入密码");
+      setError("请输入您的密码");
       return;
     }
 
     setSubmitting(true);
-    setError(null);
+    setError("");
     try {
       const session = await invokeAuthLogin({
-        username: trimmedName,
+        username: name,
         password,
         mfaCode: mfaCode.trim() || undefined,
       });
       setPassword("");
       setMfaCode("");
-      void desktopPrefsSet({ loginUsername: trimmedName }).catch(() => undefined);
+      void desktopPrefsSet({ loginUsername: name }).catch(() => undefined);
       onLoggedIn(session);
     } catch (err) {
       setError(authErrorMessage(err));
@@ -115,141 +83,99 @@ export function LoginPage({
   async function handleRegister() {
     try {
       await openUrl(REGISTER_URL);
-      setRegisterHint(false);
     } catch {
-      setRegisterHint(true);
-    }
-  }
-
-  async function handleImport() {
-    if (busy) return;
-    setImporting(true);
-    setError(null);
-    setImportNotice("");
-    try {
-      const result = await configImport();
-      const prefs = await desktopPrefsGet();
-      if (prefs.loginUsername) setUsername(prefs.loginUsername);
-      setImportNotice(result.message);
-      if (result.credentialSaved) onRestoreSession();
-    } catch (err) {
-      setError(commandError(err));
-    } finally {
-      setImporting(false);
+      setError(`请到网站注册：${REGISTER_URL}`);
     }
   }
 
   return (
-    <div className="login-shell">
-      {/* decorations:false 时登录页也要有可拖窗顶栏；对齐旧版 simple：只留最小化/关闭 */}
-      <TitleBar title="摸鱼派" compact />
-      <div className="login-page">
-      <div className="login-logo">
-        <span className="login-logo__mark" aria-hidden="true">
-          <FishMark className="login-logo__mark-icon" />
-        </span>
-        <h1 className="login-logo__title">摸鱼派·登录</h1>
-      </div>
+    <div className="legacy-login">
+      <TitleBar title="摸鱼派 - 登录" compact />
+      <main className="login-content">
+        <section className="login-logo">
+          <img src={legacyIcon} alt="" />
+          <span>摸鱼派·登录</span>
+        </section>
 
-      <form className="login-form" onSubmit={handleSubmit} noValidate>
-        {notice ? (
-          <Alert className="login-alert login-alert--notice" id={noticeId}>
-            <AlertDescription>{notice}</AlertDescription>
-          </Alert>
-        ) : null}
+        <form className="login-form" onSubmit={handleSubmit} noValidate>
+          {notice ? <p className="login-message">{notice}</p> : null}
 
-        {error ? (
-          <Alert
-            variant="destructive"
-            className="login-alert login-alert--error"
-            id={errorId}
-          >
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        <div className="login-form__fields">
-          <InputGroup className="login-field">
-            <InputGroupAddon align="inline-start" className="login-field__lead">
-              <User aria-hidden="true" />
-            </InputGroupAddon>
-            <InputGroupInput
-              id={usernameId}
-              name="username"
+          <div className="login-field">
+            <span className="login-input-addon">
+              <i className="fa fa-user" aria-hidden="true" />
+            </span>
+            <input
               type="text"
+              name="username"
               autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
               placeholder="用户名"
               value={username}
               disabled={busy}
-              autoFocus
               aria-label="用户名"
-              aria-invalid={invalid}
-              aria-describedby={describedBy}
+              autoFocus
               onChange={(event) => setUsername(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  focusField(passwordId);
+                  passwordRef.current?.focus();
                 }
               }}
             />
-          </InputGroup>
+          </div>
 
-          <InputGroup className="login-field">
-            <InputGroupAddon align="inline-start" className="login-field__lead">
-              <Lock aria-hidden="true" />
-            </InputGroupAddon>
-            <InputGroupInput
-              id={passwordId}
-              name="password"
+          <div className="login-field">
+            <span className="login-input-addon">
+              <i className="fa fa-lock" aria-hidden="true" />
+            </span>
+            <input
+              ref={passwordRef}
               type={showPassword ? "text" : "password"}
+              name="password"
               autoComplete="current-password"
               placeholder="密码"
               value={password}
               disabled={busy}
               aria-label="密码"
-              aria-invalid={invalid}
-              aria-describedby={describedBy}
               onChange={(event) => setPassword(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  focusField(mfaId);
+                  mfaRef.current?.focus();
                 }
               }}
             />
-            <InputGroupAddon align="inline-end">
-              <InputGroupButton
-                size="icon-xs"
-                disabled={busy}
-                aria-pressed={showPassword}
-                aria-label={showPassword ? "隐藏密码" : "显示密码"}
-                onClick={() => setShowPassword((prev) => !prev)}
-              >
-                {showPassword ? <EyeOff /> : <Eye />}
-              </InputGroupButton>
-            </InputGroupAddon>
-          </InputGroup>
+            <button
+              type="button"
+              className="login-password-toggle"
+              disabled={busy}
+              aria-label={showPassword ? "隐藏密码" : "显示密码"}
+              onClick={() => setShowPassword((current) => !current)}
+            >
+              <i
+                className={showPassword ? "fa fa-eye-slash" : "fa fa-eye"}
+                aria-hidden="true"
+              />
+            </button>
+          </div>
 
-          <InputGroup className="login-field">
-            <InputGroupAddon align="inline-start" className="login-field__lead">
-              <Shield aria-hidden="true" />
-            </InputGroupAddon>
-            <InputGroupInput
-              id={mfaId}
-              name="mfaCode"
+          <div className="login-field">
+            <span className="login-input-addon">
+              <i className="fa fa-shield" aria-hidden="true" />
+            </span>
+            <input
+              ref={mfaRef}
               type="text"
+              name="mfaCode"
               inputMode="numeric"
               autoComplete="one-time-code"
               autoCapitalize="none"
               spellCheck={false}
-              placeholder="两步验证码（可留空）"
+              placeholder="两步验证码"
               value={mfaCode}
               disabled={busy}
               aria-label="两步验证码"
-              aria-describedby={describedBy}
               onChange={(event) => setMfaCode(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -258,62 +184,26 @@ export function LoginPage({
                 }
               }}
             />
-          </InputGroup>
-        </div>
+          </div>
 
-        <div className="login-form__actions">
-          <Button
-            type="submit"
-            className="login-form__submit"
-            disabled={busy}
-          >
-            {busy ? <Spinner /> : null}
-            {busy ? "登录中…" : "登录"}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            className="login-form__register"
-            disabled={busy}
-            aria-describedby={registerHint ? registerHintId : undefined}
-            onClick={() => void handleRegister()}
-          >
-            注册
-          </Button>
-        </div>
+          {error ? <p className="login-message login-message--error">{error}</p> : null}
 
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={busy}
-          onClick={() => void handleImport()}
-        >
-          {importing ? <Spinner /> : <Import aria-hidden="true" />}
-          导入旧配置
-        </Button>
-        {importNotice ? (
-          <Alert className="login-alert login-alert--notice">
-            <AlertDescription>{importNotice}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {registerHint ? (
-          <Alert
-            className="login-alert login-alert--notice"
-            id={registerHintId}
-          >
-            <AlertDescription>请到网站注册：{REGISTER_URL}</AlertDescription>
-          </Alert>
-        ) : null}
-      </form>
-      </div>
+          <div className="login-footer">
+            <button type="submit" className="login-button login-button--success" disabled={busy}>
+              {busy ? <i className="fa fa-spinner fa-spin" aria-hidden="true" /> : null}
+              {busy ? "登录中" : "登录"}
+            </button>
+            <button
+              type="button"
+              className="login-button login-button--default"
+              disabled={busy}
+              onClick={() => void handleRegister()}
+            >
+              注册
+            </button>
+          </div>
+        </form>
+      </main>
     </div>
   );
-}
-
-function focusField(id: string): void {
-  const node = document.getElementById(id);
-  if (node instanceof HTMLElement) {
-    node.focus();
-  }
 }

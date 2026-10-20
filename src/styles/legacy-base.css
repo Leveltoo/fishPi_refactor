@@ -1,0 +1,98 @@
+/* Legacy 1.3.9 palette and typography. New-only surfaces still resolve to the
+   same old dark shell instead of switching to the redesign tokens. */
+:root {
+  --global-text-color: #cecac3;
+  --global-active-color: #d23f31;
+  --global-background-color: #232425;
+  --global-popup-background-color: #131415;
+  --global-control-background-color: #181a1b;
+  --global-control-placeholder-color: #c5c8ce;
+  --global-append-btn-background-color: #1f2020;
+  --global-control-text-color: #aca49a;
+  --global-control-border-color: #393e40;
+  --global-scroll-bar-color: rgba(100, 100, 100, 0.5);
+  --global-alpha-background-color: rgba(35, 36, 37, 0.5);
+  --global-alpha-background-white: rgba(100, 100, 100, 0.2);
+  --header-btn-checked-color: #57a3f3;
+  --main-chatroom-background-color: rgba(255, 255, 255, 0.03);
+  --main-chatroom-sidebar-background-color: rgba(255, 255, 255, 0.05);
+  --main-chatroom-message-background-color: rgb(246, 248, 250);
+  --main-chatroom-message-color: #232425;
+  --main-chatroom-user-message-background-color: #515a6e;
+  --main-chatroom-user-message-color: #f6f8fa;
+  --main-chatroom-plusone-background-color: #d23f31;
+  --main-chatroom-plusone-color: #fff;
+  --main-emoji-background-color: #131415;
+  --main-emoji-bar-background-color: #515a6e;
+  --liveness-active-color: var(--global-active-color);
+  --liveness-normal-color: #57a3f3;
+  --article-background-color: var(--global-background-color);
+  --article-header-background-color: var(--article-background-color);
+  --article-heat-color: var(--global-active-color);
+}
+
+body {
+  background: var(--global-background-color);
+  color: var(--global-text-color);
+  font: 1em/1.8 "Helvetica Neue", "Luxi Sans", "DejaVu Sans", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--global-scroll-bar-color);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@font-face {
+  font-family: Ionicons;
+  src: url("../assets/legacy/ionicons.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+}
+
+.ivu-icon {
+  display: inline-block;
+  font-family: Ionicons;
+  font-style: normal;
+  font-weight: 400;
+  font-variant: normal;
+  line-height: 1;
+  text-align: center;
+  text-rendering: optimizeLegibility;
+  text-transform: none;
+  vertical-align: -0.125em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.ivu-icon-ios-add::before {
+  content: "\f102";
+}
+
+.ivu-icon-ios-close::before {
+  content: "\f178";
+}
+
+.ivu-icon-md-eye-off::before {
+  content: "\f39f";
+}
+
+.ivu-icon-md-eye::before {
+  content: "\f3a0";
+}
+
+.ivu-icon-md-cube::before {
+  content: "\f394";
+}
+
+.ivu-icon-md-settings::before {
+  content: "\f427";
+}
